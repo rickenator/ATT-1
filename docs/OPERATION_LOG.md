@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 30: Real model conversion plan and `.att1` compatibility spec.
+Milestone 31: ATT-1 LLaMA converter skeleton.
 
 ## Hard Rules
 
@@ -45,14 +45,18 @@ Milestone 30: Real model conversion plan and `.att1` compatibility spec.
 - Milestone 18: CUDA causal attention — `cuda_backend_softmax_f32` implemented with numerically stable CPU softmax; attention forward pass uses all component CUDA operators (matmul, rope, softmax); comprehensive 7-case test suite validates causal masking, numerical stability, and multi-head determinism.
 - Milestone 19: CUDA transformer block prototype — single-block backend path validated on CUDA backend using composed primitives (RMSNorm, causal attention, matmul, SwiGLU) against CPU f32 reference.
 - Milestone 20: CUDA single-tile inference integration — existing single-tile decode path now validated with CUDA backend selection and CPU-vs-CUDA equivalence checks on dummy `.att1` model.
+- Milestone 28: CUDA q8 cluster inference enabled — removed cpu-only rejection from `run_cluster()`; validated cuda-q8 cluster path matches cpu-q8 last token; new `test_cuda_q8_cluster` and `test_q8_bench` coverage.
+- Milestone 29: Backend matrix regression harness — `tests/test_backend_matrix.c` exercises all 8 (backend × mode) combos against the dummy `.att1` model; reports pass/fail, timing, token, and counter info.
+- Milestone 30: Real model conversion plan — `docs/real_model_conversion.md` documents tensor naming, dtypes, matrix conventions, q8 rules, and validation ladder; no code changes.
 
 ## Active Task
 
-Milestone 30: Real model conversion plan and `.att1` compatibility spec.
-- Goal: Document the path from real model artifacts to a valid `.att1` file without implementing the converter yet.
-- `docs/real_model_conversion.md` covers: target architecture, tensor naming, dtypes, matrix conventions, q8 rules, shard expectations, validation ladder, and risks.
-- No source code changes; no Makefile changes; `make test` remains Python-free.
-- Next implementation milestone: converter skeleton (Stage 1 of the validation ladder) after this plan is accepted.
+Milestone 31: ATT-1 LLaMA converter skeleton.
+- `compiler/convert_llama_to_att1.py`: validates model dir layout, resolves architecture fields (both camelCase HF aliases and short-form), derives `rope_dim`, prints planned ATT-1 config, reports `STUB ONLY` — no weight loading yet.
+- `compiler/fixtures/tiny_llama/config.json`: minimal 2-layer, 2-head, d=32 LLaMA fixture for smoke testing.
+- `compiler/fixtures/tiny_llama_config.json`: named reference copy of the fixture.
+- Converter exits cleanly on missing config (exit 1), unknown architecture (exit 2), invalid dir (exit 1), or failed config validation (exit 1).
+- `make test` remains Python-free; no C test files changed.
 
 ## Next Prompt for Codex
 
