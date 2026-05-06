@@ -10,6 +10,14 @@ BAK_DEST ?= /home/rick/Remote/Terrastation/backup/ATT-1
 CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread -I$(INCLUDE_DIR)
 LDFLAGS :=
 LDLIBS := -lm -pthread
+CUDA ?= 0
+CUDA_HOME ?= /usr/local/cuda
+
+ifeq ($(CUDA),1)
+CFLAGS += -DATT1_ENABLE_CUDA -I$(CUDA_HOME)/include
+LDFLAGS += -L$(CUDA_HOME)/lib64
+LDLIBS += -lcudart
+endif
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
 INSPECT_BIN := $(BUILD_DIR)/att1-inspect
@@ -34,6 +42,7 @@ COMMON_SRCS := \
 	$(SRC_DIR)/sampler.c \
 	$(SRC_DIR)/backend_cpu_f32.c \
 	$(SRC_DIR)/backend_cpu_q8.c \
+	$(SRC_DIR)/backend_cuda.c \
 	$(SRC_DIR)/quant.c \
 	$(SRC_DIR)/matmul_q8.c \
 	$(SRC_DIR)/trace.c \

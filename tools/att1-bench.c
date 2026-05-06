@@ -1,3 +1,4 @@
+#include "att1_backend.h"
 #include "att1_cluster_infer.h"
 #include "att1_infer.h"
 #include "att1_model.h"
@@ -9,7 +10,7 @@
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N]\n",
+    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N] [--backend cpu-f32|cpu-q8|cuda]\n",
            argv0);
 }
 
@@ -44,6 +45,26 @@ static size_t benchmark_token_count(const att1_model *model,
 
     available = (size_t)model->config.max_seq_len - prompt_bytes + 1u;
     return requested_tokens < available ? requested_tokens : available;
+}
+
+static att1_status_t create_backend(const char *name, att1_backend **out_backend)
+{
+    if (out_backend == NULL) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    *out_backend = NULL;
+
+    if ((name == NULL) || (strcmp(name, "cpu-f32") == 0)) {
+        return att1_backend_cpu_f32_create(out_backend);
+    }
+    if (strcmp(name, "cpu-q8") == 0) {
+        return att1_backend_cpu_q8_create(out_backend);
+    }
+    if (strcmp(name, "cuda") == 0) {
+        return att1_backend_cuda_create(out_backend);
+    }
+
+    return ATT1_ERR_INVALID_ARG;
 }
 
 static void print_counters(const att1_trace_t *trace)
@@ -110,10 +131,12 @@ static void print_counters(const att1_trace_t *trace)
 static int run_single(const att1_model *model,
                       const unsigned char *prompt,
                       size_t prompt_bytes,
-                      size_t max_tokens)
+                      size_t max_tokens,
+                      const char *backend_name)
 {
     att1_infer_t *infer = NULL;
     att1_trace_t *trace = NULL;
+    att1_backend *backend = NULL;
     uint32_t *tokens = NULL;
     size_t out_count = 0u;
     size_t run_tokens = benchmark_token_count(model, prompt_bytes, max_tokens);
@@ -126,8 +149,23 @@ static int run_single(const att1_model *model,
     }
 
     if ((att1_trace_create(model->config.n_layers, 1u, &trace) != ATT1_OK) ||
-        (att1_infer_create(model, &infer) != ATT1_OK) ||
-        (att1_infer_set_trace(infer, trace) != ATT1_OK) ||
+        (att1_infer_create(model, &infer) != ATT1_OK)) {
+        goto cleanup;
+    }
+
+    if (backend_name != NULL) {
+        if (create_backend(backend_name, &backend) != ATT1_OK) {
+            fprintf(stderr, "backend unsupported or unavailable: %s\n", backend_name);
+            goto cleanup;
+        }
+        if (att1_infer_set_backend(infer, backend) != ATT1_OK) {
+            att1_backend_destroy(backend);
+            goto cleanup;
+        }
+        backend = NULL;
+    }
+
+    if ((att1_infer_set_trace(infer, trace) != ATT1_OK) ||
         (att1_infer_generate(infer,
                              prompt,
                              prompt_bytes,
@@ -139,6 +177,7 @@ static int run_single(const att1_model *model,
     }
 
     printf("mode=single\n");
+    printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);
     printf("generated_tokens=%zu\n", out_count);
@@ -149,6 +188,7 @@ static int run_single(const att1_model *model,
     rc = 0;
 
 cleanup:
+    att1_backend_destroy(backend);
     att1_infer_destroy(infer);
     att1_trace_destroy(trace);
     free(tokens);
@@ -159,11 +199,13 @@ static int run_cluster(const att1_model *model,
                        const unsigned char *prompt,
                        size_t prompt_bytes,
                        size_t max_tokens,
-                       size_t tile_count)
+                       size_t tile_count,
+                       const char *backend_name)
 {
     att1_cluster_infer_config config;
     att1_cluster_infer_t *infer = NULL;
     att1_trace_t *trace = NULL;
+    att1_backend *backend = NULL;
     uint32_t *tokens = NULL;
     size_t out_count = 0u;
     size_t run_tokens = benchmark_token_count(model, prompt_bytes, max_tokens);
@@ -180,8 +222,23 @@ static int run_cluster(const att1_model *model,
     config.fabric_max_payload_bytes = 0u;
 
     if ((att1_trace_create(model->config.n_layers, tile_count, &trace) != ATT1_OK) ||
-        (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK) ||
-        (att1_cluster_infer_set_trace(infer, trace) != ATT1_OK) ||
+        (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK)) {
+        goto cleanup;
+    }
+
+    if (backend_name != NULL) {
+        if (create_backend(backend_name, &backend) != ATT1_OK) {
+            fprintf(stderr, "backend unsupported or unavailable: %s\n", backend_name);
+            goto cleanup;
+        }
+        if (att1_cluster_infer_set_backend(infer, backend) != ATT1_OK) {
+            att1_backend_destroy(backend);
+            goto cleanup;
+        }
+        backend = NULL;
+    }
+
+    if ((att1_cluster_infer_set_trace(infer, trace) != ATT1_OK) ||
         (att1_cluster_infer_generate(infer,
                                      prompt,
                                      prompt_bytes,
@@ -193,6 +250,7 @@ static int run_cluster(const att1_model *model,
     }
 
     printf("mode=cluster\n");
+    printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
     printf("tiles=%zu\n", tile_count);
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);
@@ -204,6 +262,7 @@ static int run_cluster(const att1_model *model,
     rc = 0;
 
 cleanup:
+    att1_backend_destroy(backend);
     att1_cluster_infer_destroy(infer);
     att1_trace_destroy(trace);
     free(tokens);
@@ -215,6 +274,7 @@ int main(int argc, char **argv)
     const char *model_path = NULL;
     const char *prompt = NULL;
     const char *mode = NULL;
+    const char *backend_name = NULL;
     size_t max_tokens = 0u;
     size_t tile_count = 2u;
     att1_model model;
@@ -236,6 +296,14 @@ int main(int argc, char **argv)
             }
         } else if ((strcmp(argv[i], "--mode") == 0) && ((i + 1) < argc)) {
             mode = argv[++i];
+        } else if ((strcmp(argv[i], "--backend") == 0) && ((i + 1) < argc)) {
+            backend_name = argv[++i];
+            if ((strcmp(backend_name, "cpu-f32") != 0) &&
+                (strcmp(backend_name, "cpu-q8") != 0) &&
+                (strcmp(backend_name, "cuda") != 0)) {
+                usage(argv[0]);
+                return 1;
+            }
         } else if ((strcmp(argv[i], "--tiles") == 0) && ((i + 1) < argc)) {
             if ((parse_size(argv[++i], &tile_count) != 0) ||
                 (tile_count == 0u)) {
@@ -263,13 +331,15 @@ int main(int argc, char **argv)
         rc = run_single(&model,
                         (const unsigned char *)prompt,
                         strlen(prompt),
-                        max_tokens);
+                        max_tokens,
+                        backend_name);
     } else if (strcmp(mode, "cluster") == 0) {
         rc = run_cluster(&model,
                          (const unsigned char *)prompt,
                          strlen(prompt),
                          max_tokens,
-                         tile_count);
+                         tile_count,
+                         backend_name);
     } else {
         usage(argv[0]);
         rc = 1;

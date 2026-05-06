@@ -61,6 +61,16 @@ struct att1_backend {
 
 att1_status_t att1_backend_cpu_f32_create(att1_backend **out_backend);
 att1_status_t att1_backend_cpu_q8_create(att1_backend **out_backend);
+int att1_backend_cuda_available(void);
+att1_status_t att1_backend_cuda_create(att1_backend **out_backend);
+att1_status_t att1_backend_cuda_copy_host_to_device(att1_backend *backend,
+                                                    void *device_dst,
+                                                    const void *host_src,
+                                                    size_t bytes);
+att1_status_t att1_backend_cuda_copy_device_to_host(att1_backend *backend,
+                                                    void *host_dst,
+                                                    const void *device_src,
+                                                    size_t bytes);
 att1_status_t att1_backend_default_create(att1_backend **out_backend);
 void att1_backend_destroy(att1_backend *backend);
 

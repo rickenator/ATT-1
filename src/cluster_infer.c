@@ -583,3 +583,15 @@ att1_status_t att1_cluster_infer_set_trace(att1_cluster_infer_t *infer,
     infer->trace = trace;
     return ATT1_OK;
 }
+
+att1_status_t att1_cluster_infer_set_backend(att1_cluster_infer_t *infer,
+                                             att1_backend *backend)
+{
+    if ((infer == NULL) || (backend == NULL) || (backend->ops == NULL)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    att1_backend_destroy(infer->backend);
+    infer->backend = backend;
+    return ATT1_OK;
+}

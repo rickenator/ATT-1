@@ -128,5 +128,10 @@ att1_status_t att1_backend_default_create(att1_backend **out_backend)
 
 void att1_backend_destroy(att1_backend *backend)
 {
+    if (backend == NULL) {
+        return;
+    }
+
+    free(backend->user_data);
     free(backend);
 }

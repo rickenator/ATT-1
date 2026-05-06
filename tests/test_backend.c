@@ -208,6 +208,59 @@ static int check_cpu_q8_backend(void)
     return 0;
 }
 
+static int check_cuda_backend_skeleton(void)
+{
+    att1_backend *backend = NULL;
+    att1_status_t status = ATT1_OK;
+    float value = 1.0f;
+
+    status = att1_backend_cuda_create(&backend);
+    if (!att1_backend_cuda_available()) {
+        if ((status != ATT1_ERR_UNSUPPORTED) || (backend != NULL)) {
+            fputs("cuda unavailable path should report unsupported\n", stderr);
+            att1_backend_destroy(backend);
+            return -1;
+        }
+
+        if (att1_backend_cuda_copy_host_to_device(NULL,
+                                                  &value,
+                                                  &value,
+                                                  sizeof(value)) !=
+            ATT1_ERR_INVALID_ARG) {
+            fputs("cuda copy null backend should fail invalid-arg\n", stderr);
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if ((status != ATT1_OK) || (backend == NULL) ||
+        (backend->ops == NULL) ||
+        (strcmp(backend->ops->name, "cuda") != 0) ||
+        (backend->ops->alloc == NULL) ||
+        (backend->ops->free == NULL) ||
+        (backend->ops->sync == NULL)) {
+        fputs("cuda available path should create lifecycle backend\n", stderr);
+        att1_backend_destroy(backend);
+        return -1;
+    }
+
+    if (backend->ops->matmul_f32(backend,
+                                 &value,
+                                 &value,
+                                 &value,
+                                 1u,
+                                 1u,
+                                 1u) == 0) {
+        fputs("cuda skeleton should not implement matmul yet\n", stderr);
+        att1_backend_destroy(backend);
+        return -1;
+    }
+
+    att1_backend_destroy(backend);
+    return 0;
+}
+
 int main(void)
 {
     if (att1_backend_default_create(NULL) != ATT1_ERR_INVALID_ARG) {
@@ -217,7 +270,8 @@ int main(void)
     att1_backend_destroy(NULL);
 
     if ((check_cpu_f32_backend() != 0) ||
-        (check_cpu_q8_backend() != 0)) {
+        (check_cpu_q8_backend() != 0) ||
+        (check_cuda_backend_skeleton() != 0)) {
         fputs("backend test failed\n", stderr);
         return 1;
     }

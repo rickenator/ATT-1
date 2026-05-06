@@ -10,7 +10,7 @@
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s [--iterations N]\n", argv0);
+    printf("usage: %s [--iterations N] [--backend cpu-q8|cuda]\n", argv0);
 }
 
 static int parse_size(const char *text, size_t *out)
@@ -51,6 +51,7 @@ int main(int argc, char **argv)
     float f32_out[12];
     float q8_out[12];
     att1_backend *backend = NULL;
+    const char *backend_name = "cpu-q8";
     att1_q8_matrix q8;
     uint64_t f32_start = 0u;
     uint64_t q8_start = 0u;
@@ -75,13 +76,26 @@ int main(int argc, char **argv)
                 usage(argv[0]);
                 return 1;
             }
+        } else if ((strcmp(argv[i], "--backend") == 0) &&
+                   ((i + 1u) < (size_t)argc)) {
+            backend_name = argv[++i];
+            if ((strcmp(backend_name, "cpu-q8") != 0) &&
+                (strcmp(backend_name, "cuda") != 0)) {
+                usage(argv[0]);
+                return 1;
+            }
         } else {
             usage(argv[0]);
             return 1;
         }
     }
 
-    if (att1_backend_cpu_q8_create(&backend) != ATT1_OK) {
+    if (strcmp(backend_name, "cuda") == 0) {
+        if (att1_backend_cuda_create(&backend) != ATT1_OK) {
+            fputs("cuda backend unsupported or unavailable\n", stderr);
+            return 1;
+        }
+    } else if (att1_backend_cpu_q8_create(&backend) != ATT1_OK) {
         fputs("q8 backend creation failed\n", stderr);
         return 1;
     }

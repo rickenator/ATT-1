@@ -1,6 +1,7 @@
 #ifndef ATT1_CLUSTER_INFER_H
 #define ATT1_CLUSTER_INFER_H
 
+#include "att1_backend.h"
 #include "att1_model.h"
 #include "att1_shard.h"
 #include "att1_status.h"
@@ -70,5 +71,12 @@ att1_status_t att1_cluster_infer_get_tile_shard(
 
 att1_status_t att1_cluster_infer_set_trace(att1_cluster_infer_t *infer,
                                            att1_trace_t *trace);
+
+/*
+ * Replace the inference backend. On success, infer takes ownership of backend.
+ * Passing NULL is invalid.
+ */
+att1_status_t att1_cluster_infer_set_backend(att1_cluster_infer_t *infer,
+                                             att1_backend *backend);
 
 #endif
