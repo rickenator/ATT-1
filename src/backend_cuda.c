@@ -348,12 +348,86 @@ static int cuda_backend_rope_f32(att1_backend *backend,
                                  size_t position,
                                  float theta)
 {
+#ifdef ATT1_ENABLE_CUDA
+    att1_cuda_backend_data *data = NULL;
+    cublasHandle_t handle;
+    float *d_values = NULL;
+    int ok = 0;
+    int handle_valid = 0;
+    size_t i = 0u;
+
+    if ((backend == NULL) || (backend->user_data == NULL) ||
+        (values == NULL)) {
+        return -1;
+    }
+    if ((count == 0u) || ((count % 2u) != 0u) ||
+        (theta <= 0.0f) || (count > (size_t)INT_MAX)) {
+        return -1;
+    }
+
+    data = (att1_cuda_backend_data *)backend->user_data;
+    if (cudaSetDevice(data->device_id) != cudaSuccess) {
+        return -1;
+    }
+
+    if (cudaMalloc((void **)&d_values, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMemcpy(d_values,
+                   values,
+                   count * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+
+    if (cublasCreate(&handle) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+    handle_valid = 1;
+
+    for (i = 0u; i < count; i += 2u) {
+        const float exponent = (float)i / (float)count;
+        const float frequency = 1.0f / powf(theta, exponent);
+        const float angle = (float)position * frequency;
+        const float c = cosf(angle);
+        /* cublasSrot uses [x'; y'] = [c s; -s c] [x; y].
+           Use -sin(angle) to match RoPE's [c -s; s c]. */
+        const float s = -sinf(angle);
+
+        if (cublasSrot(handle,
+                       1,
+                       d_values + i,
+                       1,
+                       d_values + i + 1u,
+                       1,
+                       &c,
+                       &s) != CUBLAS_STATUS_SUCCESS) {
+            goto cleanup;
+        }
+    }
+
+    if (cudaMemcpy(values,
+                   d_values,
+                   count * sizeof(float),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+        goto cleanup;
+    }
+    ok = 1;
+
+cleanup:
+    if (handle_valid) {
+        (void)cublasDestroy(handle);
+    }
+    (void)cudaFree(d_values);
+    return ok ? 0 : -1;
+#else
     (void)backend;
     (void)values;
     (void)count;
     (void)position;
     (void)theta;
     return -1;
+#endif
 }
 
 static int cuda_backend_ffn_swiglu_f32(att1_backend *backend,

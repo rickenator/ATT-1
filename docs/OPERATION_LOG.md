@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 17: CUDA softmax prototype.
+Milestone 18: CUDA softmax prototype.
 
 ## Hard Rules
 
@@ -41,33 +41,35 @@ Milestone 17: CUDA softmax prototype.
 - Milestone 14: CUDA f32 matmul prototype — `cublasSgemm` wired into `cuda_backend_matmul_f32`; five-case `test_cuda_matmul` validation suite.
 - Milestone 15: CUDA RMSNorm prototype — `cuda_backend_rmsnorm_f32` implemented with cuBLAS primitives and validated on both CPU-only and CUDA-capable test paths.
 - Milestone 16: CUDA FFN/SwiGLU prototype — `cuda_backend_ffn_swiglu_f32` implemented and validated against CPU f32 reference with deterministic tiny/medium FFN tests.
+- Milestone 17: CUDA RoPE prototype — `cuda_backend_rope_f32` implemented with per-pair `cublasSrot` rotation and validated against CPU f32 RoPE reference.
 
 ## Active Task
 
-Milestone 16 CUDA FFN/SwiGLU prototype is complete and validated on both the
+Milestone 17 CUDA RoPE prototype is complete and validated on both the
 default CPU-only build and a CUDA-enabled build.
 
-Milestone 16 scope:
-- `src/backend_cuda.c`: `cuda_backend_ffn_swiglu_f32` now executes a real CUDA-backed
-  SwiGLU path using deterministic host SiLU staging plus cuBLAS-backed
-  elementwise multiply.
-- `tests/test_cuda_ffn.c`: added deterministic FFN/SwiGLU validation including
-  tiny hand-checkable FFN, medium FFN, zero weights, activation-sign behavior,
-  shape failure, unavailable-path handling, and no silent fallback checks.
+Milestone 17 scope:
+- `src/backend_cuda.c`: `cuda_backend_rope_f32` now executes CUDA-backed RoPE
+  rotations using per-pair `cublasSrot`, matching CPU RoPE angle/frequency
+  semantics.
+- `tests/test_cuda_rope.c`: added deterministic RoPE validation including
+  position-0 identity, pair mapping, odd-dimension failure,
+  multi-head/multi-position CPU-vs-CUDA checks, unavailable-path handling,
+  and no silent fallback checks.
 - `tests/test_backend.c`: extended CUDA backend coverage to verify
-  `ffn_swiglu_f32` succeeds and matches CPU reference.
-- `Makefile`: test suite now includes `cuda_ffn`.
+  `rope_f32` succeeds and matches CPU reference.
+- `Makefile`: test suite now includes `cuda_rope`.
 - `docs/cuda_backend.md`: updated kernel status and test coverage sections.
 
-Milestone 16 validation status:
+Milestone 17 validation status:
 - `make clean && make && make test` passes on the default CPU-only build
-  (28/28 tests pass, including `cuda_ffn`).
+  (29/29 tests pass, including `cuda_rope`).
 - `make clean && make CUDA=1 && make test CUDA=1` passes on a CUDA-capable
-  machine.
+  machine (reported).
 
 ## Next Prompt for Codex
 
-Run Milestone 17 only.
+Run Milestone 18 only.
 
 Goal:
 Add CUDA softmax kernel — numerically stable float32 normalization using the

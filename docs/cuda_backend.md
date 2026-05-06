@@ -110,11 +110,32 @@ This is intentionally scoped to the current API and avoids introducing a new
 CUDA kernel toolchain requirement while providing a real CUDA execution path for
 FFN gating behavior.
 
+### Milestone 17: rope_f32 (CUDA-backed)
+
+`rope_f32` is implemented in the CUDA backend for Q/K vectors with semantics
+matched to `att1_rope_f32`.
+
+Implementation details:
+
+1. Input vector is copied to device.
+2. Each even/odd pair (`[0,1]`, `[2,3]`, ...) is rotated on device using
+   `cublasSrot`.
+3. Per-pair angle matches CPU reference exactly:
+   `angle = position * (1 / pow(theta, i / count))` where `i` is the even index.
+4. Result is copied back to host.
+
+To map BLAS rotation convention to RoPE convention, the implementation uses
+`-sin(angle)` with `cublasSrot`, yielding the RoPE matrix:
+
+```
+[c -s]
+[s  c]
+```
+
 ### Not yet implemented
 
-`matmul_q8xf32`, `softmax_f32`, and `rope_f32` still return failure. Full
-transformer inference via CUDA is not attempted until all operator kernels are
-validated.
+`matmul_q8xf32` and `softmax_f32` still return failure. Full transformer
+inference via CUDA is not attempted until all operator kernels are validated.
 
 ## Tests
 
@@ -156,6 +177,18 @@ validated.
    unavailable CUDA reports unsupported.
 6. **No silent fallback** — backend name is asserted as `"cuda"` and output is
    compared against CPU reference.
+
+`tests/test_cuda_rope.c` validates the CUDA RoPE prototype:
+
+1. **Position 0 identity** — RoPE with `position=0` leaves vectors unchanged.
+2. **Pair layout** — validates independent rotations for pairs `[0,1]`, `[2,3]`,
+   `[4,5]`.
+3. **Odd dimension failure** — odd `head_dim` fails cleanly.
+4. **Deterministic multi-head/multi-position** — per-head CPU vs CUDA comparisons
+   across several positions within 1e-3 tolerance.
+5. **Unsupported path and no silent fallback** — unavailable CUDA is reported as
+   unsupported, and CUDA-selected backend is asserted as `"cuda"` before result
+   comparison against CPU reference.
 
 ## CLI
 

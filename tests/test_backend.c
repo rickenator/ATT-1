@@ -221,6 +221,8 @@ static int check_cuda_backend_skeleton(void)
     const float norm_weight[4] = {1.0f, 0.5f, 1.5f, 2.0f};
     const float swiglu_gate[4] = {-2.0f, -0.5f, 1.0f, 3.0f};
     const float swiglu_value[4] = {1.5f, -2.0f, 0.5f, 4.0f};
+    float backend_rope[6] = {1.0f, 0.0f, 0.0f, 1.0f, 2.0f, 3.0f};
+    float reference_rope[6] = {1.0f, 0.0f, 0.0f, 1.0f, 2.0f, 3.0f};
     float backend_norm[4] = {0.0f};
     float reference_norm[4] = {0.0f};
     float backend_swiglu[4] = {0.0f};
@@ -321,6 +323,29 @@ static int check_cuda_backend_skeleton(void)
     for (i = 0u; i < 4u; i++) {
         if (!near_cuda_f32(backend_swiglu[i], reference_swiglu[i])) {
             fputs("cuda ffn_swiglu_f32 result mismatch\n", stderr);
+            att1_backend_destroy(backend);
+            return -1;
+        }
+    }
+
+    if ((backend->ops->rope_f32 == NULL) ||
+        (backend->ops->rope_f32(backend,
+                                backend_rope,
+                                6u,
+                                1u,
+                                1.0f) != 0) ||
+        (att1_rope_f32(reference_rope,
+                       6u,
+                       1u,
+                       1.0f) != 0)) {
+        fputs("cuda rope_f32 should succeed\n", stderr);
+        att1_backend_destroy(backend);
+        return -1;
+    }
+
+    for (i = 0u; i < 6u; i++) {
+        if (!near_cuda_f32(backend_rope[i], reference_rope[i])) {
+            fputs("cuda rope_f32 result mismatch\n", stderr);
             att1_backend_destroy(backend);
             return -1;
         }
