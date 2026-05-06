@@ -9,9 +9,8 @@
 
 static void usage(const char *argv0)
 {
-    fprintf(stderr,
-            "usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster\n",
-            argv0);
+    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N]\n",
+           argv0);
 }
 
 static int parse_size(const char *text, size_t *out)
@@ -30,6 +29,21 @@ static int parse_size(const char *text, size_t *out)
 
     *out = (size_t)value;
     return 0;
+}
+
+static size_t benchmark_token_count(const att1_model *model,
+                                    size_t prompt_bytes,
+                                    size_t requested_tokens)
+{
+    size_t available = 0u;
+
+    if ((model == NULL) || (prompt_bytes == 0u) ||
+        (prompt_bytes > model->config.max_seq_len)) {
+        return requested_tokens;
+    }
+
+    available = (size_t)model->config.max_seq_len - prompt_bytes + 1u;
+    return requested_tokens < available ? requested_tokens : available;
 }
 
 static void print_counters(const att1_trace_t *trace)
@@ -102,7 +116,8 @@ static int run_single(const att1_model *model,
     att1_trace_t *trace = NULL;
     uint32_t *tokens = NULL;
     size_t out_count = 0u;
-    size_t capacity = max_tokens == 0u ? 1u : max_tokens;
+    size_t run_tokens = benchmark_token_count(model, prompt_bytes, max_tokens);
+    size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
 
     tokens = calloc(capacity, sizeof(*tokens));
@@ -116,7 +131,7 @@ static int run_single(const att1_model *model,
         (att1_infer_generate(infer,
                              prompt,
                              prompt_bytes,
-                             max_tokens,
+                             run_tokens,
                              tokens,
                              capacity,
                              &out_count) != ATT1_OK)) {
@@ -124,6 +139,8 @@ static int run_single(const att1_model *model,
     }
 
     printf("mode=single\n");
+    printf("requested_tokens=%zu\n", max_tokens);
+    printf("benchmark_tokens=%zu\n", run_tokens);
     printf("generated_tokens=%zu\n", out_count);
     if (out_count > 0u) {
         printf("last_token=%u\n", tokens[out_count - 1u]);
@@ -141,15 +158,16 @@ cleanup:
 static int run_cluster(const att1_model *model,
                        const unsigned char *prompt,
                        size_t prompt_bytes,
-                       size_t max_tokens)
+                       size_t max_tokens,
+                       size_t tile_count)
 {
     att1_cluster_infer_config config;
     att1_cluster_infer_t *infer = NULL;
     att1_trace_t *trace = NULL;
     uint32_t *tokens = NULL;
     size_t out_count = 0u;
-    size_t capacity = max_tokens == 0u ? 1u : max_tokens;
-    size_t tile_count = model->config.n_tiles > 1u ? model->config.n_tiles : 2u;
+    size_t run_tokens = benchmark_token_count(model, prompt_bytes, max_tokens);
+    size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
 
     tokens = calloc(capacity, sizeof(*tokens));
@@ -167,7 +185,7 @@ static int run_cluster(const att1_model *model,
         (att1_cluster_infer_generate(infer,
                                      prompt,
                                      prompt_bytes,
-                                     max_tokens,
+                                     run_tokens,
                                      tokens,
                                      capacity,
                                      &out_count) != ATT1_OK)) {
@@ -176,6 +194,8 @@ static int run_cluster(const att1_model *model,
 
     printf("mode=cluster\n");
     printf("tiles=%zu\n", tile_count);
+    printf("requested_tokens=%zu\n", max_tokens);
+    printf("benchmark_tokens=%zu\n", run_tokens);
     printf("generated_tokens=%zu\n", out_count);
     if (out_count > 0u) {
         printf("last_token=%u\n", tokens[out_count - 1u]);
@@ -196,12 +216,16 @@ int main(int argc, char **argv)
     const char *prompt = NULL;
     const char *mode = NULL;
     size_t max_tokens = 0u;
+    size_t tile_count = 2u;
     att1_model model;
     int i = 0;
     int rc = 1;
 
     for (i = 1; i < argc; i++) {
-        if ((strcmp(argv[i], "--model") == 0) && ((i + 1) < argc)) {
+        if (strcmp(argv[i], "--help") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else if ((strcmp(argv[i], "--model") == 0) && ((i + 1) < argc)) {
             model_path = argv[++i];
         } else if ((strcmp(argv[i], "--prompt") == 0) && ((i + 1) < argc)) {
             prompt = argv[++i];
@@ -212,6 +236,12 @@ int main(int argc, char **argv)
             }
         } else if ((strcmp(argv[i], "--mode") == 0) && ((i + 1) < argc)) {
             mode = argv[++i];
+        } else if ((strcmp(argv[i], "--tiles") == 0) && ((i + 1) < argc)) {
+            if ((parse_size(argv[++i], &tile_count) != 0) ||
+                (tile_count == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
         } else {
             usage(argv[0]);
             return 1;
@@ -238,7 +268,8 @@ int main(int argc, char **argv)
         rc = run_cluster(&model,
                          (const unsigned char *)prompt,
                          strlen(prompt),
-                         max_tokens);
+                         max_tokens,
+                         tile_count);
     } else {
         usage(argv[0]);
         rc = 1;

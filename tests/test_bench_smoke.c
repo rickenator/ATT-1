@@ -70,13 +70,13 @@ static int check_bench_tools(void)
     char output[4096];
 
     if (run_command("./build/att1-bench --model models/dummy/model.att1 "
-                    "--prompt ATT1 --tokens 2 --mode single "
+                    "--prompt hello --tokens 8 --mode single "
                     "> build/bench_single.txt") != 0) {
         return -1;
     }
 
     if (run_command("./build/att1-bench --model models/dummy/model.att1 "
-                    "--prompt ATT1 --tokens 2 --mode cluster "
+                    "--prompt hello --tokens 8 --mode cluster --tiles 2 "
                     "> build/bench_cluster.txt") != 0) {
         return -1;
     }
@@ -89,6 +89,7 @@ static int check_bench_tools(void)
 
     if ((read_file("build/bench_cluster.txt", output, sizeof(output)) != 0) ||
         (strstr(output, "mode=cluster") == NULL) ||
+        (strstr(output, "tiles=2") == NULL) ||
         (strstr(output, "fabric_packets_sent=") == NULL)) {
         return -1;
     }
@@ -110,6 +111,7 @@ static int check_size_tools(void)
     }
 
     if (run_command("./build/att1-size --preset gpt-oss-120b-shape "
+                    "--tiles 8 --context 8192 --dtype q4 "
                     "> build/size_gptoss.txt") != 0) {
         return -1;
     }
@@ -119,7 +121,10 @@ static int check_size_tools(void)
     }
 
     if ((strstr(output, "synthetic/non-executable") == NULL) ||
-        (strstr(output, "no real gpt-oss-120b inference is attempted") == NULL)) {
+        (strstr(output, "no real gpt-oss-120b inference is attempted") == NULL) ||
+        (strstr(output, "dtype=q4") == NULL) ||
+        (strstr(output, "max_seq_len=8192") == NULL) ||
+        (strstr(output, "tiles=8") == NULL)) {
         return -1;
     }
 

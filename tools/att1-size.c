@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct preset_shape {
@@ -26,6 +27,39 @@ static void print_bytes_line(const char *label, uint64_t bytes)
            label,
            (unsigned long long)bytes,
            (double)bytes / (1024.0 * 1024.0 * 1024.0));
+}
+
+static void usage(const char *argv0)
+{
+    printf("usage: %s --preset tiny-dummy|gpt-oss-120b-shape [--tiles N] [--context N] [--dtype f32|f16|q8|q4]\n",
+           argv0);
+}
+
+static int parse_u64(const char *text, uint64_t *out)
+{
+    char *end = NULL;
+    unsigned long long value = 0u;
+
+    if ((text == NULL) || (out == NULL)) {
+        return -1;
+    }
+
+    value = strtoull(text, &end, 10);
+    if ((end == text) || (*end != '\0')) {
+        return -1;
+    }
+
+    *out = (uint64_t)value;
+    return 0;
+}
+
+static int dtype_supported(const char *dtype)
+{
+    return (dtype == NULL) ||
+           (strcmp(dtype, "f32") == 0) ||
+           (strcmp(dtype, "f16") == 0) ||
+           (strcmp(dtype, "q8") == 0) ||
+           (strcmp(dtype, "q4") == 0);
 }
 
 static uint64_t tiny_params(void)
@@ -83,7 +117,7 @@ static int load_preset(const char *name, preset_shape *out)
     return -1;
 }
 
-static void print_report(const preset_shape *shape)
+static void print_report(const preset_shape *shape, const char *dtype)
 {
     const uint64_t f32_bytes = shape->total_params * 4u;
     const uint64_t f16_bytes = shape->total_params * 2u;
@@ -99,6 +133,9 @@ static void print_report(const preset_shape *shape)
     const uint64_t activation_bytes = shape->d_model * 4u;
 
     printf("preset=%s\n", shape->name);
+    if (dtype != NULL) {
+        printf("dtype=%s\n", dtype);
+    }
     printf("note=%s\n", shape->note);
     printf("total_params=%llu\n",
            (unsigned long long)shape->total_params);
@@ -125,13 +162,41 @@ int main(int argc, char **argv)
 {
     preset_shape shape;
     const char *preset = NULL;
+    const char *dtype = NULL;
+    uint64_t tiles = 0u;
+    uint64_t context = 0u;
+    int i = 0;
 
-    if ((argc == 3) && (strcmp(argv[1], "--preset") == 0)) {
-        preset = argv[2];
-    } else {
-        fprintf(stderr,
-                "usage: %s --preset tiny-dummy|gpt-oss-120b-shape\n",
-                argv[0]);
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else if ((strcmp(argv[i], "--preset") == 0) && ((i + 1) < argc)) {
+            preset = argv[++i];
+        } else if ((strcmp(argv[i], "--tiles") == 0) && ((i + 1) < argc)) {
+            if ((parse_u64(argv[++i], &tiles) != 0) || (tiles == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "--context") == 0) && ((i + 1) < argc)) {
+            if ((parse_u64(argv[++i], &context) != 0) || (context == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "--dtype") == 0) && ((i + 1) < argc)) {
+            dtype = argv[++i];
+            if (!dtype_supported(dtype)) {
+                usage(argv[0]);
+                return 1;
+            }
+        } else {
+            usage(argv[0]);
+            return 1;
+        }
+    }
+
+    if (preset == NULL) {
+        usage(argv[0]);
         return 1;
     }
 
@@ -140,6 +205,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    print_report(&shape);
+    if (tiles != 0u) {
+        shape.n_tiles = tiles;
+    }
+    if (context != 0u) {
+        shape.max_seq_len = context;
+    }
+
+    print_report(&shape, dtype);
     return 0;
 }
