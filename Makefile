@@ -5,13 +5,13 @@ INCLUDE_DIR := include
 SRC_DIR := src
 TEST_DIR := tests
 
-CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -I$(INCLUDE_DIR)
+CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread -I$(INCLUDE_DIR)
 LDFLAGS :=
-LDLIBS := -lm
+LDLIBS := -lm -pthread
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
-	kv_cache attention transformer_block kv_mmu fabric
+	kv_cache attention transformer_block kv_mmu fabric runtime
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -23,6 +23,9 @@ COMMON_SRCS := \
 	$(SRC_DIR)/ffn.c \
 	$(SRC_DIR)/fabric.c \
 	simulator/sim_fabric_bus.c \
+	$(SRC_DIR)/tile.c \
+	$(SRC_DIR)/runtime.c \
+	simulator/sim_tile_thread.c \
 	$(SRC_DIR)/kv_cache.c \
 	$(SRC_DIR)/kv_mmu.c \
 	$(SRC_DIR)/attention.c \
