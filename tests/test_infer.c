@@ -1,6 +1,9 @@
+#include "att1_backend.h"
 #include "att1_infer.h"
+#include "att1_math.h"
 #include "att1_sampler.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +12,135 @@
 #define BAD_MISSING_PATH "build/infer_missing_tensor.att1"
 #define BAD_SHAPE_PATH "build/infer_wrong_shape.att1"
 #define BAD_LAYER_SHAPE_PATH "build/infer_wrong_layer_shape.att1"
+#define CPU_Q8_LOGIT_TOL 0.15f
+
+static unsigned g_fake_q8_matmul_calls = 0u;
+static unsigned g_fake_f32_matmul_calls = 0u;
+
+static void *fake_q8_alloc(att1_backend *backend, size_t bytes)
+{
+    (void)backend;
+    return malloc(bytes);
+}
+
+static void fake_q8_free(att1_backend *backend, void *ptr)
+{
+    (void)backend;
+    free(ptr);
+}
+
+static int fake_q8_sync(att1_backend *backend)
+{
+    (void)backend;
+    return 0;
+}
+
+static int fake_q8_matmul_f32(att1_backend *backend,
+                              float *dst,
+                              const float *lhs,
+                              const float *rhs,
+                              size_t rows,
+                              size_t cols,
+                              size_t inner)
+{
+    (void)backend;
+    (void)dst;
+    (void)lhs;
+    (void)rhs;
+    (void)rows;
+    (void)cols;
+    (void)inner;
+    g_fake_f32_matmul_calls++;
+    return -1;
+}
+
+static int fake_q8_matmul_q8xf32(att1_backend *backend,
+                                 float *dst,
+                                 const float *lhs,
+                                 size_t lhs_rows,
+                                 size_t lhs_cols,
+                                 const att1_q8_matrix *weights)
+{
+    (void)backend;
+    g_fake_q8_matmul_calls++;
+    return att1_matmul_q8xf32(dst, lhs, lhs_rows, lhs_cols, weights);
+}
+
+static int fake_q8_rmsnorm_f32(att1_backend *backend,
+                               float *dst,
+                               const float *src,
+                               const float *weight,
+                               size_t count,
+                               float epsilon)
+{
+    (void)backend;
+    return att1_rmsnorm_f32(dst, src, weight, count, epsilon);
+}
+
+static int fake_q8_softmax_f32(att1_backend *backend,
+                               float *values,
+                               size_t count)
+{
+    (void)backend;
+    return att1_softmax_f32(values, count);
+}
+
+static int fake_q8_rope_f32(att1_backend *backend,
+                            float *values,
+                            size_t count,
+                            size_t position,
+                            float theta)
+{
+    (void)backend;
+    return att1_rope_f32(values, count, position, theta);
+}
+
+static int fake_q8_ffn_swiglu_f32(att1_backend *backend,
+                                  float *dst,
+                                  const float *gate,
+                                  const float *value,
+                                  size_t count)
+{
+    (void)backend;
+    return att1_swiglu_f32(dst, gate, value, count);
+}
+
+static const att1_backend_ops fake_cpu_q8_ops = {
+    "cpu-q8",
+    fake_q8_alloc,
+    fake_q8_free,
+    fake_q8_sync,
+    fake_q8_matmul_f32,
+    fake_q8_matmul_q8xf32,
+    fake_q8_rmsnorm_f32,
+    fake_q8_softmax_f32,
+    fake_q8_rope_f32,
+    fake_q8_ffn_swiglu_f32
+};
+
+static const att1_backend_ops fake_cpu_q8_unsupported_ops = {
+    "cpu-q8",
+    fake_q8_alloc,
+    fake_q8_free,
+    fake_q8_sync,
+    fake_q8_matmul_f32,
+    NULL,
+    fake_q8_rmsnorm_f32,
+    fake_q8_softmax_f32,
+    fake_q8_rope_f32,
+    fake_q8_ffn_swiglu_f32
+};
+
+static att1_backend *make_fake_backend(const att1_backend_ops *ops)
+{
+    att1_backend *backend = calloc(1u, sizeof(*backend));
+
+    if (backend != NULL) {
+        backend->ops = ops;
+    }
+
+    return backend;
+}
 
 static uint64_t read_u64le(const unsigned char *p)
 {
@@ -418,6 +550,236 @@ static int check_prefill(const att1_model *model)
     return 0;
 }
 
+static int set_cpu_q8_backend(att1_infer_t *infer)
+{
+    att1_backend *backend = NULL;
+
+    if (att1_backend_cpu_q8_create(&backend) != ATT1_OK) {
+        return -1;
+    }
+
+    if (att1_infer_set_backend(infer, backend) != ATT1_OK) {
+        att1_backend_destroy(backend);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int check_cpu_q8_logits(const att1_model *model)
+{
+    att1_infer_t *f32 = NULL;
+    att1_infer_t *q8 = NULL;
+    const float *f32_logits = NULL;
+    const float *q8_logits = NULL;
+    size_t f32_count = 0u;
+    size_t q8_count = 0u;
+    uint32_t f32_token = 0u;
+    uint32_t q8_token = 0u;
+    size_t i = 0u;
+    float max_diff = 0.0f;
+
+    if ((att1_infer_create(model, &f32) != ATT1_OK) ||
+        (att1_infer_create(model, &q8) != ATT1_OK) ||
+        (set_cpu_q8_backend(q8) != 0)) {
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        fputs("cpu q8 logits: inference init failed\n", stderr);
+        return -1;
+    }
+
+    if ((att1_infer_decode_token(f32, (uint32_t)'A', &f32_token) != ATT1_OK) ||
+        (att1_infer_decode_token(q8, (uint32_t)'A', &q8_token) != ATT1_OK)) {
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        fputs("cpu q8 logits: decode failed\n", stderr);
+        return -1;
+    }
+
+    f32_logits = att1_infer_logits(f32, &f32_count);
+    q8_logits = att1_infer_logits(q8, &q8_count);
+    if ((f32_logits == NULL) ||
+        (q8_logits == NULL) ||
+        (f32_count != model->config.vocab_size) ||
+        (q8_count != model->config.vocab_size)) {
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        fputs("cpu q8 logits: logits shape check failed\n", stderr);
+        return -1;
+    }
+
+    for (i = 0u; i < f32_count; i++) {
+        const float diff = fabsf(f32_logits[i] - q8_logits[i]);
+
+        if (diff > max_diff) {
+            max_diff = diff;
+        }
+    }
+
+    if (max_diff > CPU_Q8_LOGIT_TOL) {
+        fprintf(stderr,
+                "cpu q8 logits: max diff %.6f exceeded %.6f "
+                "(f32 token=%u q8 token=%u)\n",
+                (double)max_diff,
+                (double)CPU_Q8_LOGIT_TOL,
+                f32_token,
+                q8_token);
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        return -1;
+    }
+
+    att1_infer_destroy(f32);
+    att1_infer_destroy(q8);
+    return 0;
+}
+
+static int check_cpu_q8_generated_tokens(const att1_model *model)
+{
+    const unsigned char prompt[5] = {'h', 'e', 'l', 'l', 'o'};
+    uint32_t f32_tokens[4] = {0u};
+    uint32_t q8_tokens[4] = {0u};
+    size_t f32_count = 0u;
+    size_t q8_count = 0u;
+    size_t i = 0u;
+    att1_infer_t *f32 = NULL;
+    att1_infer_t *q8 = NULL;
+
+    if ((att1_infer_create(model, &f32) != ATT1_OK) ||
+        (att1_infer_create(model, &q8) != ATT1_OK) ||
+        (set_cpu_q8_backend(q8) != 0)) {
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        fputs("cpu q8 tokens: inference init failed\n", stderr);
+        return -1;
+    }
+
+    if ((att1_infer_generate(f32,
+                             prompt,
+                             sizeof(prompt),
+                             4u,
+                             f32_tokens,
+                             4u,
+                             &f32_count) != ATT1_OK) ||
+        (att1_infer_generate(q8,
+                             prompt,
+                             sizeof(prompt),
+                             4u,
+                             q8_tokens,
+                             4u,
+                             &q8_count) != ATT1_OK)) {
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        fputs("cpu q8 tokens: generate failed\n", stderr);
+        return -1;
+    }
+
+    if ((f32_count != 4u) || (q8_count != 4u)) {
+        att1_infer_destroy(f32);
+        att1_infer_destroy(q8);
+        fputs("cpu q8 tokens: generated count mismatch\n", stderr);
+        return -1;
+    }
+
+    for (i = 0u; i < 4u; i++) {
+        if ((f32_tokens[i] >= model->config.vocab_size) ||
+            (q8_tokens[i] >= model->config.vocab_size)) {
+            att1_infer_destroy(f32);
+            att1_infer_destroy(q8);
+            fputs("cpu q8 tokens: generated token out of range\n", stderr);
+            return -1;
+        }
+
+        if (f32_tokens[i] != q8_tokens[i]) {
+            fprintf(stderr,
+                    "cpu q8 tokens: token %zu f32=%u q8=%u\n",
+                    i,
+                    f32_tokens[i],
+                    q8_tokens[i]);
+            att1_infer_destroy(f32);
+            att1_infer_destroy(q8);
+            return -1;
+        }
+    }
+
+    att1_infer_destroy(f32);
+    att1_infer_destroy(q8);
+    return 0;
+}
+
+static int check_cpu_q8_no_silent_f32_fallback(const att1_model *model)
+{
+    att1_infer_t *infer = NULL;
+    att1_backend *backend = NULL;
+    uint32_t token = 0u;
+
+    g_fake_q8_matmul_calls = 0u;
+    g_fake_f32_matmul_calls = 0u;
+
+    if (att1_infer_create(model, &infer) != ATT1_OK) {
+        fputs("cpu q8 fallback: inference init failed\n", stderr);
+        return -1;
+    }
+
+    backend = make_fake_backend(&fake_cpu_q8_ops);
+    if (backend == NULL) {
+        att1_infer_destroy(infer);
+        return -1;
+    }
+
+    if (att1_infer_set_backend(infer, backend) != ATT1_OK) {
+        att1_backend_destroy(backend);
+        att1_infer_destroy(infer);
+        fputs("cpu q8 fallback: set backend failed\n", stderr);
+        return -1;
+    }
+
+    if (att1_infer_decode_token(infer, (uint32_t)'A', &token) != ATT1_OK) {
+        att1_infer_destroy(infer);
+        fputs("cpu q8 fallback: decode failed\n", stderr);
+        return -1;
+    }
+
+    if ((g_fake_q8_matmul_calls == 0u) || (g_fake_f32_matmul_calls != 0u)) {
+        att1_infer_destroy(infer);
+        fputs("cpu q8 fallback: f32 matmul path was used\n", stderr);
+        return -1;
+    }
+
+    att1_infer_destroy(infer);
+    return 0;
+}
+
+static int check_cpu_q8_unsupported_path(const att1_model *model)
+{
+    att1_infer_t *infer = NULL;
+    att1_backend *backend = NULL;
+    att1_status_t status = ATT1_OK;
+
+    if (att1_infer_create(model, &infer) != ATT1_OK) {
+        fputs("cpu q8 unsupported: inference init failed\n", stderr);
+        return -1;
+    }
+
+    backend = make_fake_backend(&fake_cpu_q8_unsupported_ops);
+    if (backend == NULL) {
+        att1_infer_destroy(infer);
+        return -1;
+    }
+
+    status = att1_infer_set_backend(infer, backend);
+    if (status != ATT1_ERR_UNSUPPORTED) {
+        att1_backend_destroy(backend);
+        att1_infer_destroy(infer);
+        fputs("cpu q8 unsupported: unsupported q8 path accepted\n", stderr);
+        return -1;
+    }
+
+    att1_backend_destroy(backend);
+    att1_infer_destroy(infer);
+    return 0;
+}
+
 int main(void)
 {
     att1_model model;
@@ -430,7 +792,11 @@ int main(void)
     if ((model.config.vocab_size != 256u) ||
         (check_required_tensors(&model) != 0) ||
         (check_decode_determinism(&model) != 0) ||
-        (check_prefill(&model) != 0)) {
+        (check_prefill(&model) != 0) ||
+        (check_cpu_q8_logits(&model) != 0) ||
+        (check_cpu_q8_generated_tokens(&model) != 0) ||
+        (check_cpu_q8_no_silent_f32_fallback(&model) != 0) ||
+        (check_cpu_q8_unsupported_path(&model) != 0)) {
         att1_model_free(&model);
         return 1;
     }

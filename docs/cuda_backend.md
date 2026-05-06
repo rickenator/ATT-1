@@ -433,10 +433,9 @@ operator is added. CUDA q4 remains unsupported.
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode cluster --tiles 2 --backend cuda
 ```
 
-`cpu-f32` remains the default. `cpu-q8` can run the current f32 inference path
-because it provides f32 ops plus q8 matmul support. `cuda` reports unsupported
-or unavailable when CUDA is not compiled in or no CUDA runtime device is
-available.
+`cpu-f32` remains the default. `cpu-q8` runs single-tile inference with runtime
+q8 copies of projection and output weights. `cuda` reports unsupported or
+unavailable when CUDA is not compiled in or no CUDA runtime device is available.
 
 `att1-q8-bench` accepts `--backend cpu-q8|cuda`. The CUDA option is a skeleton
 path for q8xf32 matmul measurement only. It does not imply full q8 model

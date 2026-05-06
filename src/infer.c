@@ -3,11 +3,24 @@
 #include "att1_backend.h"
 #include "att1_kv_cache.h"
 #include "att1_model_view.h"
+#include "att1_quant.h"
 #include "att1_sampler.h"
 #include "att1_transformer_block.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct att1_infer_q8_layer {
+    const float *attention_norm;
+    const float *ffn_norm;
+    att1_q8_matrix wq;
+    att1_q8_matrix wk;
+    att1_q8_matrix wv;
+    att1_q8_matrix wo;
+    att1_q8_matrix w_gate;
+    att1_q8_matrix w_up;
+    att1_q8_matrix w_down;
+} att1_infer_q8_layer;
 
 struct att1_infer {
     const att1_model *model;
@@ -17,9 +30,50 @@ struct att1_infer {
     float *norm;
     float *logits;
     att1_backend *backend;
+    att1_infer_q8_layer *q8_layers;
+    const float *q8_output_norm;
+    att1_q8_matrix q8_output_weight;
+    int q8_ready;
     att1_trace_t *trace;
     size_t position;
 };
+
+static void infer_release_q8_layer(att1_infer_q8_layer *layer)
+{
+    if (layer == NULL) {
+        return;
+    }
+
+    att1_q8_matrix_free(&layer->wq);
+    att1_q8_matrix_free(&layer->wk);
+    att1_q8_matrix_free(&layer->wv);
+    att1_q8_matrix_free(&layer->wo);
+    att1_q8_matrix_free(&layer->w_gate);
+    att1_q8_matrix_free(&layer->w_up);
+    att1_q8_matrix_free(&layer->w_down);
+    memset(layer, 0, sizeof(*layer));
+}
+
+static void infer_release_q8(att1_infer_t *infer)
+{
+    uint32_t layer = 0u;
+
+    if (infer == NULL) {
+        return;
+    }
+
+    if ((infer->model != NULL) && (infer->q8_layers != NULL)) {
+        for (layer = 0u; layer < infer->model->config.n_layers; layer++) {
+            infer_release_q8_layer(&infer->q8_layers[layer]);
+        }
+    }
+
+    free(infer->q8_layers);
+    att1_q8_matrix_free(&infer->q8_output_weight);
+    infer->q8_layers = NULL;
+    infer->q8_output_norm = NULL;
+    infer->q8_ready = 0;
+}
 
 static void infer_release_members(att1_infer_t *infer)
 {
@@ -35,6 +89,7 @@ static void infer_release_members(att1_infer_t *infer)
         }
     }
 
+    infer_release_q8(infer);
     free(infer->layer_kv);
     free(infer->hidden);
     free(infer->next_hidden);
@@ -42,6 +97,158 @@ static void infer_release_members(att1_infer_t *infer)
     free(infer->logits);
     att1_backend_destroy(infer->backend);
     memset(infer, 0, sizeof(*infer));
+}
+
+static int infer_backend_is_cpu_q8(const att1_backend *backend)
+{
+    return (backend != NULL) &&
+           (backend->ops != NULL) &&
+           (backend->ops->name != NULL) &&
+           (strcmp(backend->ops->name, "cpu-q8") == 0);
+}
+
+static int infer_backend_supports_q8(const att1_backend *backend)
+{
+    return infer_backend_is_cpu_q8(backend) &&
+           (backend->ops->alloc != NULL) &&
+           (backend->ops->free != NULL) &&
+           (backend->ops->matmul_q8xf32 != NULL) &&
+           (backend->ops->rmsnorm_f32 != NULL) &&
+           (backend->ops->softmax_f32 != NULL) &&
+           (backend->ops->rope_f32 != NULL) &&
+           (backend->ops->ffn_swiglu_f32 != NULL);
+}
+
+static int infer_quantize_transposed(att1_q8_matrix *matrix,
+                                     const float *weights,
+                                     size_t input_count,
+                                     size_t output_count)
+{
+    float *transposed = NULL;
+    size_t input = 0u;
+    size_t output = 0u;
+    int rc = -1;
+
+    if ((matrix == NULL) || (weights == NULL) ||
+        (input_count == 0u) || (output_count == 0u)) {
+        return -1;
+    }
+
+    if (input_count > ((size_t)-1) / output_count) {
+        return -1;
+    }
+
+    transposed = malloc(input_count * output_count * sizeof(*transposed));
+    if (transposed == NULL) {
+        return -1;
+    }
+
+    for (input = 0u; input < input_count; input++) {
+        for (output = 0u; output < output_count; output++) {
+            transposed[(output * input_count) + input] =
+                weights[(input * output_count) + output];
+        }
+    }
+
+    rc = att1_quantize_q8_per_row(matrix,
+                                  transposed,
+                                  output_count,
+                                  input_count);
+    free(transposed);
+    return rc;
+}
+
+static att1_status_t infer_prepare_q8(att1_infer_t *infer)
+{
+    const att1_model *model = NULL;
+    const float *output_weight = NULL;
+    uint32_t layer = 0u;
+    att1_status_t status = ATT1_OK;
+
+    if ((infer == NULL) || (infer->model == NULL)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    if (infer->q8_ready) {
+        return ATT1_OK;
+    }
+
+    model = infer->model;
+    infer_release_q8(infer);
+
+    infer->q8_layers = calloc(model->config.n_layers,
+                              sizeof(*infer->q8_layers));
+    if (infer->q8_layers == NULL) {
+        return ATT1_ERR_OOM;
+    }
+
+    for (layer = 0u; layer < model->config.n_layers; layer++) {
+        att1_transformer_block_weights weights;
+        att1_infer_q8_layer *q8 = &infer->q8_layers[layer];
+
+        status = att1_model_view_load_layer_weights(model, layer, &weights);
+        if (status != ATT1_OK) {
+            infer_release_q8(infer);
+            return status;
+        }
+
+        q8->attention_norm = weights.attention_norm;
+        q8->ffn_norm = weights.ffn_norm;
+
+        if ((infer_quantize_transposed(&q8->wq,
+                                       weights.wq,
+                                       model->config.d_model,
+                                       model->config.d_model) != 0) ||
+            (infer_quantize_transposed(&q8->wk,
+                                       weights.wk,
+                                       model->config.d_model,
+                                       model->config.d_model) != 0) ||
+            (infer_quantize_transposed(&q8->wv,
+                                       weights.wv,
+                                       model->config.d_model,
+                                       model->config.d_model) != 0) ||
+            (infer_quantize_transposed(&q8->wo,
+                                       weights.wo,
+                                       model->config.d_model,
+                                       model->config.d_model) != 0) ||
+            (infer_quantize_transposed(&q8->w_gate,
+                                       weights.w_gate,
+                                       model->config.d_model,
+                                       model->config.d_ff) != 0) ||
+            (infer_quantize_transposed(&q8->w_up,
+                                       weights.w_up,
+                                       model->config.d_model,
+                                       model->config.d_ff) != 0) ||
+            (infer_quantize_transposed(&q8->w_down,
+                                       weights.w_down,
+                                       model->config.d_ff,
+                                       model->config.d_model) != 0)) {
+            infer_release_q8(infer);
+            return ATT1_ERR_OOM;
+        }
+    }
+
+    status = att1_model_view_output_norm(model, &infer->q8_output_norm);
+    if (status != ATT1_OK) {
+        infer_release_q8(infer);
+        return status;
+    }
+
+    status = att1_model_view_output_weight(model, &output_weight);
+    if (status != ATT1_OK) {
+        infer_release_q8(infer);
+        return status;
+    }
+
+    if (infer_quantize_transposed(&infer->q8_output_weight,
+                                  output_weight,
+                                  model->config.d_model,
+                                  model->config.vocab_size) != 0) {
+        infer_release_q8(infer);
+        return ATT1_ERR_OOM;
+    }
+
+    infer->q8_ready = 1;
+    return ATT1_OK;
 }
 
 att1_status_t att1_infer_create(const att1_model *model,
@@ -122,6 +329,7 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
     const float *output_norm = NULL;
     const float *output_weight = NULL;
     att1_transformer_block_config block_config;
+    int use_q8 = 0;
     att1_status_t status = ATT1_OK;
     uint32_t layer = 0u;
     size_t i = 0u;
@@ -131,6 +339,7 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
         return ATT1_ERR_INVALID_ARG;
     }
 
+    use_q8 = infer_backend_is_cpu_q8(infer->backend);
     model = infer->model;
     if ((token_id >= model->config.vocab_size) ||
         (infer->position >= model->config.max_seq_len)) {
@@ -149,9 +358,16 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
     if (status != ATT1_OK) {
         return status;
     }
-    status = att1_model_view_output_weight(model, &output_weight);
-    if (status != ATT1_OK) {
-        return status;
+    if (use_q8) {
+        if (!infer->q8_ready || !infer_backend_supports_q8(infer->backend)) {
+            return ATT1_ERR_STATE;
+        }
+        output_norm = infer->q8_output_norm;
+    } else {
+        status = att1_model_view_output_weight(model, &output_weight);
+        if (status != ATT1_OK) {
+            return status;
+        }
     }
 
     for (i = 0u; i < model->config.d_model; i++) {
@@ -166,29 +382,58 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
     block_config.rope_theta = 10000.0f;
 
     for (layer = 0u; layer < model->config.n_layers; layer++) {
-        att1_transformer_block_weights weights;
         uint64_t layer_start_us = 0u;
         uint64_t layer_us = 0u;
         const uint64_t kv_reads = (uint64_t)(infer->position + 1u) *
             (uint64_t)model->config.n_heads;
 
-        status = att1_model_view_load_layer_weights(model, layer, &weights);
-        if (status != ATT1_OK) {
-            return status;
-        }
-
         if (infer->trace != NULL) {
             layer_start_us = att1_trace_now_us();
         }
 
-        if (att1_transformer_block_forward_backend(infer->next_hidden,
-                                                   &infer->layer_kv[layer],
-                                                   infer->hidden,
-                                                   &weights,
-                                                   &block_config,
-                                                   infer->position,
-                                                   infer->backend) != 0) {
-            return ATT1_ERR_STATE;
+        if (use_q8) {
+            att1_transformer_block_q8_weights weights;
+            const att1_infer_q8_layer *q8 = &infer->q8_layers[layer];
+
+            weights.attention_norm = q8->attention_norm;
+            weights.ffn_norm = q8->ffn_norm;
+            weights.wq = &q8->wq;
+            weights.wk = &q8->wk;
+            weights.wv = &q8->wv;
+            weights.wo = &q8->wo;
+            weights.w_gate = &q8->w_gate;
+            weights.w_up = &q8->w_up;
+            weights.w_down = &q8->w_down;
+
+            if (att1_transformer_block_forward_backend_q8(
+                    infer->next_hidden,
+                    &infer->layer_kv[layer],
+                    infer->hidden,
+                    &weights,
+                    &block_config,
+                    infer->position,
+                    infer->backend) != 0) {
+                return ATT1_ERR_STATE;
+            }
+        } else {
+            att1_transformer_block_weights weights;
+
+            status = att1_model_view_load_layer_weights(model,
+                                                        layer,
+                                                        &weights);
+            if (status != ATT1_OK) {
+                return status;
+            }
+
+            if (att1_transformer_block_forward_backend(infer->next_hidden,
+                                                       &infer->layer_kv[layer],
+                                                       infer->hidden,
+                                                       &weights,
+                                                       &block_config,
+                                                       infer->position,
+                                                       infer->backend) != 0) {
+                return ATT1_ERR_STATE;
+            }
         }
 
         if (infer->trace != NULL) {
@@ -215,14 +460,25 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
         return ATT1_ERR_STATE;
     }
 
-    if (infer->backend->ops->matmul_f32(infer->backend,
-                                        infer->logits,
-                                        infer->norm,
-                                        output_weight,
-                                        1u,
-                                        model->config.vocab_size,
-                                        model->config.d_model) != 0) {
-        return ATT1_ERR_STATE;
+    if (use_q8) {
+        if (infer->backend->ops->matmul_q8xf32(infer->backend,
+                                               infer->logits,
+                                               infer->norm,
+                                               1u,
+                                               model->config.d_model,
+                                               &infer->q8_output_weight) != 0) {
+            return ATT1_ERR_STATE;
+        }
+    } else {
+        if (infer->backend->ops->matmul_f32(infer->backend,
+                                            infer->logits,
+                                            infer->norm,
+                                            output_weight,
+                                            1u,
+                                            model->config.vocab_size,
+                                            model->config.d_model) != 0) {
+            return ATT1_ERR_STATE;
+        }
     }
 
     if ((infer->backend->ops->sync != NULL) &&
@@ -352,8 +608,20 @@ att1_status_t att1_infer_set_trace(att1_infer_t *infer,
 att1_status_t att1_infer_set_backend(att1_infer_t *infer,
                                      att1_backend *backend)
 {
+    att1_status_t status = ATT1_OK;
+
     if ((infer == NULL) || (backend == NULL) || (backend->ops == NULL)) {
         return ATT1_ERR_INVALID_ARG;
+    }
+
+    if (infer_backend_is_cpu_q8(backend)) {
+        if (!infer_backend_supports_q8(backend)) {
+            return ATT1_ERR_UNSUPPORTED;
+        }
+        status = infer_prepare_q8(infer);
+        if (status != ATT1_OK) {
+            return status;
+        }
     }
 
     att1_backend_destroy(infer->backend);

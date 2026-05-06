@@ -62,9 +62,9 @@ provides:
 - normal CPU f32 ops for non-quantized operators
 - `matmul_q8xf32` for float32 activations multiplied by per-row q8 weights
 
-This is not full quantized model inference. The model format is unchanged and
-inference still loads and executes the dummy model through f32 weights by
-default.
+The model format is unchanged and inference still loads f32 tensors. Single-tile
+inference can select `cpu-q8`, which builds runtime q8 copies for projection and
+output matmuls while keeping activations and non-matmul operators float32.
 
 `build/att1-q8-bench` uses the CPU q8 backend to compare f32 and q8 matmul
 timing/error on a deterministic tiny fixture.

@@ -3,6 +3,7 @@
 
 #include "att1_backend.h"
 #include "att1_kv_cache.h"
+#include "att1_quant.h"
 
 #include <stddef.h>
 
@@ -26,6 +27,18 @@ typedef struct att1_transformer_block_weights {
     const float *w_up;
     const float *w_down;
 } att1_transformer_block_weights;
+
+typedef struct att1_transformer_block_q8_weights {
+    const float *attention_norm;
+    const float *ffn_norm;
+    const att1_q8_matrix *wq;
+    const att1_q8_matrix *wk;
+    const att1_q8_matrix *wv;
+    const att1_q8_matrix *wo;
+    const att1_q8_matrix *w_gate;
+    const att1_q8_matrix *w_up;
+    const att1_q8_matrix *w_down;
+} att1_transformer_block_q8_weights;
 
 /*
  * Run one local LLaMA-style decoder block for a single decoded token.
@@ -51,6 +64,15 @@ int att1_transformer_block_forward_backend(
     att1_kv_cache *cache,
     const float *input,
     const att1_transformer_block_weights *weights,
+    const att1_transformer_block_config *config,
+    size_t position,
+    att1_backend *backend);
+
+int att1_transformer_block_forward_backend_q8(
+    float *output,
+    att1_kv_cache *cache,
+    const float *input,
+    const att1_transformer_block_q8_weights *weights,
     const att1_transformer_block_config *config,
     size_t position,
     att1_backend *backend);

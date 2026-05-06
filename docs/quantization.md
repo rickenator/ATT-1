@@ -1,8 +1,8 @@
 # ATT-1 int8 quantization
 
-Milestone 10 adds a standalone int8 weight path for kernel correctness and
-measurement. It does not change the model file format, does not add q4, and
-does not route full model inference through quantized weights yet.
+Milestone 10 added a standalone int8 weight path for kernel correctness and
+measurement. Milestone 24 wires CPU q8 into single-tile inference without
+changing the model file format or adding q4.
 
 ## Representation
 
@@ -57,6 +57,30 @@ The float32 matmul path remains the correctness reference. Tests compare q8
 outputs to float32 outputs with a documented tolerance of `0.035` for the
 current tiny fixtures.
 
+## CPU q8 single-tile inference
+
+Milestone 24 adds `--backend cpu-q8` support to the existing single-tile
+inference path. The `.att1` model continues to store float32 tensors. When a
+single-tile inference context selects the `cpu-q8` backend, it builds owned
+runtime q8 copies of projection and output weights using the same
+`weights_q8[out, in]` representation described above.
+
+The q8 path uses `matmul_q8xf32` for:
+
+- attention projections `wq`, `wk`, `wv`, and `wo`
+- FFN projections `w_gate`, `w_up`, and `w_down`
+- final output logits projection
+
+RMSNorm, RoPE, softmax, SwiGLU, KV cache storage, residual adds, and
+activations remain float32. CPU f32 remains the correctness reference.
+
+For the dummy `.att1` fixture, tests compare one-token CPU f32 and CPU q8
+logits with a maximum absolute tolerance of `0.15` and assert that the current
+short generated-token fixture remains identical. Token equivalence is not a
+general quantization contract for future models; when logits are close enough
+to move an argmax boundary, generated tokens may diverge even if the q8 backend
+is working correctly.
+
 ## CUDA q8xf32 prototype
 
 Milestone 23 adds CUDA backend support for `matmul_q8xf32` without changing the
@@ -73,7 +97,8 @@ the multiply through the existing CUDA f32 matmul path. CPU q8 remains the
 correctness reference for the CUDA q8 operator. Tests also compare q8 outputs
 against CPU f32 where the existing q8 tolerance applies.
 
-This is not full quantized model inference. CUDA q4 is not implemented.
+This is not full CUDA quantized model inference. CUDA q8 inference and CUDA q4
+are not implemented.
 
 ## Benchmark
 
@@ -85,9 +110,9 @@ over the same data and prints timing and error counters:
 ./build/att1-q8-bench --iterations 10000
 ```
 
-This benchmark is for kernel measurement only. It is not full quantized model
-inference. `--backend cuda` exercises the CUDA q8xf32 operator when CUDA is
-compiled in and available at runtime; otherwise it reports unsupported cleanly.
+This benchmark is for kernel measurement only. `--backend cuda` exercises the
+CUDA q8xf32 operator when CUDA is compiled in and available at runtime;
+otherwise it reports unsupported cleanly.
 
 ## Ownership
 

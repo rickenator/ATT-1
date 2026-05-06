@@ -3,6 +3,7 @@
 
 #include "att1_backend.h"
 #include "att1_kv_cache.h"
+#include "att1_quant.h"
 
 #include <stddef.h>
 
@@ -19,6 +20,13 @@ typedef struct att1_attention_weights {
     const float *wv;
     const float *wo;
 } att1_attention_weights;
+
+typedef struct att1_attention_q8_weights {
+    const att1_q8_matrix *wq;
+    const att1_q8_matrix *wk;
+    const att1_q8_matrix *wv;
+    const att1_q8_matrix *wo;
+} att1_attention_q8_weights;
 
 /*
  * Run one batch-1 causal self-attention decode step in float32.
@@ -44,5 +52,14 @@ int att1_attention_forward_backend(float *output,
                                    const att1_attention_config *config,
                                    size_t position,
                                    att1_backend *backend);
+
+int att1_attention_forward_backend_q8(
+    float *output,
+    att1_kv_cache *cache,
+    const float *input,
+    const att1_attention_q8_weights *weights,
+    const att1_attention_config *config,
+    size_t position,
+    att1_backend *backend);
 
 #endif
