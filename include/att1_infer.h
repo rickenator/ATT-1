@@ -3,6 +3,7 @@
 
 #include "att1_model.h"
 #include "att1_status.h"
+#include "att1_trace.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -50,5 +51,8 @@ att1_status_t att1_infer_position(const att1_infer_t *infer,
 att1_status_t att1_infer_layer_kv_length(const att1_infer_t *infer,
                                          uint32_t layer_id,
                                          size_t *out_length);
+
+att1_status_t att1_infer_set_trace(att1_infer_t *infer,
+                                   att1_trace_t *trace);
 
 #endif

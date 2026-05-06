@@ -21,6 +21,7 @@
 #include "att1_tensor.h"
 #include "att1_tile.h"
 #include "att1_tokenizer.h"
+#include "att1_trace.h"
 #include "att1_transformer_block.h"
 
 #define ATT1_VERSION_MAJOR 0

@@ -4,6 +4,7 @@
 #include "att1_model.h"
 #include "att1_shard.h"
 #include "att1_status.h"
+#include "att1_trace.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -66,5 +67,8 @@ att1_status_t att1_cluster_infer_get_tile_shard(
     const att1_cluster_infer_t *infer,
     uint32_t tile_id,
     att1_layer_shard *out_shard);
+
+att1_status_t att1_cluster_infer_set_trace(att1_cluster_infer_t *infer,
+                                           att1_trace_t *trace);
 
 #endif

@@ -20,6 +20,7 @@ struct att1_cluster_infer {
     float *next_hidden;
     float *norm;
     float *logits;
+    att1_trace_t *trace;
     att1_cluster_tile_counters *tile_counters;
     size_t position;
 };
@@ -258,6 +259,7 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     size_t tile = 0u;
     size_t i = 0u;
     att1_status_t status = ATT1_OK;
+    uint64_t token_start_us = 0u;
 
     if ((infer == NULL) || (infer->model == NULL) || (out_token == NULL)) {
         return ATT1_ERR_INVALID_ARG;
@@ -271,6 +273,10 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
 
     if (!cluster_plan_complete(infer)) {
         return ATT1_ERR_STATE;
+    }
+
+    if (infer->trace != NULL) {
+        token_start_us = att1_trace_now_us();
     }
 
     status = att1_model_view_token_embedding(model, &embedding);
@@ -303,6 +309,8 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     if (status != ATT1_OK) {
         return status;
     }
+    att1_trace_record_activation_send(infer->trace, 0u, d_model_bytes);
+    att1_trace_record_fabric_send(infer->trace, d_model_bytes);
 
     block_config.model_dim = model->config.d_model;
     block_config.num_heads = model->config.n_heads;
@@ -323,14 +331,23 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
         if (status != ATT1_OK) {
             return status;
         }
+        att1_trace_record_fabric_receive(infer->trace, d_model_bytes);
         infer->tile_counters[tile].activations_received++;
 
         for (layer = shard->layer_start; layer < shard->layer_end; layer++) {
             att1_transformer_block_weights weights;
+            uint64_t layer_start_us = 0u;
+            uint64_t layer_us = 0u;
+            const uint64_t kv_reads = (uint64_t)(infer->position + 1u) *
+                (uint64_t)model->config.n_heads;
 
             status = att1_model_view_load_layer_weights(model, layer, &weights);
             if (status != ATT1_OK) {
                 return status;
+            }
+
+            if (infer->trace != NULL) {
+                layer_start_us = att1_trace_now_us();
             }
 
             if (att1_transformer_block_forward_f32(infer->next_hidden,
@@ -342,8 +359,19 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
                 return ATT1_ERR_STATE;
             }
 
+            if (infer->trace != NULL) {
+                layer_us = att1_trace_now_us() - layer_start_us;
+                att1_trace_record_layer(infer->trace,
+                                        layer,
+                                        layer_us,
+                                        1u,
+                                        kv_reads,
+                                        kv_reads);
+            }
+
             memcpy(infer->hidden, infer->next_hidden, d_model_bytes);
             infer->tile_counters[tile].layers_run++;
+            att1_trace_record_tile_layers(infer->trace, tile, 1u);
         }
 
         if ((tile + 1u) < infer->shard_plan.tile_count) {
@@ -357,6 +385,10 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
             if (status != ATT1_OK) {
                 return status;
             }
+            att1_trace_record_activation_send(infer->trace,
+                                             tile + 1u,
+                                             d_model_bytes);
+            att1_trace_record_fabric_send(infer->trace, d_model_bytes);
             infer->tile_counters[tile].activations_sent++;
         } else {
             if (att1_rmsnorm_f32(infer->norm,
@@ -386,6 +418,8 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
             if (status != ATT1_OK) {
                 return status;
             }
+            att1_trace_record_logits(infer->trace, tile, logits_bytes);
+            att1_trace_record_fabric_send(infer->trace, logits_bytes);
             infer->tile_counters[tile].logits_sent++;
         }
     }
@@ -398,11 +432,17 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     if (status != ATT1_OK) {
         return status;
     }
+    att1_trace_record_fabric_receive(infer->trace, logits_bytes);
 
     if (att1_sampler_greedy_f32(infer->logits,
                                 model->config.vocab_size,
                                 out_token) != 0) {
         return ATT1_ERR_STATE;
+    }
+
+    if (infer->trace != NULL) {
+        att1_trace_record_token(infer->trace,
+                                att1_trace_now_us() - token_start_us);
     }
 
     infer->position++;
@@ -518,5 +558,16 @@ att1_status_t att1_cluster_infer_get_tile_shard(
     }
 
     *out_shard = *shard;
+    return ATT1_OK;
+}
+
+att1_status_t att1_cluster_infer_set_trace(att1_cluster_infer_t *infer,
+                                           att1_trace_t *trace)
+{
+    if (infer == NULL) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    infer->trace = trace;
     return ATT1_OK;
 }

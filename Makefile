@@ -13,11 +13,13 @@ LDLIBS := -lm -pthread
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
 INSPECT_BIN := $(BUILD_DIR)/att1-inspect
+BENCH_BIN := $(BUILD_DIR)/att1-bench
+SIZE_BIN := $(BUILD_DIR)/att1-size
 TINY_LLM_BIN := $(BUILD_DIR)/run_tiny_llm
 CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
-	tokenizer sampler infer shard cluster_infer
+	tokenizer sampler infer shard cluster_infer trace bench_smoke
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -29,6 +31,7 @@ COMMON_SRCS := \
 	$(SRC_DIR)/ffn.c \
 	$(SRC_DIR)/tokenizer.c \
 	$(SRC_DIR)/sampler.c \
+	$(SRC_DIR)/trace.c \
 	$(SRC_DIR)/model_view.c \
 	$(SRC_DIR)/infer.c \
 	$(SRC_DIR)/shard.c \
@@ -47,18 +50,26 @@ COMMON_SRCS := \
 COMMON_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(COMMON_SRCS))
 SIM_OBJS := $(BUILD_DIR)/$(SRC_DIR)/main.o $(COMMON_OBJS)
 INSPECT_OBJS := $(BUILD_DIR)/tools/att1-inspect.o $(COMMON_OBJS)
+BENCH_OBJS := $(BUILD_DIR)/tools/att1-bench.o $(COMMON_OBJS)
+SIZE_OBJS := $(BUILD_DIR)/tools/att1-size.o $(COMMON_OBJS)
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
 .PHONY: all clean test bak
 .SECONDARY:
 
-all: $(SIM_BIN) $(INSPECT_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
+all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(SIZE_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
 
 $(SIM_BIN): $(SIM_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(INSPECT_BIN): $(INSPECT_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BENCH_BIN): $(BENCH_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(SIZE_BIN): $(SIZE_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(TINY_LLM_BIN): $(TINY_LLM_OBJS)
@@ -74,7 +85,7 @@ $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(INSPECT_BIN) $(TEST_BINS)
+test: $(INSPECT_BIN) $(BENCH_BIN) $(SIZE_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin || exit $$?; \
 	done
