@@ -20,7 +20,7 @@ TINY_LLM_BIN := $(BUILD_DIR)/run_tiny_llm
 CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
-	tokenizer sampler infer shard cluster_infer trace quant matmul_q8 bench_smoke
+	tokenizer sampler infer shard cluster_infer trace quant matmul_q8 backend bench_smoke
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -32,6 +32,8 @@ COMMON_SRCS := \
 	$(SRC_DIR)/ffn.c \
 	$(SRC_DIR)/tokenizer.c \
 	$(SRC_DIR)/sampler.c \
+	$(SRC_DIR)/backend_cpu_f32.c \
+	$(SRC_DIR)/backend_cpu_q8.c \
 	$(SRC_DIR)/quant.c \
 	$(SRC_DIR)/matmul_q8.c \
 	$(SRC_DIR)/trace.c \

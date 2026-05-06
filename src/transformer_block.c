@@ -1,9 +1,6 @@
 #include "att1_transformer_block.h"
 
 #include "att1_attention.h"
-#include "att1_math.h"
-
-#include <stdlib.h>
 
 static int att1_block_config_valid(const att1_transformer_block_config *config,
                                    const att1_kv_cache *cache)
@@ -68,6 +65,33 @@ int att1_transformer_block_forward_f32(
     const att1_transformer_block_config *config,
     size_t position)
 {
+    att1_backend *backend = NULL;
+    int rc = -1;
+
+    if (att1_backend_default_create(&backend) != ATT1_OK) {
+        return -1;
+    }
+
+    rc = att1_transformer_block_forward_backend(output,
+                                                cache,
+                                                input,
+                                                weights,
+                                                config,
+                                                position,
+                                                backend);
+    att1_backend_destroy(backend);
+    return rc;
+}
+
+int att1_transformer_block_forward_backend(
+    float *output,
+    att1_kv_cache *cache,
+    const float *input,
+    const att1_transformer_block_weights *weights,
+    const att1_transformer_block_config *config,
+    size_t position,
+    att1_backend *backend)
+{
     att1_attention_config attention_config;
     att1_attention_weights attention_weights;
     float *attention_input = NULL;
@@ -84,19 +108,27 @@ int att1_transformer_block_forward_f32(
         return -1;
     }
 
+    if ((backend == NULL) || (backend->ops == NULL) ||
+        (backend->ops->alloc == NULL) || (backend->ops->free == NULL) ||
+        (backend->ops->matmul_f32 == NULL) ||
+        (backend->ops->rmsnorm_f32 == NULL) ||
+        (backend->ops->ffn_swiglu_f32 == NULL)) {
+        return -1;
+    }
+
     if (!att1_block_weights_valid(weights) ||
         !att1_block_config_valid(config, cache)) {
         return -1;
     }
 
-    attention_input = malloc(config->model_dim * sizeof(float));
-    attention_output = malloc(config->model_dim * sizeof(float));
-    attention_residual = malloc(config->model_dim * sizeof(float));
-    ffn_input = malloc(config->model_dim * sizeof(float));
-    ffn_gate = malloc(config->ffn_dim * sizeof(float));
-    ffn_up = malloc(config->ffn_dim * sizeof(float));
-    ffn_hidden = malloc(config->ffn_dim * sizeof(float));
-    ffn_output = malloc(config->model_dim * sizeof(float));
+    attention_input = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    attention_output = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    attention_residual = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    ffn_input = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    ffn_gate = backend->ops->alloc(backend, config->ffn_dim * sizeof(float));
+    ffn_up = backend->ops->alloc(backend, config->ffn_dim * sizeof(float));
+    ffn_hidden = backend->ops->alloc(backend, config->ffn_dim * sizeof(float));
+    ffn_output = backend->ops->alloc(backend, config->model_dim * sizeof(float));
 
     if ((attention_input == NULL) ||
         (attention_output == NULL) ||
@@ -109,11 +141,12 @@ int att1_transformer_block_forward_f32(
         goto cleanup;
     }
 
-    if (att1_rmsnorm_f32(attention_input,
-                         input,
-                         weights->attention_norm,
-                         config->model_dim,
-                         config->rms_epsilon) != 0) {
+    if (backend->ops->rmsnorm_f32(backend,
+                                  attention_input,
+                                  input,
+                                  weights->attention_norm,
+                                  config->model_dim,
+                                  config->rms_epsilon) != 0) {
         goto cleanup;
     }
 
@@ -127,12 +160,13 @@ int att1_transformer_block_forward_f32(
     attention_weights.wv = weights->wv;
     attention_weights.wo = weights->wo;
 
-    if (att1_attention_forward_f32(attention_output,
-                                   cache,
-                                   attention_input,
-                                   &attention_weights,
-                                   &attention_config,
-                                   position) != 0) {
+    if (att1_attention_forward_backend(attention_output,
+                                       cache,
+                                       attention_input,
+                                       &attention_weights,
+                                       &attention_config,
+                                       position,
+                                       backend) != 0) {
         goto cleanup;
     }
 
@@ -141,45 +175,50 @@ int att1_transformer_block_forward_f32(
                  attention_output,
                  config->model_dim);
 
-    if (att1_rmsnorm_f32(ffn_input,
-                         attention_residual,
-                         weights->ffn_norm,
-                         config->model_dim,
-                         config->rms_epsilon) != 0) {
+    if (backend->ops->rmsnorm_f32(backend,
+                                  ffn_input,
+                                  attention_residual,
+                                  weights->ffn_norm,
+                                  config->model_dim,
+                                  config->rms_epsilon) != 0) {
         goto cleanup;
     }
 
-    if (att1_matmul_f32(ffn_gate,
-                        ffn_input,
-                        weights->w_gate,
-                        1u,
-                        config->ffn_dim,
-                        config->model_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 ffn_gate,
+                                 ffn_input,
+                                 weights->w_gate,
+                                 1u,
+                                 config->ffn_dim,
+                                 config->model_dim) != 0) {
         goto cleanup;
     }
 
-    if (att1_matmul_f32(ffn_up,
-                        ffn_input,
-                        weights->w_up,
-                        1u,
-                        config->ffn_dim,
-                        config->model_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 ffn_up,
+                                 ffn_input,
+                                 weights->w_up,
+                                 1u,
+                                 config->ffn_dim,
+                                 config->model_dim) != 0) {
         goto cleanup;
     }
 
-    if (att1_swiglu_f32(ffn_hidden,
-                        ffn_gate,
-                        ffn_up,
-                        config->ffn_dim) != 0) {
+    if (backend->ops->ffn_swiglu_f32(backend,
+                                     ffn_hidden,
+                                     ffn_gate,
+                                     ffn_up,
+                                     config->ffn_dim) != 0) {
         goto cleanup;
     }
 
-    if (att1_matmul_f32(ffn_output,
-                        ffn_hidden,
-                        weights->w_down,
-                        1u,
-                        config->model_dim,
-                        config->ffn_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 ffn_output,
+                                 ffn_hidden,
+                                 weights->w_down,
+                                 1u,
+                                 config->model_dim,
+                                 config->ffn_dim) != 0) {
         goto cleanup;
     }
 
@@ -187,13 +226,13 @@ int att1_transformer_block_forward_f32(
     rc = 0;
 
 cleanup:
-    free(attention_input);
-    free(attention_output);
-    free(attention_residual);
-    free(ffn_input);
-    free(ffn_gate);
-    free(ffn_up);
-    free(ffn_hidden);
-    free(ffn_output);
+    backend->ops->free(backend, attention_input);
+    backend->ops->free(backend, attention_output);
+    backend->ops->free(backend, attention_residual);
+    backend->ops->free(backend, ffn_input);
+    backend->ops->free(backend, ffn_gate);
+    backend->ops->free(backend, ffn_up);
+    backend->ops->free(backend, ffn_hidden);
+    backend->ops->free(backend, ffn_output);
     return rc;
 }

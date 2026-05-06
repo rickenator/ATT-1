@@ -1,4 +1,5 @@
 #include "att1_math.h"
+#include "att1_backend.h"
 #include "att1_quant.h"
 #include "att1_trace.h"
 
@@ -49,6 +50,7 @@ int main(int argc, char **argv)
     float weights_in_out[32];
     float f32_out[12];
     float q8_out[12];
+    att1_backend *backend = NULL;
     att1_q8_matrix q8;
     uint64_t f32_start = 0u;
     uint64_t q8_start = 0u;
@@ -79,6 +81,11 @@ int main(int argc, char **argv)
         }
     }
 
+    if (att1_backend_cpu_q8_create(&backend) != ATT1_OK) {
+        fputs("q8 backend creation failed\n", stderr);
+        return 1;
+    }
+
     for (row = 0u; row < inner; row++) {
         for (col = 0u; col < outputs; col++) {
             weights_in_out[(row * outputs) + col] =
@@ -88,18 +95,21 @@ int main(int argc, char **argv)
 
     if (att1_quantize_q8_per_row(&q8, weights_out_in, outputs, inner) != 0) {
         fputs("q8 quantization failed\n", stderr);
+        att1_backend_destroy(backend);
         return 1;
     }
 
     f32_start = att1_trace_now_us();
     for (i = 0u; i < iterations; i++) {
-        if (att1_matmul_f32(f32_out,
-                            lhs,
-                            weights_in_out,
-                            lhs_rows,
-                            outputs,
-                            inner) != 0) {
+        if (backend->ops->matmul_f32(backend,
+                                     f32_out,
+                                     lhs,
+                                     weights_in_out,
+                                     lhs_rows,
+                                     outputs,
+                                     inner) != 0) {
             att1_q8_matrix_free(&q8);
+            att1_backend_destroy(backend);
             return 1;
         }
     }
@@ -107,12 +117,24 @@ int main(int argc, char **argv)
 
     q8_start = att1_trace_now_us();
     for (i = 0u; i < iterations; i++) {
-        if (att1_matmul_q8xf32(q8_out, lhs, lhs_rows, inner, &q8) != 0) {
+        if (backend->ops->matmul_q8xf32(backend,
+                                        q8_out,
+                                        lhs,
+                                        lhs_rows,
+                                        inner,
+                                        &q8) != 0) {
             att1_q8_matrix_free(&q8);
+            att1_backend_destroy(backend);
             return 1;
         }
     }
     q8_time = att1_trace_now_us() - q8_start;
+
+    if ((backend->ops->sync != NULL) && (backend->ops->sync(backend) != 0)) {
+        att1_q8_matrix_free(&q8);
+        att1_backend_destroy(backend);
+        return 1;
+    }
 
     for (i = 0u; i < lhs_rows * outputs; i++) {
         const float error = fabsf(f32_out[i] - q8_out[i]);
@@ -122,6 +144,7 @@ int main(int argc, char **argv)
     }
 
     printf("mode=q8-matmul\n");
+    printf("backend=%s\n", backend->ops->name);
     printf("iterations=%zu\n", iterations);
     printf("lhs_rows=%zu\n", lhs_rows);
     printf("inner=%zu\n", inner);
@@ -133,5 +156,6 @@ int main(int argc, char **argv)
     printf("q8_scale_bytes=%zu\n", q8.rows * sizeof(*q8.scales));
 
     att1_q8_matrix_free(&q8);
+    att1_backend_destroy(backend);
     return 0;
 }

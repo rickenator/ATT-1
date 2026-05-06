@@ -1,8 +1,8 @@
 #include "att1_cluster_infer.h"
 
+#include "att1_backend.h"
 #include "att1_fabric.h"
 #include "att1_kv_cache.h"
-#include "att1_math.h"
 #include "att1_model_view.h"
 #include "att1_sampler.h"
 #include "att1_transformer_block.h"
@@ -20,6 +20,7 @@ struct att1_cluster_infer {
     float *next_hidden;
     float *norm;
     float *logits;
+    att1_backend *backend;
     att1_trace_t *trace;
     att1_cluster_tile_counters *tile_counters;
     size_t position;
@@ -124,6 +125,7 @@ static void cluster_release_members(att1_cluster_infer_t *infer)
     free(infer->next_hidden);
     free(infer->norm);
     free(infer->logits);
+    att1_backend_destroy(infer->backend);
     free(infer->tile_counters);
     memset(infer, 0, sizeof(*infer));
 }
@@ -203,15 +205,17 @@ att1_status_t att1_cluster_infer_create(
     infer->norm = calloc(model->config.d_model, sizeof(float));
     infer->logits = calloc(model->config.vocab_size, sizeof(float));
     infer->tile_counters = calloc(tile_count, sizeof(*infer->tile_counters));
+    status = att1_backend_default_create(&infer->backend);
     if ((infer->layer_kv == NULL) ||
         (infer->hidden == NULL) ||
         (infer->next_hidden == NULL) ||
         (infer->norm == NULL) ||
         (infer->logits == NULL) ||
-        (infer->tile_counters == NULL)) {
+        (infer->tile_counters == NULL) ||
+        (status != ATT1_OK)) {
         cluster_release_members(infer);
         free(infer);
-        return ATT1_ERR_OOM;
+        return status == ATT1_OK ? ATT1_ERR_OOM : status;
     }
 
     for (layer = 0u; layer < model->config.n_layers; layer++) {
@@ -350,12 +354,13 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
                 layer_start_us = att1_trace_now_us();
             }
 
-            if (att1_transformer_block_forward_f32(infer->next_hidden,
-                                                   &infer->layer_kv[layer],
-                                                   infer->hidden,
-                                                   &weights,
-                                                   &block_config,
-                                                   infer->position) != 0) {
+            if (att1_transformer_block_forward_backend(infer->next_hidden,
+                                                       &infer->layer_kv[layer],
+                                                       infer->hidden,
+                                                       &weights,
+                                                       &block_config,
+                                                       infer->position,
+                                                       infer->backend) != 0) {
                 return ATT1_ERR_STATE;
             }
 
@@ -391,20 +396,27 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
             att1_trace_record_fabric_send(infer->trace, d_model_bytes);
             infer->tile_counters[tile].activations_sent++;
         } else {
-            if (att1_rmsnorm_f32(infer->norm,
-                                 infer->hidden,
-                                 output_norm,
-                                 model->config.d_model,
-                                 0.000001f) != 0) {
+            if (infer->backend->ops->rmsnorm_f32(infer->backend,
+                                                 infer->norm,
+                                                 infer->hidden,
+                                                 output_norm,
+                                                 model->config.d_model,
+                                                 0.000001f) != 0) {
                 return ATT1_ERR_STATE;
             }
 
-            if (att1_matmul_f32(infer->logits,
-                                infer->norm,
-                                output_weight,
-                                1u,
-                                model->config.vocab_size,
-                                model->config.d_model) != 0) {
+            if (infer->backend->ops->matmul_f32(infer->backend,
+                                                infer->logits,
+                                                infer->norm,
+                                                output_weight,
+                                                1u,
+                                                model->config.vocab_size,
+                                                model->config.d_model) != 0) {
+                return ATT1_ERR_STATE;
+            }
+
+            if ((infer->backend->ops->sync != NULL) &&
+                (infer->backend->ops->sync(infer->backend) != 0)) {
                 return ATT1_ERR_STATE;
             }
 

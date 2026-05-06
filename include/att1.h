@@ -2,6 +2,7 @@
 #define ATT1_H
 
 #include "att1_attention.h"
+#include "att1_backend.h"
 #include "att1_config.h"
 #include "att1_cluster_infer.h"
 #include "att1_fabric.h"

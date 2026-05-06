@@ -1,9 +1,6 @@
 #include "att1_attention.h"
 
-#include "att1_math.h"
-
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 static int att1_attention_config_valid(const att1_attention_config *config,
@@ -65,7 +62,8 @@ static void att1_zero_f32(float *values, size_t count)
 static int att1_attention_apply_rope(float *query,
                                      float *key,
                                      const att1_attention_config *config,
-                                     size_t position)
+                                     size_t position,
+                                     att1_backend *backend)
 {
     size_t head = 0u;
 
@@ -77,17 +75,19 @@ static int att1_attention_apply_rope(float *query,
         float *q_head = &query[head * config->head_dim];
         float *k_head = &key[head * config->head_dim];
 
-        if (att1_rope_f32(q_head,
-                          config->head_dim,
-                          position,
-                          config->rope_theta) != 0) {
+        if (backend->ops->rope_f32(backend,
+                                   q_head,
+                                   config->head_dim,
+                                   position,
+                                   config->rope_theta) != 0) {
             return -1;
         }
 
-        if (att1_rope_f32(k_head,
-                          config->head_dim,
-                          position,
-                          config->rope_theta) != 0) {
+        if (backend->ops->rope_f32(backend,
+                                   k_head,
+                                   config->head_dim,
+                                   position,
+                                   config->rope_theta) != 0) {
             return -1;
         }
     }
@@ -101,6 +101,32 @@ int att1_attention_forward_f32(float *output,
                                const att1_attention_weights *weights,
                                const att1_attention_config *config,
                                size_t position)
+{
+    att1_backend *backend = NULL;
+    int rc = -1;
+
+    if (att1_backend_default_create(&backend) != ATT1_OK) {
+        return -1;
+    }
+
+    rc = att1_attention_forward_backend(output,
+                                        cache,
+                                        input,
+                                        weights,
+                                        config,
+                                        position,
+                                        backend);
+    att1_backend_destroy(backend);
+    return rc;
+}
+
+int att1_attention_forward_backend(float *output,
+                                   att1_kv_cache *cache,
+                                   const float *input,
+                                   const att1_attention_weights *weights,
+                                   const att1_attention_config *config,
+                                   size_t position,
+                                   att1_backend *backend)
 {
     float *query = NULL;
     float *key = NULL;
@@ -117,6 +143,14 @@ int att1_attention_forward_f32(float *output,
         return -1;
     }
 
+    if ((backend == NULL) || (backend->ops == NULL) ||
+        (backend->ops->alloc == NULL) || (backend->ops->free == NULL) ||
+        (backend->ops->matmul_f32 == NULL) ||
+        (backend->ops->softmax_f32 == NULL) ||
+        (backend->ops->rope_f32 == NULL)) {
+        return -1;
+    }
+
     if (!att1_attention_weights_valid(weights) ||
         !att1_attention_config_valid(config, cache)) {
         return -1;
@@ -126,11 +160,11 @@ int att1_attention_forward_f32(float *output,
         return -1;
     }
 
-    query = malloc(config->model_dim * sizeof(float));
-    key = malloc(config->model_dim * sizeof(float));
-    value = malloc(config->model_dim * sizeof(float));
-    context = malloc(config->model_dim * sizeof(float));
-    scores = malloc((cache->length + 1u) * sizeof(float));
+    query = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    key = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    value = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    context = backend->ops->alloc(backend, config->model_dim * sizeof(float));
+    scores = backend->ops->alloc(backend, (cache->length + 1u) * sizeof(float));
     if ((query == NULL) ||
         (key == NULL) ||
         (value == NULL) ||
@@ -139,34 +173,37 @@ int att1_attention_forward_f32(float *output,
         goto cleanup;
     }
 
-    if (att1_matmul_f32(query,
-                        input,
-                        weights->wq,
-                        1u,
-                        config->model_dim,
-                        config->model_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 query,
+                                 input,
+                                 weights->wq,
+                                 1u,
+                                 config->model_dim,
+                                 config->model_dim) != 0) {
         goto cleanup;
     }
 
-    if (att1_matmul_f32(key,
-                        input,
-                        weights->wk,
-                        1u,
-                        config->model_dim,
-                        config->model_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 key,
+                                 input,
+                                 weights->wk,
+                                 1u,
+                                 config->model_dim,
+                                 config->model_dim) != 0) {
         goto cleanup;
     }
 
-    if (att1_matmul_f32(value,
-                        input,
-                        weights->wv,
-                        1u,
-                        config->model_dim,
-                        config->model_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 value,
+                                 input,
+                                 weights->wv,
+                                 1u,
+                                 config->model_dim,
+                                 config->model_dim) != 0) {
         goto cleanup;
     }
 
-    if (att1_attention_apply_rope(query, key, config, position) != 0) {
+    if (att1_attention_apply_rope(query, key, config, position, backend) != 0) {
         goto cleanup;
     }
 
@@ -192,7 +229,7 @@ int att1_attention_forward_f32(float *output,
                           inv_sqrt_head_dim;
         }
 
-        if (att1_softmax_f32(scores, cache->length) != 0) {
+        if (backend->ops->softmax_f32(backend, scores, cache->length) != 0) {
             goto cleanup;
         }
 
@@ -209,22 +246,23 @@ int att1_attention_forward_f32(float *output,
         }
     }
 
-    if (att1_matmul_f32(output,
-                        context,
-                        weights->wo,
-                        1u,
-                        config->model_dim,
-                        config->model_dim) != 0) {
+    if (backend->ops->matmul_f32(backend,
+                                 output,
+                                 context,
+                                 weights->wo,
+                                 1u,
+                                 config->model_dim,
+                                 config->model_dim) != 0) {
         goto cleanup;
     }
 
     rc = 0;
 
 cleanup:
-    free(query);
-    free(key);
-    free(value);
-    free(context);
-    free(scores);
+    backend->ops->free(backend, query);
+    backend->ops->free(backend, key);
+    backend->ops->free(backend, value);
+    backend->ops->free(backend, context);
+    backend->ops->free(backend, scores);
     return rc;
 }

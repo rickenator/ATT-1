@@ -1,6 +1,7 @@
 #ifndef ATT1_TRANSFORMER_BLOCK_H
 #define ATT1_TRANSFORMER_BLOCK_H
 
+#include "att1_backend.h"
 #include "att1_kv_cache.h"
 
 #include <stddef.h>
@@ -44,5 +45,14 @@ int att1_transformer_block_forward_f32(
     const att1_transformer_block_weights *weights,
     const att1_transformer_block_config *config,
     size_t position);
+
+int att1_transformer_block_forward_backend(
+    float *output,
+    att1_kv_cache *cache,
+    const float *input,
+    const att1_transformer_block_weights *weights,
+    const att1_transformer_block_config *config,
+    size_t position,
+    att1_backend *backend);
 
 #endif
