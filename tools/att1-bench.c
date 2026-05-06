@@ -212,6 +212,12 @@ static int run_cluster(const att1_model *model,
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
 
+    if ((backend_name != NULL) && (strcmp(backend_name, "cuda") == 0)) {
+        fprintf(stderr,
+                "cuda backend not yet supported for cluster mode\n");
+        return 1;
+    }
+
     tokens = calloc(capacity, sizeof(*tokens));
     if (tokens == NULL) {
         return 1;

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 
 static int run_command(const char *command)
 {
@@ -20,6 +21,14 @@ static int run_command_with_exit(const char *command, int *out_rc)
     }
     *out_rc = system(command);
     return 0;
+}
+
+static int command_exit_code(int rc)
+{
+    if (WIFEXITED(rc)) {
+        return WEXITSTATUS(rc);
+    }
+    return -1;
 }
 
 static int read_file(const char *path, char *buffer, size_t capacity)
@@ -135,17 +144,28 @@ static int test_cuda_bench_cluster_fails(void)
 {
     char output[4096];
     int rc = 0;
-
-    if (!att1_backend_cuda_available()) {
-        fputs("SKIP: CUDA not available\n", stderr);
-        return 0;
-    }
+    int exit_code = 0;
 
     if (run_command_with_exit(
             "./build/att1-bench --model models/dummy/model.att1 "
             "--prompt hello --tokens 8 --mode cluster --tiles 2 --backend cuda "
             "> build/bench_cuda_cluster.txt 2>&1",
             &rc) != 0) {
+        return -1;
+    }
+
+    if (WIFSIGNALED(rc)) {
+        fprintf(stderr,
+                "cuda cluster mode crashed with signal %d\n",
+                WTERMSIG(rc));
+        return -1;
+    }
+
+    exit_code = command_exit_code(rc);
+    if ((exit_code == 139) || (exit_code == 134)) {
+        fprintf(stderr,
+                "cuda cluster mode crashed with exit status %d\n",
+                exit_code);
         return -1;
     }
 
@@ -157,6 +177,12 @@ static int test_cuda_bench_cluster_fails(void)
 
     if (read_file("build/bench_cuda_cluster.txt", output, sizeof(output)) != 0) {
         fputs("failed to read cuda cluster bench output\n", stderr);
+        return -1;
+    }
+
+    if (strstr(output, "cuda backend not yet supported for cluster mode") ==
+        NULL) {
+        fputs("cuda cluster mode missing unsupported message\n", stderr);
         return -1;
     }
 
