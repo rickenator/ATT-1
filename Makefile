@@ -5,7 +5,7 @@ INCLUDE_DIR := include
 SRC_DIR := src
 TEST_DIR := tests
 
-BAK_DEST ?= /home/rick/Remote/Terrastation/backup/ATT-1
+BAK_DEST ?= /home/rick/Remote/Terrastation/stuff/ATT-1
 
 CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread -I$(INCLUDE_DIR)
 LDFLAGS :=
@@ -70,7 +70,7 @@ SIZE_OBJS := $(BUILD_DIR)/tools/att1-size.o $(COMMON_OBJS)
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test bak
+.PHONY: all clean test bak restore
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -112,7 +112,6 @@ bak:
 	@echo "Backing up ATT-1 to $(BAK_DEST)"
 	@mkdir -p "$(BAK_DEST)"
 	rsync -aH --info=progress2 \
-		--exclude='.git/' \
 		--exclude='$(BUILD_DIR)/' \
 		--exclude='cmake-build-*/' \
 		--exclude='out/' \
@@ -133,6 +132,32 @@ bak:
 		--exclude='models/*.gguf' \
 		--exclude='models/*.safetensors' \
 		./ "$(BAK_DEST)/"
+
+
+restore:
+	@echo "Restoring ATT-1 from $(BAK_DEST) to current working tree"
+	@test -d "$(BAK_DEST)" || { echo "Backup source not found: $(BAK_DEST)"; exit 1; }
+	rsync -aH --delete --info=progress2 \
+		--exclude='$(BUILD_DIR)/' \
+		--exclude='cmake-build-*/' \
+		--exclude='out/' \
+		--exclude='dist/' \
+		--exclude='*.o' \
+		--exclude='*.a' \
+		--exclude='*.so' \
+		--exclude='*.dylib' \
+		--exclude='*.dll' \
+		--exclude='*.exe' \
+		--exclude='*.pyc' \
+		--exclude='__pycache__/' \
+		--exclude='.pytest_cache/' \
+		--exclude='.cache/' \
+		--exclude='.venv/' \
+		--exclude='venv/' \
+		--exclude='models/*.bin' \
+		--exclude='models/*.gguf' \
+		--exclude='models/*.safetensors' \
+		"$(BAK_DEST)/" ./
 
 clean:
 	rm -rf $(BUILD_DIR)
