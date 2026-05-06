@@ -176,14 +176,33 @@ Milestone 27 adds explicit cluster q8 validation:
     and is asserted in tests; for future models, token divergence can still occur
     when logits remain within tolerance around argmax boundaries.
 
-CUDA q8 cluster mode is not implemented and is rejected explicitly.
+Milestone 28 adds CUDA q8 cluster support using the same `att1_cluster_infer_set_backend()`
+path. The cuda-q8 backend dispatches all transformer block operations through the existing
+cuBLAS f32 operators (same as the cuda backend) since cluster inference passes float32
+weights via `att1_transformer_block_forward_backend()`. Activations remain float32.
+
+CUDA q8 cluster mode validation:
+
+- `att1-bench --mode cluster --backend cuda-q8` exits zero on CUDA builds and reports
+  `backend=cuda-q8`.
+- Fabric packet counters and activation/logit byte counters remain active and nonzero.
+- CUDA q8 cluster vs CPU q8 cluster generated token sequences match exactly on the dummy
+  model (greedy argmax is invariant to minor float32 rounding differences between CPU and
+  cuBLAS).
+- Non-CUDA builds reject `--backend cuda-q8` cluster mode with an explicit `unsupported`
+  message and nonzero exit code.
+- The cuda-q8 backend name (`ops->name == "cuda-q8"`) is verified before use to ensure no
+  silent fallback to cpu-q8, cpu-f32, or cuda.
 
 `tests/test_q8_bench.c` validates benchmark/trace behavior including cpu-q8
-cluster exit/status, backend labeling, counters, and explicit cuda-q8 cluster
-unsupported behavior.
+cluster exit/status, backend labeling, counters, cuda-q8 cluster success (CUDA-only),
+and cuda-q8 cluster unsupported behavior on CPU-only builds.
 
 `tests/test_q8_cluster.c` validates CPU f32 vs CPU q8 cluster logits tolerance,
 trace/fabric counter parity, and deterministic dummy-model generated tokens.
+
+`tests/test_cuda_q8_cluster.c` validates CPU q8 cluster vs CUDA q8 cluster token
+sequence equivalence, trace/fabric counter parity, and no-silent-fallback behavior.
 
 ## Ownership
 

@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 27: CPU q8 cluster inference integration.
+Milestone 28: CUDA q8 cluster inference integration.
 
 ## Hard Rules
 
@@ -48,13 +48,14 @@ Milestone 27: CPU q8 cluster inference integration.
 
 ## Active Task
 
-Milestone 27: CPU q8 cluster inference integration.
-- Goal: Allow cluster inference to run with `--backend cpu-q8` using CPU f32 cluster as correctness reference.
-- Keep activations/KV/residual paths float32 while using existing q8 matmul primitives.
-- Validate cpu-q8 cluster benchmark output and counters (`backend=cpu-q8`, fabric and byte counters nonzero).
-- Validate CPU f32 cluster vs CPU q8 cluster logits within documented `0.15` dummy-model tolerance.
-- Validate deterministic dummy-model generated tokens for current fixture and document divergence expectations for future models.
-- Preserve explicit unsupported behavior for `--backend cuda-q8` cluster mode.
+Milestone 28: CUDA q8 cluster inference integration.
+- Goal: Allow cluster inference to run with `--backend cuda-q8` using CPU q8 cluster and CPU f32 cluster as correctness references.
+- The cuda-q8 backend dispatches all block matmuls through cuBLAS f32 (same operator as the cuda backend) since cluster inference uses float32 weights via `att1_transformer_block_forward_backend()`.
+- Keep activations/KV/residual paths float32.
+- Validate cuda-q8 cluster benchmark output and counters (`backend=cuda-q8`, fabric and byte counters nonzero).
+- Validate CPU q8 cluster vs CUDA q8 cluster token sequences match exactly on dummy model.
+- Preserve no-silent-fallback guarantee: backend ops name must be `cuda-q8`.
+- Non-CUDA builds still reject `--backend cuda-q8` cluster mode with an unsupported message.
 
 ## Next Prompt for Codex
 
@@ -81,6 +82,13 @@ Milestone 27: CPU q8 cluster inference integration.
 - Inspect `git diff`.
 - Commit with a milestone-specific message.
 - Update `docs/OPERATION_LOG.md`.
+
+Milestone 27 complete:
+- CPU q8 cluster inference validated against CPU f32 cluster reference.
+- `make test` passes on both CPU-only and RTX 3090 (38 tests).
+- Fabric counters remain active in cpu-q8 cluster mode.
+- Logits tolerance 0.15 documented and enforced.
+- Explicit unsupported behavior for `--backend cuda-q8` cluster mode on CPU-only builds.
 
 Milestone 22 complete:
 - CUDA cluster inference works on the RTX 3090 host.

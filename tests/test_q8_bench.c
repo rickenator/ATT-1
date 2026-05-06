@@ -344,38 +344,126 @@ static int test_q8_bench_cluster_mode(void)
         return -1;
     }
 
-    /* cuda-q8 cluster must fail explicitly */
-    if (run_command_with_exit(
-            "./build/att1-bench --model models/dummy/model.att1 "
-            "--prompt hello --tokens 4 --mode cluster --tiles 2 "
-            "--backend cuda-q8 > build/q8bench_cudaq8_cluster.txt 2>&1",
-            &rc) != 0) {
+    /* cuda-q8 cluster must fail cleanly on CPU-only builds */
+    if (!att1_backend_cuda_available()) {
+        if (run_command_with_exit(
+                "./build/att1-bench --model models/dummy/model.att1 "
+                "--prompt hello --tokens 4 --mode cluster --tiles 2 "
+                "--backend cuda-q8 > build/q8bench_cudaq8_cluster.txt 2>&1",
+                &rc) != 0) {
+            return -1;
+        }
+
+        if (rc == 0) {
+            fputs("cuda q8 cluster mode unexpectedly succeeded on CPU-only build\n",
+                  stderr);
+            return -1;
+        }
+
+        if (read_file("build/q8bench_cudaq8_cluster.txt",
+                      output,
+                      sizeof(output)) != 0) {
+            fputs("failed to read cuda q8 cluster output\n", stderr);
+            return -1;
+        }
+
+        if (strstr(output, "backend=cpu-f32") != NULL) {
+            fputs("cuda q8 cluster silently fell back to cpu-f32\n", stderr);
+            return -1;
+        }
+
+        if (strstr(output, "unsupported") == NULL) {
+            fputs("cuda q8 cluster mode missing 'unsupported' message\n", stderr);
+            return -1;
+        }
+    }
+
+    fputs("PASS: cpu-q8 cluster mode and cuda-q8 cluster behavior\n", stderr);
+    return 0;
+}
+
+/* Test 6: att1-bench --mode cluster --backend cuda-q8 exits zero on CUDA build */
+static int test_cuda_q8_bench_cluster_mode(void)
+{
+    char output[4096];
+    char q8_output[4096];
+    uint32_t cuda_q8_last_token = 0u;
+    uint32_t q8_last_token = 0u;
+    uint64_t fabric_packets = 0u;
+    uint64_t activation_bytes = 0u;
+    uint64_t logits_bytes = 0u;
+
+    if (!att1_backend_cuda_available()) {
+        fputs("SKIP: CUDA not available\n", stderr);
+        return 0;
+    }
+
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode cluster --tiles 2 "
+                    "--backend cpu-q8 > build/cudq8bench_cpuq8_cluster.txt 2>&1") != 0) {
+        fputs("cpu q8 cluster mode failed in cuda-q8 test\n", stderr);
         return -1;
     }
 
-    if (rc == 0) {
-        fputs("cuda q8 cluster mode unexpectedly succeeded\n", stderr);
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode cluster --tiles 2 "
+                    "--backend cuda-q8 > build/cudq8bench_cluster.txt 2>&1") != 0) {
+        fputs("cuda q8 cluster mode exited non-zero\n", stderr);
         return -1;
     }
 
-    if (read_file("build/q8bench_cudaq8_cluster.txt",
-                  output,
-                  sizeof(output)) != 0) {
-        fputs("failed to read cuda q8 cluster output\n", stderr);
+    if ((read_file("build/cudq8bench_cpuq8_cluster.txt",
+                   q8_output,
+                   sizeof(q8_output)) != 0) ||
+        (read_file("build/cudq8bench_cluster.txt",
+                   output,
+                   sizeof(output)) != 0)) {
+        fputs("failed to read cuda q8 cluster bench outputs\n", stderr);
         return -1;
     }
 
-    if (strstr(output, "backend=cpu-f32") != NULL) {
-        fputs("cuda q8 cluster silently fell back to cpu-f32\n", stderr);
+    if ((strstr(output, "mode=cluster") == NULL) ||
+        (strstr(output, "backend=cuda-q8") == NULL) ||
+        (strstr(output, "generated_tokens=") == NULL) ||
+        (strstr(output, "tokens_decoded=") == NULL) ||
+        (strstr(output, "logits_bytes_produced=") == NULL)) {
+        fputs("cuda q8 cluster output missing required fields\n", stderr);
         return -1;
     }
 
-    if (strstr(output, "unsupported") == NULL) {
-        fputs("cuda q8 cluster mode missing 'unsupported' message\n", stderr);
+    /* Must not silently report a different backend */
+    if ((strstr(output, "backend=cpu-f32") != NULL) ||
+        (strstr(output, "backend=cpu-q8") != NULL) ||
+        (strstr(output, "backend=cuda\n") != NULL)) {
+        fputs("cuda q8 cluster output reported a wrong backend\n", stderr);
         return -1;
     }
 
-    fputs("PASS: cpu-q8 cluster mode and cuda-q8 unsupported behavior\n", stderr);
+    if ((parse_u64_line(output, "fabric_packets_sent", &fabric_packets) != 0) ||
+        (parse_u64_line(output, "activation_bytes_sent", &activation_bytes) != 0) ||
+        (parse_u64_line(output, "logits_bytes_produced", &logits_bytes) != 0) ||
+        (fabric_packets == 0u) ||
+        (activation_bytes == 0u) ||
+        (logits_bytes == 0u)) {
+        fputs("cuda q8 cluster counters are not sane\n", stderr);
+        return -1;
+    }
+
+    if ((parse_u32_line(q8_output, "last_token", &q8_last_token) != 0) ||
+        (parse_u32_line(output, "last_token", &cuda_q8_last_token) != 0)) {
+        fputs("failed to parse cluster last_token\n", stderr);
+        return -1;
+    }
+
+    if (cuda_q8_last_token != q8_last_token) {
+        fprintf(stderr,
+                "dummy model cluster tokens diverged: cpu-q8=%u cuda-q8=%u\n",
+                q8_last_token,
+                cuda_q8_last_token);
+        return -1;
+    }
+
+    fputs("PASS: cuda q8 cluster mode\n", stderr);
     return 0;
 }
 
@@ -436,6 +524,9 @@ int main(void)
         failures++;
     }
     if (test_q8_bench_cluster_mode() != 0) {
+        failures++;
+    }
+    if (test_cuda_q8_bench_cluster_mode() != 0) {
         failures++;
     }
     if (test_cuda_q8_bench_unsupported() != 0) {

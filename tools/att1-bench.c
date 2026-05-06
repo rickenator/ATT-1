@@ -215,11 +215,6 @@ static int run_cluster(const att1_model *model,
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
 
-    if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q8") == 0)) {
-        fprintf(stderr, "backend unsupported for cluster mode: %s\n", backend_name);
-        return 1;
-    }
-
     if (backend_name != NULL) {
         if (create_backend(backend_name, &backend) != ATT1_OK) {
             fprintf(stderr, "backend unsupported or unavailable: %s\n", backend_name);

@@ -452,8 +452,9 @@ remain the existing CUDA f32 ops.
 `tests/test_cuda_bench.c` also validates `att1-bench --mode single --backend
 cuda-q8` output labeling and unsupported-path behavior.
 
-CUDA q8 cluster inference is not implemented; `att1-bench --mode cluster
---backend cuda-q8` is rejected instead of falling back to CUDA f32. CUDA q4
+CUDA q8 cluster inference is implemented at Milestone 28. `att1-bench --mode cluster
+--backend cuda-q8` exits zero on CUDA builds and reports `backend=cuda-q8`. Non-CUDA
+builds reject the combination with an explicit `unsupported` message. CUDA q4
 remains unsupported.
 
 ## CLI
@@ -466,6 +467,7 @@ remains unsupported.
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cuda
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cuda-q8
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode cluster --tiles 2 --backend cuda
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode cluster --tiles 2 --backend cuda-q8
 ```
 
 `cpu-f32` remains the default. `cpu-q8` runs single-tile inference with runtime
@@ -489,19 +491,48 @@ backends across all four supported inference backends:
    `last_token` for the fixed dummy model prompt.
 3. **CPU q8 vs CUDA q8 deterministic** — both backends generate the same
    `last_token` (CUDA-only; skipped when CUDA unavailable).
-4. **Cluster q8 fails clearly** — `att1-bench --mode cluster --backend cuda-q8`
-   exits non-zero with an `unsupported` error and does not fall back to cpu-f32.
+4. **CUDA q8 cluster mode** — `att1-bench --mode cluster --backend cuda-q8`
+   exits zero on CUDA builds; cpu-only builds reject it with an `unsupported`
+   message. Validated in Milestone 28.
 5. **CUDA q8 unsupported on CPU-only build** — `--backend cuda-q8` exits
    non-zero with an `unsupported` message when CUDA is not compiled in.
 
 The four supported benchmark backend names and their semantics:
 
-| Backend    | Matmul path     | Norm/RoPE/etc | Notes              |
-|------------|-----------------|---------------|--------------------|
-| `cpu-f32`  | f32             | f32 CPU       | correctness ref    |
-| `cpu-q8`   | q8×f32 CPU      | f32 CPU       | quantization ref   |
-| `cuda`     | f32 cuBLAS      | f32 CUDA ops  | CUDA f32 path      |
-| `cuda-q8`  | q8×f32 CUDA     | f32 CUDA ops  | CUDA q8 path       |
+| Backend    | Matmul path     | Norm/RoPE/etc | Cluster | Notes              |
+|------------|-----------------|---------------|---------|--------------------|
+| `cpu-f32`  | f32             | f32 CPU       | yes     | correctness ref    |
+| `cpu-q8`   | q8×f32 CPU      | f32 CPU       | yes     | quantization ref   |
+| `cuda`     | f32 cuBLAS      | f32 CUDA ops  | yes     | CUDA f32 path      |
+| `cuda-q8`  | f32 cuBLAS*     | f32 CUDA ops  | yes     | CUDA q8 path       |
 
-Cluster mode is supported only for `cpu-f32` and `cpu-q8`. CUDA backends in
-cluster mode fail explicitly; cluster CUDA inference is not yet implemented.
+\* Cluster inference uses float32 weights via `att1_transformer_block_forward_backend()`;
+the q8×f32 matmul path is used only in single-tile inference.
+
+Cluster mode is supported for `cpu-f32`, `cpu-q8`, `cuda`, and `cuda-q8`.
+All four backends use `att1_cluster_infer_set_backend()` to wire into the
+cluster path.
+
+## Milestone 28: CUDA q8 cluster inference integration
+
+`att1_cluster_infer_set_backend()` now accepts the `cuda-q8` backend without
+restriction. The cuda-q8 backend dispatches transformer block computations
+through the existing cuBLAS f32 operators (same as the `cuda` backend) since
+cluster inference drives `att1_transformer_block_forward_backend()` with
+float32 model weights. Activations remain float32.
+
+`tests/test_cuda_q8_cluster.c` validates CUDA q8 cluster inference:
+
+1. **Next-token equivalence** — CPU q8 cluster and CUDA q8 cluster produce the
+   same greedy-sampled token for the same input.
+2. **Generated sequence equivalence** — CPU q8 cluster and CUDA q8 cluster
+   produce the same 2-token and 4-token sequences on the dummy model.
+3. **Trace/counter preservation** — CUDA q8 cluster fabric packet counts and
+   activation/logit byte counters are nonzero and match CPU q8 cluster counters.
+4. **No silent fallback** — the `cuda-q8` backend name (`ops->name`) is
+   verified as `"cuda-q8"` before the backend is installed into the cluster
+   context.
+
+`tests/test_q8_bench.c` also validates `att1-bench --mode cluster --backend
+cuda-q8` output labeling, counter sanity, last-token agreement with CPU q8
+cluster, and unsupported-path behavior on CPU-only builds.
