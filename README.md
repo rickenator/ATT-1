@@ -1,12 +1,14 @@
 # ATT-1 / Aniviza Tensor Tile
 
+ATT-1 prototypes an AIMU fabric: a tiled tensor artifact format and C11 runtime
+where model tensor space is partitioned into memory-owned tiles. Each future
+AIMU — Application-specific Inference Memory Unit — owns local tensor memory
+and executes programmable inference operations near memory, while the fabric
+coordinates routing, synchronization, reductions, and traceable execution.
+
 ATT-1 is a phase-1 software simulator for a future LLM inference ASIC
 architecture. The target architecture is a programmable tensor tile with local
 model memory, a KV-cache MMU, and a packetized fabric between tiles.
-
-This repository currently implements Milestone 0 only: a strict C11 project
-skeleton, a startup banner, logging, basic configuration structures, placeholder
-public headers, and a smoke test.
 
 Phase 1 focuses on simulation primitives and architecture exploration in plain
 C with no external dependencies. Phase 2 points toward a PCIe card direction:

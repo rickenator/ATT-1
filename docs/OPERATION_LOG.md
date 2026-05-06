@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 32: Deterministic converter stub output.
+Milestone 33: AIMU tiled tensor architecture document.
 
 ## Hard Rules
 
@@ -49,18 +49,14 @@ Milestone 32: Deterministic converter stub output.
 - Milestone 29: Backend matrix regression harness — `tests/test_backend_matrix.c` exercises all 8 (backend × mode) combos against the dummy `.att1` model; reports pass/fail, timing, token, and counter info.
 - Milestone 30: Real model conversion plan — `docs/real_model_conversion.md` documents tensor naming, dtypes, matrix conventions, q8 rules, and validation ladder; no code changes.
 - Milestone 31: ATT-1 converter skeleton — `compiler/convert_llama_to_att1.py` validates a LLaMA-style `config.json`, resolves field aliases, derives `rope_dim`, and prints a planned ATT-1 config; exits cleanly on unsupported arch or missing config; `compiler/fixtures/tiny_llama/` fixture added.
+- Milestone 32: Deterministic converter stub output — `compiler/convert_llama_to_att1.py` extended with binary `.att1` emitter; tensor names match `src/model_view.c`; `--out`/`--config` aliases added; stub validated with `att1-inspect` and `att1-bench`; determinism confirmed by SHA256.
 
 ## Active Task
 
-Milestone 32: Deterministic converter stub output.
-- `compiler/convert_llama_to_att1.py` extended with binary `.att1` emitter using correct C-runtime tensor names and shapes.
-- Tensor names now match `src/model_view.c` exactly: `tok_embeddings.weight`, `layers.{l}.attention_norm.weight`, `layers.{l}.attention.wq.weight`, etc.
-- `--out PATH` / `--config FILE` CLI aliases added alongside existing `--model-dir` / `--output`.
-- `compiler/fixtures/tiny_llama/config.json` (vocab_size=256) used as fixture.
-- `models/converted_stub/model.att1` emitted, validated with `att1-inspect` and `att1-bench --mode single --backend cpu-f32`.
-- Output is byte-for-byte deterministic; SHA256 confirmed stable across runs.
-- `docs/real_model_conversion.md` tensor naming table corrected; Stage 1 validation ladder marked complete.
-- No C source changes; `make test` remains Python-free.
+Milestone 33: AIMU tiled tensor architecture document.
+- Added `docs/aimu_architecture.md` covering: core concept, near-memory execution model, prototype mapping table, conceptual stack diagram, future shard metadata fields, Phase 1/2/3 hardware roadmap, and non-goals.
+- Updated `README.md` with a short AIMU fabric summary paragraph.
+- No C source changes; no Makefile changes; `make test` remains Python-free.
 
 ## Next Prompt for Codex
 
