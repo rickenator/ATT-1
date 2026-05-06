@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 26: q8 benchmark and trace integration.
+Milestone 27: CPU q8 cluster inference integration.
 
 ## Hard Rules
 
@@ -48,16 +48,13 @@ Milestone 26: q8 benchmark and trace integration.
 
 ## Active Task
 
-Milestone 26: q8 benchmark and trace integration.
-- Goal: Expose CPU q8 and CUDA q8 single-tile inference through benchmark/trace tools.
-- All four backends benchmarkable via att1-bench: cpu-f32, cpu-q8, cuda, cuda-q8.
-- Backend name reported clearly in benchmark output.
-- CPU f32 and CPU q8 generate identical last token for dummy model (deterministic).
-- CPU q8 and CUDA q8 generate identical last token for dummy model (CUDA-only).
-- CUDA q8 cluster mode fails explicitly with unsupported message.
-- Test suite: test_q8_bench.c with 5 validation cases.
-- Default CPU-only build/test remains CUDA-free.
-- Test suite: updated `test_cuda_infer.c` and `test_cuda_bench.c` q8 coverage.
+Milestone 27: CPU q8 cluster inference integration.
+- Goal: Allow cluster inference to run with `--backend cpu-q8` using CPU f32 cluster as correctness reference.
+- Keep activations/KV/residual paths float32 while using existing q8 matmul primitives.
+- Validate cpu-q8 cluster benchmark output and counters (`backend=cpu-q8`, fabric and byte counters nonzero).
+- Validate CPU f32 cluster vs CPU q8 cluster logits within documented `0.15` dummy-model tolerance.
+- Validate deterministic dummy-model generated tokens for current fixture and document divergence expectations for future models.
+- Preserve explicit unsupported behavior for `--backend cuda-q8` cluster mode.
 
 ## Next Prompt for Codex
 

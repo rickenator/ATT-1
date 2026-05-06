@@ -78,6 +78,36 @@ static int parse_u32_line(const char *text, const char *key, uint32_t *out)
     return 0;
 }
 
+static int parse_u64_line(const char *text, const char *key, uint64_t *out)
+{
+    const char *line = NULL;
+    char *end = NULL;
+    unsigned long long value = 0u;
+
+    if ((text == NULL) || (key == NULL) || (out == NULL)) {
+        return -1;
+    }
+
+    line = strstr(text, key);
+    if (line == NULL) {
+        return -1;
+    }
+
+    line += strlen(key);
+    if (*line != '=') {
+        return -1;
+    }
+    line++;
+
+    value = strtoull(line, &end, 10);
+    if (end == line) {
+        return -1;
+    }
+
+    *out = (uint64_t)value;
+    return 0;
+}
+
 /* Test 1: att1-bench --backend cpu-q8 --mode single exits zero with
  * required output fields */
 static int test_cpu_q8_bench_single_mode(void)
@@ -245,7 +275,74 @@ static int test_cuda_q8_bench_deterministic(void)
 static int test_q8_bench_cluster_mode(void)
 {
     char output[4096];
+    char f32_output[4096];
     int rc = 0;
+    uint32_t f32_last_token = 0u;
+    uint32_t q8_last_token = 0u;
+    uint64_t fabric_packets = 0u;
+    uint64_t activation_bytes = 0u;
+    uint64_t logits_bytes = 0u;
+
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode cluster --tiles 2 "
+                    "--backend cpu-f32 > build/q8bench_f32_cluster.txt 2>&1") != 0) {
+        fputs("cpu f32 cluster mode failed\n", stderr);
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode cluster --tiles 2 "
+                    "--backend cpu-q8 > build/q8bench_cpuq8_cluster.txt 2>&1") != 0) {
+        fputs("cpu q8 cluster mode failed\n", stderr);
+        return -1;
+    }
+
+    if ((read_file("build/q8bench_f32_cluster.txt", f32_output, sizeof(f32_output)) != 0) ||
+        (read_file("build/q8bench_cpuq8_cluster.txt", output, sizeof(output)) != 0)) {
+        fputs("failed to read cpu cluster bench outputs\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "mode=cluster") == NULL) ||
+        (strstr(output, "backend=cpu-q8") == NULL) ||
+        (strstr(output, "generated_tokens=") == NULL) ||
+        (strstr(output, "tokens_decoded=") == NULL) ||
+        (strstr(output, "token_time_us_total=") == NULL) ||
+        (strstr(output, "token_time_us_max=") == NULL) ||
+        (strstr(output, "kv_appends=") == NULL) ||
+        (strstr(output, "logits_bytes_produced=") == NULL)) {
+        fputs("cpu q8 cluster output missing required fields\n", stderr);
+        return -1;
+    }
+
+    if (strstr(output, "backend=cpu-f32") != NULL) {
+        fputs("cpu q8 cluster output reported cpu-f32 backend\n", stderr);
+        return -1;
+    }
+
+    if ((parse_u64_line(output, "fabric_packets_sent", &fabric_packets) != 0) ||
+        (parse_u64_line(output, "activation_bytes_sent", &activation_bytes) != 0) ||
+        (parse_u64_line(output, "logits_bytes_produced", &logits_bytes) != 0) ||
+        (fabric_packets == 0u) ||
+        (activation_bytes == 0u) ||
+        (logits_bytes == 0u)) {
+        fputs("cpu q8 cluster counters are not sane\n", stderr);
+        return -1;
+    }
+
+    if ((parse_u32_line(f32_output, "last_token", &f32_last_token) != 0) ||
+        (parse_u32_line(output, "last_token", &q8_last_token) != 0)) {
+        fputs("failed to parse cluster last_token\n", stderr);
+        return -1;
+    }
+
+    if (f32_last_token != q8_last_token) {
+        fprintf(stderr,
+                "dummy model cluster tokens diverged: f32=%u q8=%u\n",
+                f32_last_token,
+                q8_last_token);
+        return -1;
+    }
 
     /* cuda-q8 cluster must fail explicitly */
     if (run_command_with_exit(
@@ -278,7 +375,7 @@ static int test_q8_bench_cluster_mode(void)
         return -1;
     }
 
-    fputs("PASS: q8 cluster mode fails clearly\n", stderr);
+    fputs("PASS: cpu-q8 cluster mode and cuda-q8 unsupported behavior\n", stderr);
     return 0;
 }
 

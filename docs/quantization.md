@@ -136,7 +136,7 @@ This benchmark is for kernel measurement only. `--backend cuda` exercises the
 CUDA q8xf32 operator when CUDA is compiled in and available at runtime;
 otherwise it reports unsupported cleanly.
 
-### att1-bench q8 single-tile (Milestone 26)
+### att1-bench q8 single-tile and cluster (Milestones 26-27)
 
 `build/att1-bench` supports four inference backends for single-tile mode:
 
@@ -160,10 +160,30 @@ Each run prints:
 - `layer[i].executions=<n> time_us=<us> kv_appends=<n>` — per-layer breakdown
 
 CPU q8 cluster mode runs through the cluster inference path using q8 projection
-matmuls. CUDA q8 cluster mode is not implemented and is rejected explicitly.
+matmuls with float32 activations and float32 KV/cache/state tensors preserved.
+CPU f32 cluster inference remains the correctness reference.
 
-`tests/test_q8_bench.c` validates these behaviors including cross-backend token
-determinism for the fixed dummy model prompt.
+Milestone 27 adds explicit cluster q8 validation:
+
+- `att1-bench --mode cluster --backend cpu-q8` exits zero and reports
+    `backend=cpu-q8`.
+- Fabric packet counters and activation/logit byte counters remain active and
+    nonzero in cpu-q8 cluster mode.
+- CPU f32 cluster vs CPU q8 cluster logits are compared on the dummy model with
+    max-abs tolerance `0.15` (same documented dummy-model q8 tolerance used for
+    single-tile checks).
+- Dummy-model generated token sequence is deterministic for current fixtures
+    and is asserted in tests; for future models, token divergence can still occur
+    when logits remain within tolerance around argmax boundaries.
+
+CUDA q8 cluster mode is not implemented and is rejected explicitly.
+
+`tests/test_q8_bench.c` validates benchmark/trace behavior including cpu-q8
+cluster exit/status, backend labeling, counters, and explicit cuda-q8 cluster
+unsupported behavior.
+
+`tests/test_q8_cluster.c` validates CPU f32 vs CPU q8 cluster logits tolerance,
+trace/fabric counter parity, and deterministic dummy-model generated tokens.
 
 ## Ownership
 
