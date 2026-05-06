@@ -3,6 +3,7 @@
 
 #include "att1_attention.h"
 #include "att1_config.h"
+#include "att1_cluster_infer.h"
 #include "att1_fabric.h"
 #include "att1_infer.h"
 #include "att1_kv.h"
@@ -14,6 +15,7 @@
 #include "att1_quant.h"
 #include "att1_runtime.h"
 #include "att1_sampler.h"
+#include "att1_shard.h"
 #include "att1_tensor.h"
 #include "att1_tile.h"
 #include "att1_tokenizer.h"
