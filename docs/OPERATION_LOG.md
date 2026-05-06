@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 29: Backend matrix regression harness.
+Milestone 30: Real model conversion plan and `.att1` compatibility spec.
 
 ## Hard Rules
 
@@ -48,11 +48,11 @@ Milestone 29: Backend matrix regression harness.
 
 ## Active Task
 
-Milestone 29: Backend matrix regression harness.
-- Goal: Single test target that exercises all 8 backend×mode combinations (cpu-f32/cpu-q8/cuda/cuda-q8 × single/cluster) and reports pass/fail, timing, generated token, and trace counters.
-- CUDA entries skip gracefully when CUDA is unavailable.
-- Cross-backend consistency: all passing entries in the same mode must produce the same last_token on the dummy model.
-- No inference behavior changes; no new backends.
+Milestone 30: Real model conversion plan and `.att1` compatibility spec.
+- Goal: Document the path from real model artifacts to a valid `.att1` file without implementing the converter yet.
+- `docs/real_model_conversion.md` covers: target architecture, tensor naming, dtypes, matrix conventions, q8 rules, shard expectations, validation ladder, and risks.
+- No source code changes; no Makefile changes; `make test` remains Python-free.
+- Next implementation milestone: converter skeleton (Stage 1 of the validation ladder) after this plan is accepted.
 
 ## Next Prompt for Codex
 
@@ -79,6 +79,13 @@ Milestone 29: Backend matrix regression harness.
 - Inspect `git diff`.
 - Commit with a milestone-specific message.
 - Update `docs/OPERATION_LOG.md`.
+
+Milestone 29 complete:
+- Backend matrix regression harness validates supported dummy-model paths.
+- CPU-only build/test remains CUDA-free.
+- CUDA=1 build/test passes on RTX 3090 host.
+- Supported matrix: cpu-f32, cpu-q8, cuda-f32, cuda-q8 across single and cluster modes.
+- q4 and real-model conversion remain unimplemented.
 
 Milestone 28 complete:
 - CUDA q8 cluster inference is integrated.

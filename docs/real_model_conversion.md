@@ -1,0 +1,195 @@
+# ATT-1 Real Model Conversion Plan
+
+Milestone 30 documents the path from real model artifacts to a valid `.att1`
+file that can run through the existing simulator inference stack.  No converter
+is implemented here.
+
+## Scope
+
+### First target architecture
+
+Tiny LLaMA-style decoder-only transformer:
+
+- Single embedding table (token embeddings only)
+- Per-layer stacked projection weights: `wq`, `wk`, `wv`, `wo`, `w_gate`,
+  `w_up`, `w_down`
+- Per-layer RMSNorm weights: `attention_norm`, `ffn_norm`
+- Output-side RMSNorm weight: `output_norm`
+- Output projection weight: `output_weight` (shared with embedding is allowed
+  if the source model uses tied weights; the converter must write an explicit
+  copy)
+- Absolute RoPE positional encoding (theta convention: `10000.0` default;
+  configurable)
+
+Multi-head attention with no grouped-query or multi-query variants for the
+initial target.
+
+### Explicitly out of scope for this milestone
+
+- Mixture-of-experts (MoE) layers
+- q4 weights
+- GPT-OSS 120B or any large-model real inference
+- Tokenizer import or in-process BPE execution
+- safetensors or GGUF parsing in C runtime code
+- Any Python code required by `make test` or the C runtime
+
+---
+
+## Tensor naming convention
+
+The `.att1` tensor `name[64]` field encodes each tensor with a flat ASCII key.
+Layer-scoped tensors prefix with `L%u.` where `%u` is the zero-based layer
+index.
+
+```text
+token_embedding          shape [vocab_size, d_model]        f32
+L0.attention_norm        shape [d_model]                    f32
+L0.wq                    shape [d_model, d_model]           f32
+L0.wk                    shape [d_model, d_model]           f32
+L0.wv                    shape [d_model, d_model]           f32
+L0.wo                    shape [d_model, d_model]           f32
+L0.ffn_norm              shape [d_model]                    f32
+L0.w_gate                shape [d_ff, d_model]              f32
+L0.w_up                  shape [d_ff, d_model]              f32
+L0.w_down                shape [d_model, d_ff]              f32
+...                      (repeat for each layer)
+output_norm              shape [d_model]                    f32
+output_weight            shape [vocab_size, d_model]        f32
+```
+
+All names must be null-terminated within the 64-byte field.  Names that
+exceed 63 characters are rejected by the loader.
+
+---
+
+## Supported dtypes
+
+| Code | Value | Meaning                        |
+|------|-------|--------------------------------|
+| `1`  | 1     | float32 (current, required)    |
+| `2`  | 2     | q8 (int8 + per-row f32 scales) |
+
+The loader must reject any other dtype value.  q8 tensors in `.att1` files are
+not yet implemented; dtype `2` is reserved for a future format update and must
+not appear in milestone-30 files.  The converter must write dtype `1` for all
+tensors regardless of the quantization path used at inference time — runtime q8
+copies are always derived on load.
+
+---
+
+## Matrix conventions
+
+- All matrices are stored **row-major** in the `.att1` file.
+- Projection weights follow the convention used by the runtime:
+  `weight[out_dim, in_dim]`.  This is the transposed form relative to the
+  typical `[in_dim, out_dim]` layout in PyTorch; the converter must transpose
+  before writing.
+- The loader does not perform transposition.  Shape validation must match the
+  convention above exactly.
+
+---
+
+## Per-row q8 quantization rules (inference-time only)
+
+When the runtime builds q8 copies from f32 `.att1` tensors:
+
+```text
+scale[row] = max(abs(row_values)) / 127   (or 1.0 if row is all-zero)
+q[row, col] = clamp(round(row_values[col] / scale[row]), -127, 127)
+```
+
+`-128` is intentionally excluded to preserve symmetric range.
+Scales are float32.  Activations remain float32 throughout.
+
+---
+
+## Shard metadata expectations
+
+For converted single-shard models, `shard_metadata_offset` and
+`shard_metadata_size` should be zero (absent).  Cluster-mode sharding is
+performed at runtime by `att1_shard_plan_build()` and does not require
+pre-baked shard metadata in the file.  The shard metadata section of the format
+is reserved for future hardware-targeting use.
+
+---
+
+## Format versioning rules
+
+- `version` is currently `1`.
+- Backwards-incompatible changes (field relocation, dtype removal, tensor
+  renaming) require a version bump.
+- The loader must reject files with unknown versions.
+- The converter must write `version = 1` until a version bump is agreed.
+- New optional fields or new dtype codes are permissible in `version = 1` only
+  if the loader already rejects unknown values (which it does for dtype).
+
+---
+
+## Hostile-input validation requirements
+
+The loader already enforces:
+
+- Magic bytes `ATT1MODL` exact match
+- Known version value
+- `header_size` matches expected size
+- `ndims <= 4`
+- No zero-size dimensions
+- Tensor data ranges within declared `tensor_data_size`
+- Tensor data section does not extend past the file
+
+The converter must produce files that pass all existing checks.  Additional
+shape validation for converted models:
+
+- `vocab_size`, `d_model`, `d_ff`, `n_heads`, `n_layers` must be nonzero and
+  consistent across all tensors.
+- `d_model % n_heads == 0` must hold.
+- `rope_dim <= d_model / n_heads` must hold.
+- Each tensor's `nbytes` must equal `product(shape) * sizeof(dtype)`.
+- No duplicate tensor names in a single file.
+
+---
+
+## How single and cluster backends consume converted models
+
+Single-tile inference (`att1_infer_t`):
+1. Loads the `.att1` file via `att1_model_load()`.
+2. Validates the model with `att1_model_view_validate_decoder()`.
+3. If a q8 backend is selected, builds runtime q8 copies of all projection
+   weights before decoding begins.
+4. Decodes tokens via `att1_infer_decode_token()`.
+
+Cluster inference (`att1_cluster_infer_t`):
+1. Loads the same `.att1` file identically.
+2. Builds a shard plan at runtime via `att1_shard_plan_build()`.
+3. Dispatches each tile's layers through `att1_transformer_block_forward_backend()`.
+4. The backend selection (cpu-f32, cpu-q8, cuda, cuda-q8) is independent of the
+   file format.
+
+No file format changes are required to support cluster mode.
+
+---
+
+## Validation ladder
+
+| Stage | Model | Purpose |
+|-------|-------|---------|
+| 1 | Converted tiny synthetic model | Converter round-trip; loader acceptance |
+| 2 | Tiny trained toy model (e.g. char-level) | End-to-end logit sanity |
+| 3 | Small public LLaMA-like model | Real tokenizer output; greedy token spot-check |
+| 4 | Larger architecture | Simulation only; timing and memory counters |
+
+Stage 1 is the next implementation milestone after this plan is accepted.
+
+---
+
+## Risks
+
+| Risk | Mitigation |
+|------|-----------|
+| Tensor naming mismatch | Canonical name table in this document; converter asserts all names present |
+| Transposed weights | Converter tests round-trip: load → multiply → compare to original |
+| RoPE convention mismatch | Converter accepts `--rope-theta` argument; documented default is `10000.0` |
+| q8 scale mismatch | Runtime quantizes from f32 file; no scale in file format until dtype `2` is defined |
+| Tokenizer mismatch | Tokenizer is out of scope; converter emits raw byte IDs only for initial tests |
+| Model format drift | Version field enforced; loader rejects unknown versions |
+| safetensors C dependency | Converter is Python-only under `compiler/`; runtime never links it |
