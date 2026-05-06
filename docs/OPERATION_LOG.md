@@ -82,3 +82,11 @@ Milestone 22: CUDA cluster inference integration.
 - Inspect `git diff`.
 - Commit with a milestone-specific message.
 - Update `docs/OPERATION_LOG.md`.
+
+Milestone 22 complete:
+- CUDA cluster inference works on the RTX 3090 host.
+- `make CUDA=1` and `make test CUDA=1` pass outside the Codex sandbox.
+- CUDA cluster benchmark exits zero and reports `backend=cuda`.
+- Fabric counters remain active in CUDA cluster mode.
+- Codex sandbox cannot see `/dev/nvidia*`, so CUDA availability checks may skip inside the sandbox.
+- CUDA q8 and real-model conversion remain unimplemented.
