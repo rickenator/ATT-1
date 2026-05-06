@@ -163,6 +163,28 @@ This keeps the CUDA backend within the existing C11 + cuBLAS toolchain while
 providing correct numerical softmax that works with the causal masking semantics
 of the attention forward pass.
 
+### Milestone 19: transformer_block_forward (via composed CUDA ops)
+
+`transformer_block_forward` is enabled for CUDA through the existing backend API
+composition path in `att1_transformer_block_forward_backend`.
+
+No dedicated CUDA block kernel is introduced. Instead, block execution uses the
+already validated CUDA-backed primitives for batch size 1 decode:
+
+1. pre-attention RMSNorm via `cuda_backend_rmsnorm_f32`
+2. causal self-attention via `att1_attention_forward_backend`, which uses:
+   `cuda_backend_matmul_f32`, `cuda_backend_rope_f32`, and
+   `cuda_backend_softmax_f32`
+3. residual add (host-side, same backend API path)
+4. pre-FFN RMSNorm via `cuda_backend_rmsnorm_f32`
+5. FFN projections via `cuda_backend_matmul_f32`
+6. SwiGLU via `cuda_backend_ffn_swiglu_f32`
+7. final projection via `cuda_backend_matmul_f32`
+8. final residual add (host-side, same backend API path)
+
+This milestone intentionally keeps the patch narrow and does not attempt full
+CUDA model inference. CUDA q8 remains out of scope.
+
 ### Not yet implemented
 
 `matmul_q8xf32` still returns failure. Full transformer inference via CUDA is
@@ -243,6 +265,20 @@ not attempted until all operator kernels are validated.
 
 When CUDA is unavailable, the test suite skips gracefully with a message
 indicating that CUDA tests were skipped.
+
+`tests/test_cuda_transformer_block.c` validates CUDA-backed single-block
+execution against CPU f32 reference:
+
+1. **Zero attention/FFN weights preserve residual** — verifies output equals
+   input when block projections are zero.
+2. **CPU vs CUDA tiny deterministic** — compares 1-head tiny block output
+   between CPU and CUDA within 1e-3 tolerance.
+3. **KV cache position updates match CPU** — verifies cache length progression
+   and position semantics are consistent across CUDA and CPU.
+4. **Multi-head medium deterministic** — compares multi-head, medium-size block
+   outputs across sequential positions within 1e-3 tolerance.
+5. **No silent fallback** — asserts backend name is `"cuda"` and block forward
+   succeeds only through CUDA-selected backend path.
 
 ## CLI
 

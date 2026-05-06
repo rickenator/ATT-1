@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 19: (to be determined by user request).
+Milestone 20: (to be determined by user request).
 
 ## Hard Rules
 
@@ -43,35 +43,31 @@ Milestone 19: (to be determined by user request).
 - Milestone 16: CUDA FFN/SwiGLU prototype — `cuda_backend_ffn_swiglu_f32` implemented and validated against CPU f32 reference with deterministic tiny/medium FFN tests.
 - Milestone 17: CUDA RoPE prototype — `cuda_backend_rope_f32` implemented with per-pair `cublasSrot` rotation and validated against CPU f32 RoPE reference.
 - Milestone 18: CUDA causal attention — `cuda_backend_softmax_f32` implemented with numerically stable CPU softmax; attention forward pass uses all component CUDA operators (matmul, rope, softmax); comprehensive 7-case test suite validates causal masking, numerical stability, and multi-head determinism.
+- Milestone 19: CUDA transformer block prototype — single-block backend path validated on CUDA backend using composed primitives (RMSNorm, causal attention, matmul, SwiGLU) against CPU f32 reference.
 
 ## Active Task
 
-Milestone 18 CUDA causal attention is complete and validated.
+Milestone 19 CUDA transformer block prototype is complete and validated.
 
-Milestone 18 scope:
-- `src/backend_cuda.c`: `cuda_backend_softmax_f32` now implements numerically stable
-  softmax (find max, exp-normalize, sum) on host-resident float arrays.
-- `tests/test_cuda_attention.c`: added 7-case comprehensive attention validation:
-  (1) position 0 causal mask, (2) position N causal mask, (3) future KV
-  no effect, (4) softmax numerical stability, (5) multi-head deterministic,
-  (6) invalid KV range fails cleanly, (7) no silent fallback to CPU.
-- `tests/test_backend.c`: extended CUDA backend coverage to verify full attention
-  forward pass (all component ops) succeeds with valid KV cache.
-- `Makefile`: test suite now includes `cuda_attention`.
-- `docs/cuda_backend.md`: documented Milestone 18 softmax and attention implementation,
-  added 7-case test coverage explanation, noted non-CUDA softmax approach.
-- `docs/OPERATION_LOG.md`: updated to mark Milestone 18 complete.
+Milestone 19 scope:
+- `tests/test_cuda_transformer_block.c`: added required CUDA block tests for
+  residual behavior with zero weights, CPU-vs-CUDA output comparison,
+  KV position/cache update parity, deterministic multi-head medium case,
+  and no silent CPU fallback checks.
+- `Makefile`: test suite now includes `cuda_transformer_block`.
+- `docs/cuda_backend.md`: added Milestone 19 block execution notes and
+  test coverage details.
+- `docs/OPERATION_LOG.md`: updated to mark Milestone 19 complete.
 
-Milestone 18 validation status:
+Milestone 19 validation status:
 - `make clean && make && make test` passes on default CPU-only build
-  (30/30 tests pass; `cuda_attention` test skips gracefully when CUDA unavailable).
-- Ready for user to run `make clean && make CUDA=1 && make test CUDA=1` on
-  CUDA-capable machine to validate CUDA attention execution and output matching
-  CPU f32 reference within tolerance.
+  with CUDA tests skipping cleanly when CUDA is unavailable.
+- `make clean && make CUDA=1 && make test CUDA=1` passes on CUDA-capable
+  machine with block output matching CPU f32 reference within tolerance.
 
 ## Next Prompt for Codex
 
-Awaiting user request for Milestone 19 or later.
+Awaiting user request for Milestone 20 or later.
 
 ## Known Risks
 
