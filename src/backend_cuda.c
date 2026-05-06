@@ -210,6 +210,52 @@ static int cuda_backend_matmul_q8xf32(att1_backend *backend,
                                       size_t lhs_cols,
                                       const att1_q8_matrix *weights)
 {
+#ifdef ATT1_ENABLE_CUDA
+    float *dequant_rhs = NULL;
+    size_t row = 0u;
+    size_t col = 0u;
+    int status = -1;
+
+    if ((backend == NULL) || (backend->user_data == NULL) ||
+        (dst == NULL) || (lhs == NULL) || (weights == NULL) ||
+        (weights->values == NULL) || (weights->scales == NULL)) {
+        return -1;
+    }
+    if ((lhs_rows == 0u) || (lhs_cols == 0u) ||
+        (weights->rows == 0u) || (weights->cols == 0u) ||
+        (lhs_cols != weights->cols)) {
+        return -1;
+    }
+    if (weights->cols > ((size_t)-1) / weights->rows) {
+        return -1;
+    }
+
+    dequant_rhs = malloc(weights->cols * weights->rows * sizeof(*dequant_rhs));
+    if (dequant_rhs == NULL) {
+        return -1;
+    }
+
+    for (row = 0u; row < weights->rows; row++) {
+        const float scale = weights->scales[row];
+
+        for (col = 0u; col < weights->cols; col++) {
+            const int qvalue = weights->values[(row * weights->cols) + col];
+            dequant_rhs[(col * weights->rows) + row] =
+                (float)qvalue * scale;
+        }
+    }
+
+    status = cuda_backend_matmul_f32(backend,
+                                     dst,
+                                     lhs,
+                                     dequant_rhs,
+                                     lhs_rows,
+                                     weights->rows,
+                                     lhs_cols);
+
+    free(dequant_rhs);
+    return status;
+#else
     (void)backend;
     (void)dst;
     (void)lhs;
@@ -217,6 +263,7 @@ static int cuda_backend_matmul_q8xf32(att1_backend *backend,
     (void)lhs_cols;
     (void)weights;
     return -1;
+#endif
 }
 
 static int cuda_backend_rmsnorm_f32(att1_backend *backend,

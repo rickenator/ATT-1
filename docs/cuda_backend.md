@@ -211,8 +211,8 @@ Behavioral scope:
 
 ### Not yet implemented
 
-`matmul_q8xf32` still returns failure. Full transformer inference via CUDA is
-not attempted until all operator kernels are validated.
+Full transformer inference through q8 CUDA weights is not implemented. CUDA q4
+is not implemented.
 
 ## Tests
 
@@ -228,6 +228,10 @@ not attempted until all operator kernels are validated.
 5. **No silent fallback** — Backend name is asserted as `"cuda"` before
    calling `matmul_f32`; result is compared to CPU reference to confirm
    CUDA execution produced correct output.
+6. **q8xf32 prototype** — CUDA `matmul_q8xf32` is validated against CPU
+   q8xf32 for tiny hand-checkable, deterministic medium, zero-scale row, and
+   saturated-value fixtures. Medium q8 output is also compared against CPU f32
+   within the documented q8 tolerance.
 
 `tests/test_cuda_norm.c` validates the CUDA RMSNorm prototype:
 
@@ -391,8 +395,32 @@ reference.
    `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_create` and skip CUDA cluster
    execution cleanly.
 
-CUDA q8 remains unsupported; CUDA cluster integration is limited to the f32
-backend operations already exposed by the CUDA backend.
+### Milestone 23: q8xf32 matmul prototype
+
+The CUDA backend now implements `matmul_q8xf32` behind the existing backend
+vtable. It consumes the same per-row int8 quantization format as the CPU q8
+path and keeps activations as float32. The prototype dequantizes q8 rows into a
+temporary f32 matrix in `rhs[in, out]` layout, then executes the multiply through
+the existing CUDA f32 matmul path. This keeps the implementation narrow while
+validating CUDA-selected q8 operator dispatch and preserving the CPU q8 path as
+the correctness reference.
+
+`tests/test_cuda_matmul.c` covers Milestone 23 q8 cases:
+
+1. **Tiny q8 known case** — hand-checkable q8 matrix/vector output.
+2. **Medium deterministic q8** — CUDA q8 output matches CPU q8 and stays within
+   the documented q8 tolerance versus CPU f32.
+3. **Zero-scale row** — q8 rows with scale `0.0` produce zero contribution,
+   matching CPU q8 behavior.
+4. **Saturation edges** — `-127` and `127` values match CPU q8 behavior.
+5. **No silent CPU fallback** — backend name is asserted as `"cuda"` before
+   calling `matmul_q8xf32`, and the CUDA-selected q8 op must succeed.
+6. **Unsupported path clarity** — non-CUDA builds/devices still report
+   `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_create` and skip CUDA q8
+   execution cleanly.
+
+Full CUDA q8 inference is still out of scope; only the backend q8xf32 matmul
+operator is added. CUDA q4 remains unsupported.
 
 ## CLI
 
@@ -411,4 +439,5 @@ or unavailable when CUDA is not compiled in or no CUDA runtime device is
 available.
 
 `att1-q8-bench` accepts `--backend cpu-q8|cuda`. The CUDA option is a skeleton
-path and is not expected to run q8 matmul until CUDA kernels are implemented.
+path for q8xf32 matmul measurement only. It does not imply full q8 model
+inference.

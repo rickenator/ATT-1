@@ -57,6 +57,24 @@ The float32 matmul path remains the correctness reference. Tests compare q8
 outputs to float32 outputs with a documented tolerance of `0.035` for the
 current tiny fixtures.
 
+## CUDA q8xf32 prototype
+
+Milestone 23 adds CUDA backend support for `matmul_q8xf32` without changing the
+q8 representation. The CUDA path consumes the same `att1_q8_matrix` layout as
+CPU q8:
+
+- q8 weights are stored as row-major `weights_q8[out, in]`.
+- one float32 scale is stored per output row.
+- activations stay float32.
+- dequantization uses `(float)q * row_scale`.
+
+The prototype dequantizes q8 rows into a temporary float32 RHS matrix and runs
+the multiply through the existing CUDA f32 matmul path. CPU q8 remains the
+correctness reference for the CUDA q8 operator. Tests also compare q8 outputs
+against CPU f32 where the existing q8 tolerance applies.
+
+This is not full quantized model inference. CUDA q4 is not implemented.
+
 ## Benchmark
 
 `build/att1-q8-bench` runs a deterministic small f32 matmul and q8xf32 matmul
@@ -68,7 +86,8 @@ over the same data and prints timing and error counters:
 ```
 
 This benchmark is for kernel measurement only. It is not full quantized model
-inference.
+inference. `--backend cuda` exercises the CUDA q8xf32 operator when CUDA is
+compiled in and available at runtime; otherwise it reports unsupported cleanly.
 
 ## Ownership
 

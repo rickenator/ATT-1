@@ -48,14 +48,14 @@ Milestone 21: CUDA benchmark and trace integration.
 
 ## Active Task
 
-Milestone 22: CUDA cluster inference integration.
-- Goal: Allow cluster inference to use the CUDA backend for per-tile/layer execution where supported.
-- CPU cluster remains the correctness reference.
-- `att1-bench --backend cuda --mode cluster` exits zero only when CUDA is compiled in and available at runtime.
-- Non-CUDA builds/devices report CUDA cluster unsupported cleanly.
-- Fabric packet accounting and activation/logit byte trace counters remain intact.
-- CUDA q8 remains unsupported.
-- Test suite: `test_cuda_cluster.c` plus updated CUDA benchmark checks.
+Milestone 23: CUDA q8xf32 matmul prototype.
+- Goal: Add CUDA-backed q8xf32 matmul behind the existing backend API.
+- CPU q8xf32 remains the correctness reference.
+- Existing per-row int8 quantization format is unchanged and activations remain float32.
+- CUDA q8 outputs compare against CPU q8 within tolerance and against CPU f32 where existing q8 tests do so.
+- Full CUDA q8 inference and CUDA q4 remain out of scope.
+- Non-CUDA builds/devices report CUDA q8 unsupported cleanly.
+- Test suite: updated `test_cuda_matmul.c` q8 coverage.
 
 ## Next Prompt for Codex
 
