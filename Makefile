@@ -10,7 +10,8 @@ LDFLAGS :=
 LDLIBS := -lm
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
-TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu
+TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
+	kv_cache attention transformer_block
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -19,7 +20,10 @@ COMMON_SRCS := \
 	$(SRC_DIR)/matmul.c \
 	$(SRC_DIR)/norm.c \
 	$(SRC_DIR)/rope.c \
-	$(SRC_DIR)/ffn.c
+	$(SRC_DIR)/ffn.c \
+	$(SRC_DIR)/kv_cache.c \
+	$(SRC_DIR)/attention.c \
+	$(SRC_DIR)/transformer_block.c
 
 COMMON_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(COMMON_SRCS))
 SIM_OBJS := $(BUILD_DIR)/$(SRC_DIR)/main.o $(COMMON_OBJS)

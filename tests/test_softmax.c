@@ -11,6 +11,8 @@ static int near_f32(float lhs, float rhs)
 int main(void)
 {
     float values[3] = {1.0f, 2.0f, 3.0f};
+    float large_values[3] = {1000.0f, 1001.0f, 1002.0f};
+    float equal_values[4] = {7.0f, 7.0f, 7.0f, 7.0f};
     const float denom = expf(-2.0f) + expf(-1.0f) + 1.0f;
     const float expected[3] = {
         expf(-2.0f) / denom,
@@ -36,6 +38,30 @@ int main(void)
     if (!near_f32(sum, 1.0f)) {
         fputs("softmax sum check failed\n", stderr);
         return 1;
+    }
+
+    if (att1_softmax_f32(large_values, 3u) != 0) {
+        fputs("softmax large logits call failed\n", stderr);
+        return 1;
+    }
+
+    for (i = 0u; i < 3u; i++) {
+        if (!isfinite(large_values[i]) || !near_f32(large_values[i], expected[i])) {
+            fputs("softmax large logits stability check failed\n", stderr);
+            return 1;
+        }
+    }
+
+    if (att1_softmax_f32(equal_values, 4u) != 0) {
+        fputs("softmax equal logits call failed\n", stderr);
+        return 1;
+    }
+
+    for (i = 0u; i < 4u; i++) {
+        if (!near_f32(equal_values[i], 0.25f)) {
+            fputs("softmax equal logits check failed\n", stderr);
+            return 1;
+        }
     }
 
     puts("softmax test passed");
