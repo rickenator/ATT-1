@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 33: AIMU tiled tensor architecture document.
+Milestone 34: ATT-1 shard metadata design.
 
 ## Hard Rules
 
@@ -50,12 +50,15 @@ Milestone 33: AIMU tiled tensor architecture document.
 - Milestone 30: Real model conversion plan — `docs/real_model_conversion.md` documents tensor naming, dtypes, matrix conventions, q8 rules, and validation ladder; no code changes.
 - Milestone 31: ATT-1 converter skeleton — `compiler/convert_llama_to_att1.py` validates a LLaMA-style `config.json`, resolves field aliases, derives `rope_dim`, and prints a planned ATT-1 config; exits cleanly on unsupported arch or missing config; `compiler/fixtures/tiny_llama/` fixture added.
 - Milestone 32: Deterministic converter stub output — `compiler/convert_llama_to_att1.py` extended with binary `.att1` emitter; tensor names match `src/model_view.c`; `--out`/`--config` aliases added; stub validated with `att1-inspect` and `att1-bench`; determinism confirmed by SHA256.
+- Milestone 33: AIMU tiled tensor architecture document — `docs/aimu_architecture.md` added covering core concept, near-memory execution model, prototype mapping table, conceptual stack, future shard metadata fields, Phase 1/2/3 hardware roadmap, and non-goals; `README.md` updated with AIMU fabric paragraph.
 
 ## Active Task
 
-Milestone 33: AIMU tiled tensor architecture document.
-- Added `docs/aimu_architecture.md` covering: core concept, near-memory execution model, prototype mapping table, conceptual stack diagram, future shard metadata fields, Phase 1/2/3 hardware roadmap, and non-goals.
-- Updated `README.md` with a short AIMU fabric summary paragraph.
+Milestone 34: ATT-1 shard metadata design.
+- Added `docs/shard_metadata.md` defining the future `.att1` shard metadata section for AIMU tensor-tile ownership.
+- Specifies all 13 fields: `tensor_id`, `tile_id`, `byte_offset`, `shape`, `dtype`, `quantization`, `owner_aimu`, `replication_policy`, `dependency_graph`, `allowed_ops`, `routing_requirements`, `reduction_behavior`, `checksum`.
+- Defines fixed 120-byte record layout, versioning rules (`version=2` activates the section), hostile-input validation requirements, mapping from current runtime sharding to future AIMU ownership, and CUDA validation vs PCIe/AIMU silicon comparison.
+- Documents converter responsibilities for future shard metadata emission.
 - No C source changes; no Makefile changes; `make test` remains Python-free.
 
 ## Next Prompt for Codex
