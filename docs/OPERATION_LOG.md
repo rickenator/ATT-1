@@ -90,3 +90,9 @@ Milestone 22 complete:
 - Fabric counters remain active in CUDA cluster mode.
 - Codex sandbox cannot see `/dev/nvidia*`, so CUDA availability checks may skip inside the sandbox.
 - CUDA q8 and real-model conversion remain unimplemented.
+
+Milestone 23 complete:
+- CUDA q8xf32 matmul validates against CPU q8xf32.
+- Default CPU-only build remains CUDA-free.
+- CUDA=1 tests pass on RTX 3090 host.
+- Full CUDA q8 inference is still not implemented.
