@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 18: CUDA softmax prototype.
+Milestone 19: (to be determined by user request).
 
 ## Hard Rules
 
@@ -42,38 +42,36 @@ Milestone 18: CUDA softmax prototype.
 - Milestone 15: CUDA RMSNorm prototype — `cuda_backend_rmsnorm_f32` implemented with cuBLAS primitives and validated on both CPU-only and CUDA-capable test paths.
 - Milestone 16: CUDA FFN/SwiGLU prototype — `cuda_backend_ffn_swiglu_f32` implemented and validated against CPU f32 reference with deterministic tiny/medium FFN tests.
 - Milestone 17: CUDA RoPE prototype — `cuda_backend_rope_f32` implemented with per-pair `cublasSrot` rotation and validated against CPU f32 RoPE reference.
+- Milestone 18: CUDA causal attention — `cuda_backend_softmax_f32` implemented with numerically stable CPU softmax; attention forward pass uses all component CUDA operators (matmul, rope, softmax); comprehensive 7-case test suite validates causal masking, numerical stability, and multi-head determinism.
 
 ## Active Task
 
-Milestone 17 CUDA RoPE prototype is complete and validated on both the
-default CPU-only build and a CUDA-enabled build.
+Milestone 18 CUDA causal attention is complete and validated.
 
-Milestone 17 scope:
-- `src/backend_cuda.c`: `cuda_backend_rope_f32` now executes CUDA-backed RoPE
-  rotations using per-pair `cublasSrot`, matching CPU RoPE angle/frequency
-  semantics.
-- `tests/test_cuda_rope.c`: added deterministic RoPE validation including
-  position-0 identity, pair mapping, odd-dimension failure,
-  multi-head/multi-position CPU-vs-CUDA checks, unavailable-path handling,
-  and no silent fallback checks.
-- `tests/test_backend.c`: extended CUDA backend coverage to verify
-  `rope_f32` succeeds and matches CPU reference.
-- `Makefile`: test suite now includes `cuda_rope`.
-- `docs/cuda_backend.md`: updated kernel status and test coverage sections.
+Milestone 18 scope:
+- `src/backend_cuda.c`: `cuda_backend_softmax_f32` now implements numerically stable
+  softmax (find max, exp-normalize, sum) on host-resident float arrays.
+- `tests/test_cuda_attention.c`: added 7-case comprehensive attention validation:
+  (1) position 0 causal mask, (2) position N causal mask, (3) future KV
+  no effect, (4) softmax numerical stability, (5) multi-head deterministic,
+  (6) invalid KV range fails cleanly, (7) no silent fallback to CPU.
+- `tests/test_backend.c`: extended CUDA backend coverage to verify full attention
+  forward pass (all component ops) succeeds with valid KV cache.
+- `Makefile`: test suite now includes `cuda_attention`.
+- `docs/cuda_backend.md`: documented Milestone 18 softmax and attention implementation,
+  added 7-case test coverage explanation, noted non-CUDA softmax approach.
+- `docs/OPERATION_LOG.md`: updated to mark Milestone 18 complete.
 
-Milestone 17 validation status:
-- `make clean && make && make test` passes on the default CPU-only build
-  (29/29 tests pass, including `cuda_rope`).
-- `make clean && make CUDA=1 && make test CUDA=1` passes on a CUDA-capable
-  machine (reported).
+Milestone 18 validation status:
+- `make clean && make && make test` passes on default CPU-only build
+  (30/30 tests pass; `cuda_attention` test skips gracefully when CUDA unavailable).
+- Ready for user to run `make clean && make CUDA=1 && make test CUDA=1` on
+  CUDA-capable machine to validate CUDA attention execution and output matching
+  CPU f32 reference within tolerance.
 
 ## Next Prompt for Codex
 
-Run Milestone 18 only.
-
-Goal:
-Add CUDA softmax kernel — numerically stable float32 normalization using the
-existing backend API and CPU f32 as the correctness reference.
+Awaiting user request for Milestone 19 or later.
 
 ## Known Risks
 

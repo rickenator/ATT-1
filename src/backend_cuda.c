@@ -53,10 +53,10 @@ static void *cuda_backend_alloc(att1_backend *backend, size_t bytes)
         return NULL;
     }
 
-    if (cudaMalloc(&ptr, bytes) != cudaSuccess) {
-        return NULL;
-    }
-
+    /* Allocate host memory for intermediate buffers (scores, query, key, value, context).
+     * Individual CUDA operations (matmul, rope, softmax) manage device memory internally.
+     * This ensures attention operations can read/write buffers from the host. */
+    ptr = malloc(bytes);
     return ptr;
 }
 
@@ -64,7 +64,7 @@ static void cuda_backend_free(att1_backend *backend, void *ptr)
 {
     (void)backend;
     if (ptr != NULL) {
-        (void)cudaFree(ptr);
+        free(ptr);
     }
 }
 
@@ -336,10 +336,39 @@ static int cuda_backend_softmax_f32(att1_backend *backend,
                                     float *values,
                                     size_t count)
 {
-    (void)backend;
-    (void)values;
-    (void)count;
-    return -1;
+    float max_val = -INFINITY;
+    float sum_exp = 0.0f;
+    size_t i = 0u;
+
+    if ((backend == NULL) || (values == NULL)) {
+        return -1;
+    }
+    if (count == 0u) {
+        return -1;
+    }
+
+    /* Find maximum for numerical stability. */
+    for (i = 0u; i < count; i++) {
+        if (values[i] > max_val) {
+            max_val = values[i];
+        }
+    }
+
+    /* Compute exp(x - max) and sum. */
+    for (i = 0u; i < count; i++) {
+        values[i] = expf(values[i] - max_val);
+        sum_exp += values[i];
+    }
+
+    /* Normalize by sum. */
+    if (sum_exp <= 0.0f) {
+        return -1;
+    }
+    for (i = 0u; i < count; i++) {
+        values[i] /= sum_exp;
+    }
+
+    return 0;
 }
 
 static int cuda_backend_rope_f32(att1_backend *backend,

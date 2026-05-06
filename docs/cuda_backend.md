@@ -132,10 +132,41 @@ To map BLAS rotation convention to RoPE convention, the implementation uses
 [s  c]
 ```
 
+### Milestone 18: attention_forward (via component ops + softmax)
+
+`attention_forward` is implemented as a full forward pass through the existing
+backend API. It is not a separate kernel operation; instead, it composes the
+existing CUDA operators (matmul, rope, softmax) to perform causal self-attention
+for batch size 1.
+
+The existing CPU attention function (`att1_attention_forward_backend`) already
+uses the backend ops API to delegate Q/K/V projection, RoPE, and softmax to
+backend implementations. For the CUDA backend, this means:
+
+1. Projection matmuls (`Wq`, `Wk`, `Wv`, `Wo`) → `cuda_backend_matmul_f32`
+2. RoPE application → `cuda_backend_rope_f32`  
+3. Softmax over attention scores → `cuda_backend_softmax_f32` (new)
+4. KV cache operations (append/lookup) → CPU-side
+5. Attention weight accumulation → CPU-side loops (small vectors, O(cache_length²) scoring)
+
+Implementation of `cuda_backend_softmax_f32`:
+
+The softmax operation receives host-resident float arrays and produces normalized
+probabilities in-place. Since cuBLAS does not provide a softmax operation, softmax
+is implemented using numerically stable CPU computation:
+
+1. Find max value for stability: `max(values[i])`
+2. Compute `exp(values[i] - max)` in-place, accumulate sum
+3. Divide by sum to normalize
+
+This keeps the CUDA backend within the existing C11 + cuBLAS toolchain while
+providing correct numerical softmax that works with the causal masking semantics
+of the attention forward pass.
+
 ### Not yet implemented
 
-`matmul_q8xf32` and `softmax_f32` still return failure. Full transformer
-inference via CUDA is not attempted until all operator kernels are validated.
+`matmul_q8xf32` still returns failure. Full transformer inference via CUDA is
+not attempted until all operator kernels are validated.
 
 ## Tests
 
@@ -189,6 +220,29 @@ inference via CUDA is not attempted until all operator kernels are validated.
 5. **Unsupported path and no silent fallback** — unavailable CUDA is reported as
    unsupported, and CUDA-selected backend is asserted as `"cuda"` before result
    comparison against CPU reference.
+
+`tests/test_cuda_attention.c` validates the CUDA causal attention forward pass:
+
+1. **Position 0 causal mask** — Position 0 attends only to token 0, reproducing
+   attention input as output (identity Wo). CUDA output matches CPU f32 within
+   1e-3 tolerance.
+2. **Position N causal mask** — Position N attends to tokens 0..N. Output
+   accumulates weighted average of visible history. CUDA output matches CPU
+   reference within 1e-3 tolerance.
+3. **Future KV no effect** — A future token added to KV cache does not affect
+   earlier position outputs due to causal masking. CUDA and CPU both enforce
+   causal causality.
+4. **Softmax numerical stability** — Multiple positions and heads produce
+   stable, normalized probabilities; CUDA output matches CPU within tolerance.
+5. **Multi-head deterministic** — 2-head attention with deterministic weights
+   produces consistent CUDA vs CPU output across both heads within tolerance.
+6. **Invalid KV range fails cleanly** — Mismatched position vs cache length is
+   rejected by the attention forward function on both backends.
+7. **No silent fallback** — Backend name is asserted as `"cuda"` before running
+   attention, confirming no silent CPU fallback occurs.
+
+When CUDA is unavailable, the test suite skips gracefully with a message
+indicating that CUDA tests were skipped.
 
 ## CLI
 

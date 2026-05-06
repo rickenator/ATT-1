@@ -1,4 +1,5 @@
 #include "att1_backend.h"
+#include "att1_attention.h"
 #include "att1_math.h"
 
 #include <math.h>
@@ -349,6 +350,45 @@ static int check_cuda_backend_skeleton(void)
             att1_backend_destroy(backend);
             return -1;
         }
+    }
+
+    /* Milestone 18: Verify CUDA attention works with all components. */
+    {
+        att1_kv_cache cache;
+        att1_attention_config attention_config = {
+            .model_dim = 2u,
+            .num_heads = 1u,
+            .head_dim = 2u,
+            .rope_theta = 1.0f
+        };
+        const float zero2[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        const float identity2[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+        att1_attention_weights attention_weights = {
+            .wq = zero2, .wk = identity2, .wv = identity2, .wo = identity2
+        };
+        const float attention_input[2] = {1.0f, 2.0f};
+        float attention_output[2] = {0.0f};
+
+        if (att1_kv_cache_init(&cache, 3u, 1u, 2u) != 0) {
+            fputs("cuda attention cache init failed\n", stderr);
+            att1_backend_destroy(backend);
+            return -1;
+        }
+
+        if (att1_attention_forward_backend(attention_output,
+                                           &cache,
+                                           attention_input,
+                                           &attention_weights,
+                                           &attention_config,
+                                           0u,
+                                           backend) != 0) {
+            fputs("cuda attention_forward_backend should succeed\n", stderr);
+            att1_kv_cache_free(&cache);
+            att1_backend_destroy(backend);
+            return -1;
+        }
+
+        att1_kv_cache_free(&cache);
     }
 
     att1_backend_destroy(backend);
