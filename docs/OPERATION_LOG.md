@@ -6,8 +6,6 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-## Current Milestone
-
 Milestone 12 hardening: CUDA backend skeleton validation.
 
 ## Hard Rules

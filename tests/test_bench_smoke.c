@@ -83,6 +83,7 @@ static int check_bench_tools(void)
 
     if ((read_file("build/bench_single.txt", output, sizeof(output)) != 0) ||
         (strstr(output, "mode=single") == NULL) ||
+        (strstr(output, "backend=cpu-f32") == NULL) ||
         (strstr(output, "tokens_decoded=") == NULL)) {
         return -1;
     }
@@ -116,6 +117,31 @@ static int check_bench_tools(void)
         (strstr(output, "mode=q8-matmul") == NULL) ||
         (strstr(output, "backend=cpu-q8") == NULL) ||
         (strstr(output, "max_abs_error=") == NULL)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 8 --mode single --backend cuda "
+                    "> build/bench_cuda_unsupported.txt 2>&1") == 0) {
+        return -1;
+    }
+
+    if ((read_file("build/bench_cuda_unsupported.txt",
+                   output,
+                   sizeof(output)) != 0) ||
+        (strstr(output, "backend unsupported or unavailable: cuda") == NULL)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-q8-bench --iterations 8 --backend cuda "
+                    "> build/bench_q8_cuda_unsupported.txt 2>&1") == 0) {
+        return -1;
+    }
+
+    if ((read_file("build/bench_q8_cuda_unsupported.txt",
+                   output,
+                   sizeof(output)) != 0) ||
+        (strstr(output, "cuda backend unsupported or unavailable") == NULL)) {
         return -1;
     }
 
