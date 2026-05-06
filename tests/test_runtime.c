@@ -200,6 +200,12 @@ static int test_shutdown_and_fabric(void)
         return 0;
     }
 
+    if (!wait_for_commands(&runtime, 0u, 1u)) {
+        fputs("runtime send activation not processed\n", stderr);
+        att1_runtime_destroy(&runtime);
+        return 0;
+    }
+
     memset(&command, 0, sizeof(command));
     command.type = ATT1_RUNTIME_CMD_RECV_ACTIVATION;
     if (att1_runtime_send_command(&runtime, 1u, &command) != ATT1_OK) {
@@ -208,8 +214,7 @@ static int test_shutdown_and_fabric(void)
         return 0;
     }
 
-    if (!wait_for_commands(&runtime, 0u, 1u) ||
-        !wait_for_commands(&runtime, 1u, 1u)) {
+    if (!wait_for_commands(&runtime, 1u, 1u)) {
         fputs("runtime fabric commands not processed\n", stderr);
         att1_runtime_destroy(&runtime);
         return 0;
