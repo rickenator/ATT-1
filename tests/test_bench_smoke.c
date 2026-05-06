@@ -1,3 +1,5 @@
+#include "att1_backend.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,29 +122,63 @@ static int check_bench_tools(void)
         return -1;
     }
 
-    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
-                    "--prompt hello --tokens 8 --mode single --backend cuda "
-                    "> build/bench_cuda_unsupported.txt 2>&1") == 0) {
-        return -1;
-    }
+    if (att1_backend_cuda_available()) {
+        /* CUDA is present: --backend cuda must not silently fall back to
+           cpu-f32.  Commands will exit non-zero while CUDA kernels are not
+           yet implemented, but no cpu-f32 output should appear. */
+        (void)run_command(
+            "./build/att1-bench --model models/dummy/model.att1 "
+            "--prompt hello --tokens 8 --mode single --backend cuda "
+            "> build/bench_cuda.txt 2>&1");
 
-    if ((read_file("build/bench_cuda_unsupported.txt",
-                   output,
-                   sizeof(output)) != 0) ||
-        (strstr(output, "backend unsupported or unavailable: cuda") == NULL)) {
-        return -1;
-    }
+        if ((read_file("build/bench_cuda.txt", output, sizeof(output)) != 0) ||
+            (strstr(output, "backend=cpu-f32") != NULL)) {
+            fputs("cuda bench silently fell back to cpu-f32\n", stderr);
+            return -1;
+        }
 
-    if (run_command("./build/att1-q8-bench --iterations 8 --backend cuda "
-                    "> build/bench_q8_cuda_unsupported.txt 2>&1") == 0) {
-        return -1;
-    }
+        (void)run_command(
+            "./build/att1-q8-bench --iterations 8 --backend cuda "
+            "> build/bench_q8_cuda.txt 2>&1");
 
-    if ((read_file("build/bench_q8_cuda_unsupported.txt",
-                   output,
-                   sizeof(output)) != 0) ||
-        (strstr(output, "cuda backend unsupported or unavailable") == NULL)) {
-        return -1;
+        if ((read_file("build/bench_q8_cuda.txt",
+                       output,
+                       sizeof(output)) != 0) ||
+            (strstr(output, "backend=cpu-f32") != NULL)) {
+            fputs("cuda q8-bench silently fell back to cpu-f32\n", stderr);
+            return -1;
+        }
+    } else {
+        /* CUDA is unavailable or not compiled in: must fail with clear
+           unsupported/unavailable messaging. */
+        if (run_command(
+                "./build/att1-bench --model models/dummy/model.att1 "
+                "--prompt hello --tokens 8 --mode single --backend cuda "
+                "> build/bench_cuda_unsupported.txt 2>&1") == 0) {
+            return -1;
+        }
+
+        if ((read_file("build/bench_cuda_unsupported.txt",
+                       output,
+                       sizeof(output)) != 0) ||
+            (strstr(output, "backend unsupported or unavailable: cuda") ==
+             NULL)) {
+            return -1;
+        }
+
+        if (run_command(
+                "./build/att1-q8-bench --iterations 8 --backend cuda "
+                "> build/bench_q8_cuda_unsupported.txt 2>&1") == 0) {
+            return -1;
+        }
+
+        if ((read_file("build/bench_q8_cuda_unsupported.txt",
+                       output,
+                       sizeof(output)) != 0) ||
+            (strstr(output, "cuda backend unsupported or unavailable") ==
+             NULL)) {
+            return -1;
+        }
     }
 
     return 0;
