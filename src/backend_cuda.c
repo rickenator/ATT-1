@@ -362,12 +362,99 @@ static int cuda_backend_ffn_swiglu_f32(att1_backend *backend,
                                        const float *value,
                                        size_t count)
 {
+#ifdef ATT1_ENABLE_CUDA
+    att1_cuda_backend_data *data = NULL;
+    cublasHandle_t handle;
+    float *d_gate = NULL;
+    float *d_value = NULL;
+    float *d_dst = NULL;
+    float *host_silu = NULL;
+    int ok = 0;
+    int handle_valid = 0;
+    size_t i = 0u;
+
+    if ((backend == NULL) || (backend->user_data == NULL) ||
+        (dst == NULL) || (gate == NULL) || (value == NULL)) {
+        return -1;
+    }
+    if ((count == 0u) || (count > (size_t)INT_MAX)) {
+        return -1;
+    }
+
+    host_silu = malloc(count * sizeof(float));
+    if (host_silu == NULL) {
+        return -1;
+    }
+
+    for (i = 0u; i < count; i++) {
+        host_silu[i] = gate[i] / (1.0f + expf(-gate[i]));
+    }
+
+    data = (att1_cuda_backend_data *)backend->user_data;
+    if (cudaSetDevice(data->device_id) != cudaSuccess) {
+        goto cleanup;
+    }
+
+    if (cudaMalloc((void **)&d_gate, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMalloc((void **)&d_value, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMalloc((void **)&d_dst, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMemcpy(d_gate,
+                   host_silu,
+                   count * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMemcpy(d_value,
+                   value,
+                   count * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+
+    if (cublasCreate(&handle) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+    handle_valid = 1;
+
+    if (cuda_backend_vector_mul_f32(handle,
+                                    d_dst,
+                                    d_gate,
+                                    d_value,
+                                    count) != 0) {
+        goto cleanup;
+    }
+
+    if (cudaMemcpy(dst,
+                   d_dst,
+                   count * sizeof(float),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+        goto cleanup;
+    }
+    ok = 1;
+
+cleanup:
+    if (handle_valid) {
+        (void)cublasDestroy(handle);
+    }
+    (void)cudaFree(d_gate);
+    (void)cudaFree(d_value);
+    (void)cudaFree(d_dst);
+    free(host_silu);
+    return ok ? 0 : -1;
+#else
     (void)backend;
     (void)dst;
     (void)gate;
     (void)value;
     (void)count;
     return -1;
+#endif
 }
 
 static const att1_backend_ops cuda_backend_ops = {

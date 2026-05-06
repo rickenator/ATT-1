@@ -219,8 +219,12 @@ static int check_cuda_backend_skeleton(void)
     att1_status_t status = ATT1_OK;
     const float norm_src[4] = {1.0f, -2.0f, 3.0f, -4.0f};
     const float norm_weight[4] = {1.0f, 0.5f, 1.5f, 2.0f};
+    const float swiglu_gate[4] = {-2.0f, -0.5f, 1.0f, 3.0f};
+    const float swiglu_value[4] = {1.5f, -2.0f, 0.5f, 4.0f};
     float backend_norm[4] = {0.0f};
     float reference_norm[4] = {0.0f};
+    float backend_swiglu[4] = {0.0f};
+    float reference_swiglu[4] = {0.0f};
     float value = 1.0f;
     size_t i = 0u;
 
@@ -294,6 +298,29 @@ static int check_cuda_backend_skeleton(void)
     for (i = 0u; i < 4u; i++) {
         if (!near_cuda_f32(backend_norm[i], reference_norm[i])) {
             fputs("cuda rmsnorm_f32 result mismatch\n", stderr);
+            att1_backend_destroy(backend);
+            return -1;
+        }
+    }
+
+    if ((backend->ops->ffn_swiglu_f32 == NULL) ||
+        (backend->ops->ffn_swiglu_f32(backend,
+                                      backend_swiglu,
+                                      swiglu_gate,
+                                      swiglu_value,
+                                      4u) != 0) ||
+        (att1_swiglu_f32(reference_swiglu,
+                         swiglu_gate,
+                         swiglu_value,
+                         4u) != 0)) {
+        fputs("cuda ffn_swiglu_f32 should succeed\n", stderr);
+        att1_backend_destroy(backend);
+        return -1;
+    }
+
+    for (i = 0u; i < 4u; i++) {
+        if (!near_cuda_f32(backend_swiglu[i], reference_swiglu[i])) {
+            fputs("cuda ffn_swiglu_f32 result mismatch\n", stderr);
             att1_backend_destroy(backend);
             return -1;
         }

@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 16: CUDA softmax prototype.
+Milestone 17: CUDA softmax prototype.
 
 ## Hard Rules
 
@@ -40,34 +40,34 @@ Milestone 16: CUDA softmax prototype.
 - Milestone 13: CUDA validation plan — `docs/CUDA_VALIDATION_PLAN.md` and environment-aware bench smoke test.
 - Milestone 14: CUDA f32 matmul prototype — `cublasSgemm` wired into `cuda_backend_matmul_f32`; five-case `test_cuda_matmul` validation suite.
 - Milestone 15: CUDA RMSNorm prototype — `cuda_backend_rmsnorm_f32` implemented with cuBLAS primitives and validated on both CPU-only and CUDA-capable test paths.
+- Milestone 16: CUDA FFN/SwiGLU prototype — `cuda_backend_ffn_swiglu_f32` implemented and validated against CPU f32 reference with deterministic tiny/medium FFN tests.
 
 ## Active Task
 
-Milestone 15 CUDA RMSNorm prototype is complete and validated on both the
-default CPU-only build and the CUDA-enabled build.
+Milestone 16 CUDA FFN/SwiGLU prototype is complete and validated on both the
+default CPU-only build and a CUDA-enabled build.
 
-Milestone 15 scope:
-- `src/backend_cuda.c`: `cuda_backend_rmsnorm_f32` uses cuBLAS primitives only
-  (`cublasSdot`, `cublasSdgmm`, `cublasSscal`) so the project keeps the current
-  `cc` + cuBLAS build path and does not require `nvcc`.
-- `src/backend_cuda.c`: adds a private cuBLAS-backed vector-multiply helper used
-  by RMSNorm.
-- `tests/test_backend.c`: updated CUDA backend coverage to verify `rmsnorm_f32`
-  succeeds and matches the CPU reference within CUDA tolerance.
-- `tests/test_cuda_norm.c`: added dedicated five-case CUDA RMSNorm validation
-  (tiny deterministic, larger deterministic, shape handling, unavailable path,
-  and no silent fallback).
-- `docs/cuda_backend.md`: updated kernel-status and CUDA test coverage.
+Milestone 16 scope:
+- `src/backend_cuda.c`: `cuda_backend_ffn_swiglu_f32` now executes a real CUDA-backed
+  SwiGLU path using deterministic host SiLU staging plus cuBLAS-backed
+  elementwise multiply.
+- `tests/test_cuda_ffn.c`: added deterministic FFN/SwiGLU validation including
+  tiny hand-checkable FFN, medium FFN, zero weights, activation-sign behavior,
+  shape failure, unavailable-path handling, and no silent fallback checks.
+- `tests/test_backend.c`: extended CUDA backend coverage to verify
+  `ffn_swiglu_f32` succeeds and matches CPU reference.
+- `Makefile`: test suite now includes `cuda_ffn`.
+- `docs/cuda_backend.md`: updated kernel status and test coverage sections.
 
-Milestone 15 validation status:
-- `make clean && make && make test` passes locally on the default CPU-only build
-  (27/27 tests pass, including `cuda_norm`).
+Milestone 16 validation status:
+- `make clean && make && make test` passes on the default CPU-only build
+  (28/28 tests pass, including `cuda_ffn`).
 - `make clean && make CUDA=1 && make test CUDA=1` passes on a CUDA-capable
   machine.
 
 ## Next Prompt for Codex
 
-Run Milestone 16 only.
+Run Milestone 17 only.
 
 Goal:
 Add CUDA softmax kernel — numerically stable float32 normalization using the

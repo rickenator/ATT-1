@@ -93,11 +93,28 @@ RMSNorm. Standalone CUDA SiLU, add, and other elementwise primitives are not yet
 exposed through the backend API because the current milestone only needs the
 multiply primitive to validate normalization.
 
+### Milestone 16: ffn_swiglu_f32 (CUDA-backed)
+
+`ffn_swiglu_f32` is implemented in the CUDA backend and now provides a real
+CUDA-backed SwiGLU helper path through the existing backend API.
+
+Implementation details:
+
+1. SiLU(gate) is computed deterministically on host for the prototype path.
+2. SiLU(gate) is copied to device.
+3. Elementwise multiply with `value` runs through the existing cuBLAS-backed
+   vector multiply helper.
+4. Result is copied back to host.
+
+This is intentionally scoped to the current API and avoids introducing a new
+CUDA kernel toolchain requirement while providing a real CUDA execution path for
+FFN gating behavior.
+
 ### Not yet implemented
 
-`matmul_q8xf32`, `softmax_f32`, `rope_f32`, and `ffn_swiglu_f32` still return
-failure. Full transformer inference via CUDA is not attempted until all
-operator kernels are validated.
+`matmul_q8xf32`, `softmax_f32`, and `rope_f32` still return failure. Full
+transformer inference via CUDA is not attempted until all operator kernels are
+validated.
 
 ## Tests
 
@@ -125,6 +142,20 @@ operator kernels are validated.
    `ATT1_ERR_UNSUPPORTED` when CUDA is not compiled in or no GPU is present.
 5. **No silent fallback** — Backend name is asserted as `"cuda"` before
    calling `rmsnorm_f32`; result is compared to CPU reference.
+
+`tests/test_cuda_ffn.c` validates the CUDA FFN/SwiGLU prototype:
+
+1. **Tiny hand-checkable FFN** — deterministic `d_model=2`, `d_ff=4` composed
+   through matmul + SwiGLU + matmul and compared to CPU reference.
+2. **Medium deterministic FFN** — deterministic `d_model=4`, `d_ff=8` end-to-end
+   FFN comparison against CPU within 1e-3 tolerance.
+3. **Zero weights** — confirms FFN output is zero for zero weights.
+4. **Activation behavior** — mixed negative/positive values verify SwiGLU matches
+   CPU SiLU gating semantics.
+5. **Shape failure / unsupported** — invalid dimensions fail cleanly and
+   unavailable CUDA reports unsupported.
+6. **No silent fallback** — backend name is asserted as `"cuda"` and output is
+   compared against CPU reference.
 
 ## CLI
 
