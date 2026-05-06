@@ -48,23 +48,12 @@ Milestone 21: (to be determined by user request).
 
 ## Active Task
 
-Milestone 20 CUDA single-tile inference integration is complete and validated.
-
-Milestone 20 scope:
-- `tests/test_cuda_infer.c`: added single-tile inference CUDA tests covering
-  next-token equivalence, 2/4-token sequence equivalence, prompt prefill
-  position parity, KV cache update parity, explicit CUDA backend path checks,
-  and unsupported-path behavior.
-- `Makefile`: test suite now includes `cuda_infer`.
-- `docs/cuda_backend.md`: added Milestone 20 integration notes for single-tile
-  decode and test coverage.
-- `docs/OPERATION_LOG.md`: updated to mark Milestone 20 complete.
-
-Milestone 20 validation status:
-- `make clean && make && make test` passes on default CPU-only build, with CUDA
-  tests reporting unsupported/skip cleanly when CUDA is unavailable.
-- `make clean && make CUDA=1 && make test CUDA=1` passes on CUDA-capable
-  machine with CPU-vs-CUDA single-tile inference parity checks passing.
+Milestone 20 complete:
+- CUDA single-tile inference path wired through the backend API.
+- CPU f32 and CUDA outputs match on dummy `.att1` model tests.
+- CUDA=1 build/test passes on RTX 3090.
+- Default CPU-only build/test remains CUDA-free.
+- CUDA cluster inference, CUDA q8, and full real-model inference are not implemented yet.
 
 ## Next Prompt for Codex
 
