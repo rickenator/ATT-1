@@ -11,7 +11,7 @@ LDLIBS := -lm
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
-	kv_cache attention transformer_block kv_mmu
+	kv_cache attention transformer_block kv_mmu fabric
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -21,6 +21,8 @@ COMMON_SRCS := \
 	$(SRC_DIR)/norm.c \
 	$(SRC_DIR)/rope.c \
 	$(SRC_DIR)/ffn.c \
+	$(SRC_DIR)/fabric.c \
+	simulator/sim_fabric_bus.c \
 	$(SRC_DIR)/kv_cache.c \
 	$(SRC_DIR)/kv_mmu.c \
 	$(SRC_DIR)/attention.c \
