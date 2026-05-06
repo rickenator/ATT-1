@@ -474,6 +474,34 @@ q8 copies of projection and output weights. `cuda` runs the CUDA f32 path, while
 or unavailable when CUDA is not compiled in or no CUDA runtime device is
 available.
 
-`att1-q8-bench` accepts `--backend cpu-q8|cuda`. The CUDA option is a skeleton
-path for q8xf32 matmul measurement only. It does not imply full q8 model
-inference.
+`att1-q8-bench` accepts `--backend cpu-q8|cuda`. The CUDA option exercises the
+CUDA q8xf32 matmul operator. It does not imply full q8 model inference.
+
+## Milestone 26: q8 benchmark and trace integration
+
+`tests/test_q8_bench.c` validates q8 benchmark behavior for both CPU and CUDA
+backends across all four supported inference backends:
+
+1. **CPU q8 single mode** — `att1-bench --mode single --backend cpu-q8` exits
+   zero and reports `backend=cpu-q8`, `mode=single`, trace counters
+   (`tokens_decoded`, `logits_bytes_produced`, `kv_appends`, etc.).
+2. **CPU f32 vs CPU q8 deterministic** — both backends generate the same
+   `last_token` for the fixed dummy model prompt.
+3. **CPU q8 vs CUDA q8 deterministic** — both backends generate the same
+   `last_token` (CUDA-only; skipped when CUDA unavailable).
+4. **Cluster q8 fails clearly** — `att1-bench --mode cluster --backend cuda-q8`
+   exits non-zero with an `unsupported` error and does not fall back to cpu-f32.
+5. **CUDA q8 unsupported on CPU-only build** — `--backend cuda-q8` exits
+   non-zero with an `unsupported` message when CUDA is not compiled in.
+
+The four supported benchmark backend names and their semantics:
+
+| Backend    | Matmul path     | Norm/RoPE/etc | Notes              |
+|------------|-----------------|---------------|--------------------|
+| `cpu-f32`  | f32             | f32 CPU       | correctness ref    |
+| `cpu-q8`   | q8×f32 CPU      | f32 CPU       | quantization ref   |
+| `cuda`     | f32 cuBLAS      | f32 CUDA ops  | CUDA f32 path      |
+| `cuda-q8`  | q8×f32 CUDA     | f32 CUDA ops  | CUDA q8 path       |
+
+Cluster mode is supported only for `cpu-f32` and `cpu-q8`. CUDA backends in
+cluster mode fail explicitly; cluster CUDA inference is not yet implemented.

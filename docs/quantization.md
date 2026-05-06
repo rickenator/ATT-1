@@ -122,6 +122,8 @@ CUDA q8 cluster inference is not implemented. q4 is not implemented.
 
 ## Benchmark
 
+### att1-q8-bench (kernel measurement)
+
 `build/att1-q8-bench` runs a deterministic small f32 matmul and q8xf32 matmul
 over the same data and prints timing and error counters:
 
@@ -133,6 +135,35 @@ over the same data and prints timing and error counters:
 This benchmark is for kernel measurement only. `--backend cuda` exercises the
 CUDA q8xf32 operator when CUDA is compiled in and available at runtime;
 otherwise it reports unsupported cleanly.
+
+### att1-bench q8 single-tile (Milestone 26)
+
+`build/att1-bench` supports four inference backends for single-tile mode:
+
+```sh
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 \
+    --mode single --backend cpu-f32
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 \
+    --mode single --backend cpu-q8
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 \
+    --mode single --backend cuda
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 \
+    --mode single --backend cuda-q8
+```
+
+Each run prints:
+
+- `mode=single`, `backend=<name>` — explicit backend identification
+- `generated_tokens=<n>`, `last_token=<id>` — token generation summary
+- `tokens_decoded=<n>`, `token_time_us_total=<us>`, `token_time_us_max=<us>` — timing
+- `logits_bytes_produced=<bytes>`, `kv_appends=<n>`, `kv_key_reads=<n>` — trace counters
+- `layer[i].executions=<n> time_us=<us> kv_appends=<n>` — per-layer breakdown
+
+CPU q8 cluster mode runs through the cluster inference path using q8 projection
+matmuls. CUDA q8 cluster mode is not implemented and is rejected explicitly.
+
+`tests/test_q8_bench.c` validates these behaviors including cross-backend token
+determinism for the fixed dummy model prompt.
 
 ## Ownership
 
