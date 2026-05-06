@@ -94,6 +94,17 @@ static int check_bench_tools(void)
         return -1;
     }
 
+    if (run_command("./build/att1-q8-bench --iterations 8 "
+                    "> build/bench_q8.txt") != 0) {
+        return -1;
+    }
+
+    if ((read_file("build/bench_q8.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "mode=q8-matmul") == NULL) ||
+        (strstr(output, "max_abs_error=") == NULL)) {
+        return -1;
+    }
+
     return 0;
 }
 
