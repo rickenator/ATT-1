@@ -5,8 +5,6 @@ INCLUDE_DIR := include
 SRC_DIR := src
 TEST_DIR := tests
 
-BAK_DEST ?= /home/rick/Remote/Terrastation/backup/ATT-1
-
 CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread -I$(INCLUDE_DIR)
 LDFLAGS :=
 LDLIBS := -lm -pthread
@@ -50,7 +48,7 @@ INSPECT_OBJS := $(BUILD_DIR)/tools/att1-inspect.o $(COMMON_OBJS)
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test bak
+.PHONY: all clean test
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -78,32 +76,6 @@ test: $(INSPECT_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin || exit $$?; \
 	done
-
-bak:
-	@echo "Backing up ATT-1 to $(BAK_DEST)"
-	@mkdir -p "$(BAK_DEST)"
-	rsync -aH --info=progress2 \
-		--exclude='.git/' \
-		--exclude='$(BUILD_DIR)/' \
-		--exclude='cmake-build-*/' \
-		--exclude='out/' \
-		--exclude='dist/' \
-		--exclude='*.o' \
-		--exclude='*.a' \
-		--exclude='*.so' \
-		--exclude='*.dylib' \
-		--exclude='*.dll' \
-		--exclude='*.exe' \
-		--exclude='*.pyc' \
-		--exclude='__pycache__/' \
-		--exclude='.pytest_cache/' \
-		--exclude='.cache/' \
-		--exclude='.venv/' \
-		--exclude='venv/' \
-		--exclude='models/*.bin' \
-		--exclude='models/*.gguf' \
-		--exclude='models/*.safetensors' \
-		./ "$(BAK_DEST)/"
 
 clean:
 	rm -rf $(BUILD_DIR)

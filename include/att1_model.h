@@ -1,6 +1,8 @@
 #ifndef ATT1_MODEL_H
 #define ATT1_MODEL_H
 
+#include "att1_status.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -61,7 +63,7 @@ typedef struct att1_model {
  * The loader owns the file mapping copy and tensor descriptors until
  * att1_model_free is called. Only float32 tensors are supported in Milestone 6.
  */
-int att1_model_load(const char *path, att1_model *model);
+att1_status_t att1_model_load(const char *path, att1_model *model);
 
 void att1_model_free(att1_model *model);
 

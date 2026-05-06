@@ -112,14 +112,14 @@ int main(void)
     }
     att1_shard_plan_free(&plan);
 
-    if (att1_shard_plan_build(&plan, &model, 0u) == 0) {
+    if (att1_shard_plan_build(&plan, &model, 0u) != ATT1_ERR_INVALID_ARG) {
         fputs("zero tile shard plan should fail\n", stderr);
         att1_shard_plan_free(&plan);
         return 1;
     }
 
     model.config.shard_count = 1u;
-    if (att1_shard_plan_build(&plan, &model, 2u) == 0) {
+    if (att1_shard_plan_build(&plan, &model, 2u) != ATT1_ERR_UNSUPPORTED) {
         fputs("reserved shard metadata should fail until parsed\n", stderr);
         att1_shard_plan_free(&plan);
         return 1;

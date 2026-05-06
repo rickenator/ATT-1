@@ -1,18 +1,10 @@
 #ifndef ATT1_FABRIC_H
 #define ATT1_FABRIC_H
 
+#include "att1_status.h"
+
 #include <stddef.h>
 #include <stdint.h>
-
-typedef enum att1_status {
-    ATT1_OK = 0,
-    ATT1_ERR_INVALID = -1,
-    ATT1_ERR_QUEUE_EMPTY = -2,
-    ATT1_ERR_QUEUE_FULL = -3,
-    ATT1_ERR_TIMEOUT = -4,
-    ATT1_ERR_NO_MEMORY = -5,
-    ATT1_ERR_ALREADY_STARTED = -6
-} att1_status;
 
 typedef enum att1_packet_type {
     ATT1_PACKET_ACTIVATION = 0,

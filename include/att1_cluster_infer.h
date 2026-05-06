@@ -1,13 +1,14 @@
 #ifndef ATT1_CLUSTER_INFER_H
 #define ATT1_CLUSTER_INFER_H
 
-#include "att1_fabric.h"
-#include "att1_kv_cache.h"
 #include "att1_model.h"
 #include "att1_shard.h"
+#include "att1_status.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+typedef struct att1_cluster_infer att1_cluster_infer_t;
 
 typedef struct att1_cluster_infer_config {
     size_t tile_count;
@@ -24,49 +25,46 @@ typedef struct att1_cluster_tile_counters {
     uint32_t layer_end;
 } att1_cluster_tile_counters;
 
-typedef struct att1_cluster_infer {
-    const att1_model *model;
-    att1_shard_plan shard_plan;
-    att1_fabric fabric;
-    uint32_t host_tile_id;
-    att1_kv_cache *layer_kv;
-    float *hidden;
-    float *next_hidden;
-    float *norm;
-    float *logits;
-    att1_cluster_tile_counters *tile_counters;
-    size_t position;
-} att1_cluster_infer;
-
 /*
- * Initialize a synchronous multi-tile layer-sharded inference context.
+ * Create/destroy a synchronous multi-tile layer-sharded inference context.
  *
  * Compute tiles are numbered 0..tile_count-1. The host is modeled as fabric
- * endpoint tile_count and receives the final LOGITS packet. Each transformer
- * layer belongs to exactly one compute tile; no tensor-parallel sharding is
- * performed in Milestone 8.
+ * endpoint tile_count and receives final LOGITS packets. The opaque context
+ * owns all buffers, local KV caches, shard plan storage, and internal fabric.
  */
-int att1_cluster_infer_init(att1_cluster_infer *infer,
-                            const att1_model *model,
-                            const att1_cluster_infer_config *config);
+att1_status_t att1_cluster_infer_create(
+    const att1_model *model,
+    const att1_cluster_infer_config *config,
+    att1_cluster_infer_t **out_infer);
 
-void att1_cluster_infer_free(att1_cluster_infer *infer);
+void att1_cluster_infer_destroy(att1_cluster_infer_t *infer);
 
-int att1_cluster_infer_decode_token(att1_cluster_infer *infer,
-                                    uint32_t token_id,
-                                    uint32_t *out_token);
+att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
+                                              uint32_t token_id,
+                                              uint32_t *out_token);
 
-int att1_cluster_infer_generate(att1_cluster_infer *infer,
-                                const unsigned char *prompt,
-                                size_t prompt_bytes,
-                                size_t generated_token_count,
-                                uint32_t *out_tokens,
-                                size_t out_token_capacity,
-                                size_t *out_token_count);
+att1_status_t att1_cluster_infer_generate(att1_cluster_infer_t *infer,
+                                          const unsigned char *prompt,
+                                          size_t prompt_bytes,
+                                          size_t generated_token_count,
+                                          uint32_t *out_tokens,
+                                          size_t out_token_capacity,
+                                          size_t *out_token_count);
 
-int att1_cluster_infer_get_tile_counters(
-    const att1_cluster_infer *infer,
+const float *att1_cluster_infer_logits(const att1_cluster_infer_t *infer,
+                                       size_t *out_count);
+
+att1_status_t att1_cluster_infer_position(const att1_cluster_infer_t *infer,
+                                          size_t *out_position);
+
+att1_status_t att1_cluster_infer_get_tile_counters(
+    const att1_cluster_infer_t *infer,
     uint32_t tile_id,
     att1_cluster_tile_counters *out_counters);
+
+att1_status_t att1_cluster_infer_get_tile_shard(
+    const att1_cluster_infer_t *infer,
+    uint32_t tile_id,
+    att1_layer_shard *out_shard);
 
 #endif

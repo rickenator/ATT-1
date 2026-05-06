@@ -154,7 +154,7 @@ static void att1_model_parse_tensor(const unsigned char *p,
     tensor->data = NULL;
 }
 
-int att1_model_load(const char *path, att1_model *model)
+att1_status_t att1_model_load(const char *path, att1_model *model)
 {
     unsigned char *data = NULL;
     size_t file_size = 0u;
@@ -172,23 +172,23 @@ int att1_model_load(const char *path, att1_model *model)
     uint64_t i = 0u;
 
     if ((path == NULL) || (model == NULL)) {
-        return -1;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     memset(model, 0, sizeof(*model));
 
     if (att1_model_read_file(path, &data, &file_size) != 0) {
-        return -1;
+        return ATT1_ERR_IO;
     }
 
     if (!att1_range_valid(file_size, 0u, ATT1_MODEL_HEADER_SIZE)) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     if (memcmp(data, ATT1_MODEL_MAGIC, ATT1_MODEL_MAGIC_SIZE) != 0) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     version = att1_read_u32le(&data[8]);
@@ -196,7 +196,7 @@ int att1_model_load(const char *path, att1_model *model)
     if ((version != ATT1_MODEL_VERSION) ||
         (header_size != ATT1_MODEL_HEADER_SIZE)) {
         free(data);
-        return -1;
+        return ATT1_ERR_UNSUPPORTED;
     }
 
     config_offset = att1_read_u64le(&data[16]);
@@ -210,40 +210,40 @@ int att1_model_load(const char *path, att1_model *model)
 
     if (config_size != ATT1_MODEL_CONFIG_SIZE) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     if (!att1_range_valid(file_size, config_offset, config_size) ||
         !att1_range_valid(file_size, data_offset, data_size)) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     if (((shard_offset == 0u) != (shard_size == 0u)) ||
         ((shard_size != 0u) && !att1_range_valid(file_size, shard_offset, shard_size))) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     if (att1_u64_mul(tensor_count, ATT1_MODEL_TENSOR_DESC_SIZE, &desc_bytes) != 0) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     if (!att1_range_valid(file_size, desc_offset, desc_bytes)) {
         free(data);
-        return -1;
+        return ATT1_ERR_BAD_FORMAT;
     }
 
     if (tensor_count > (uint64_t)SIZE_MAX / sizeof(*model->tensors)) {
         free(data);
-        return -1;
+        return ATT1_ERR_OOM;
     }
 
     model->tensors = calloc((size_t)tensor_count, sizeof(*model->tensors));
     if ((model->tensors == NULL) && (tensor_count != 0u)) {
         free(data);
-        return -1;
+        return ATT1_ERR_OOM;
     }
 
     att1_model_parse_config(&data[config_offset], &model->config);
@@ -261,25 +261,25 @@ int att1_model_load(const char *path, att1_model *model)
 
         if (att1_tensor_nbytes_expected(&model->tensors[i], &expected_nbytes) != 0) {
             att1_model_free(model);
-            return -1;
+            return ATT1_ERR_SHAPE;
         }
 
         if (model->tensors[i].nbytes != expected_nbytes) {
             att1_model_free(model);
-            return -1;
+            return ATT1_ERR_SHAPE;
         }
 
         if (!att1_range_valid((size_t)data_size,
                               model->tensors[i].offset,
                               model->tensors[i].nbytes)) {
             att1_model_free(model);
-            return -1;
+            return ATT1_ERR_BAD_FORMAT;
         }
 
         model->tensors[i].data = &data[data_offset + model->tensors[i].offset];
     }
 
-    return 0;
+    return ATT1_OK;
 }
 
 void att1_model_free(att1_model *model)

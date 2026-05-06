@@ -8,6 +8,7 @@
 #define MODEL_PATH "models/dummy/model.att1"
 #define BAD_MISSING_PATH "build/infer_missing_tensor.att1"
 #define BAD_SHAPE_PATH "build/infer_wrong_shape.att1"
+#define BAD_LAYER_SHAPE_PATH "build/infer_wrong_layer_shape.att1"
 
 static uint64_t read_u64le(const unsigned char *p)
 {
@@ -157,6 +158,29 @@ static int patch_output_shape_in_copy(const char *source_path,
     return rc;
 }
 
+static int patch_layer_shape_in_copy(const char *source_path,
+                                     const char *dest_path)
+{
+    unsigned char *data = NULL;
+    unsigned char *desc = NULL;
+    size_t size = 0u;
+    int rc = -1;
+
+    if (read_file(source_path, &data, &size) != 0) {
+        return -1;
+    }
+
+    desc = find_desc(data, size, "layers.0.attention.wq.weight");
+    if (desc != NULL) {
+        write_u64le(&desc[80], 3u);
+        write_u64le(&desc[112], 4u * 3u * sizeof(float));
+        rc = write_file(dest_path, data, size);
+    }
+
+    free(data);
+    return rc;
+}
+
 static int check_required_tensors(const att1_model *model)
 {
     const char *required[] = {
@@ -198,7 +222,8 @@ static int check_required_tensors(const att1_model *model)
 static int check_invalid_models(void)
 {
     att1_model model;
-    att1_infer infer;
+    att1_infer_t *infer = NULL;
+    att1_status_t status = ATT1_OK;
 
     if (rename_tensor_in_copy(MODEL_PATH,
                               BAD_MISSING_PATH,
@@ -213,8 +238,9 @@ static int check_invalid_models(void)
         return -1;
     }
 
-    if (att1_infer_init(&infer, &model) == 0) {
-        att1_infer_free(&infer);
+    status = att1_infer_create(&model, &infer);
+    if (status != ATT1_ERR_NOT_FOUND) {
+        att1_infer_destroy(infer);
         att1_model_free(&model);
         fputs("inference init accepted missing required tensor\n", stderr);
         return -1;
@@ -231,12 +257,40 @@ static int check_invalid_models(void)
         return -1;
     }
 
-    if (att1_infer_init(&infer, &model) == 0) {
-        att1_infer_free(&infer);
+    status = att1_infer_create(&model, &infer);
+    if (status != ATT1_ERR_SHAPE) {
+        att1_infer_destroy(infer);
         att1_model_free(&model);
         fputs("inference init accepted wrong output shape\n", stderr);
         return -1;
     }
+    att1_model_free(&model);
+
+    if (patch_layer_shape_in_copy(MODEL_PATH, BAD_LAYER_SHAPE_PATH) != 0) {
+        fputs("failed to create wrong-layer-shape model fixture\n", stderr);
+        return -1;
+    }
+
+    if (att1_model_load(BAD_LAYER_SHAPE_PATH, &model) != ATT1_OK) {
+        fputs("wrong-layer-shape model should load as a valid container\n", stderr);
+        return -1;
+    }
+
+    status = att1_infer_create(&model, &infer);
+    if (status != ATT1_OK) {
+        att1_model_free(&model);
+        fputs("wrong-layer-shape model should create before layer decode\n", stderr);
+        return -1;
+    }
+
+    status = att1_infer_decode_token(infer, (uint32_t)'A', &(uint32_t){0u});
+    if (status != ATT1_ERR_SHAPE) {
+        att1_infer_destroy(infer);
+        att1_model_free(&model);
+        fputs("wrong layer tensor shape did not fail cleanly\n", stderr);
+        return -1;
+    }
+    att1_infer_destroy(infer);
     att1_model_free(&model);
 
     return 0;
@@ -244,59 +298,73 @@ static int check_invalid_models(void)
 
 static int check_decode_determinism(const att1_model *model)
 {
-    att1_infer lhs;
-    att1_infer rhs;
+    att1_infer_t *lhs = NULL;
+    att1_infer_t *rhs = NULL;
+    const float *lhs_logits = NULL;
+    const float *rhs_logits = NULL;
+    size_t lhs_logits_count = 0u;
+    size_t rhs_logits_count = 0u;
     uint32_t lhs_token = 0u;
     uint32_t rhs_token = 0u;
     uint32_t sampled = 0u;
     uint32_t layer = 0u;
 
-    if ((att1_infer_init(&lhs, model) != 0) ||
-        (att1_infer_init(&rhs, model) != 0)) {
+    if ((att1_infer_create(model, &lhs) != ATT1_OK) ||
+        (att1_infer_create(model, &rhs) != ATT1_OK)) {
+        att1_infer_destroy(lhs);
+        att1_infer_destroy(rhs);
         fputs("inference init failed for valid model\n", stderr);
         return -1;
     }
 
-    if ((att1_infer_decode_token(&lhs, (uint32_t)'A', &lhs_token) != 0) ||
-        (att1_infer_decode_token(&rhs, (uint32_t)'A', &rhs_token) != 0)) {
-        att1_infer_free(&lhs);
-        att1_infer_free(&rhs);
+    if ((att1_infer_decode_token(lhs, (uint32_t)'A', &lhs_token) != ATT1_OK) ||
+        (att1_infer_decode_token(rhs, (uint32_t)'A', &rhs_token) != ATT1_OK)) {
+        att1_infer_destroy(lhs);
+        att1_infer_destroy(rhs);
         fputs("one-token decode failed\n", stderr);
         return -1;
     }
 
+    lhs_logits = att1_infer_logits(lhs, &lhs_logits_count);
+    rhs_logits = att1_infer_logits(rhs, &rhs_logits_count);
     if ((lhs_token != rhs_token) ||
-        (memcmp(lhs.logits,
-                rhs.logits,
+        (lhs_logits == NULL) ||
+        (rhs_logits == NULL) ||
+        (lhs_logits_count != model->config.vocab_size) ||
+        (rhs_logits_count != model->config.vocab_size) ||
+        (memcmp(lhs_logits,
+                rhs_logits,
                 model->config.vocab_size * sizeof(float)) != 0)) {
-        att1_infer_free(&lhs);
-        att1_infer_free(&rhs);
+        att1_infer_destroy(lhs);
+        att1_infer_destroy(rhs);
         fputs("one-token decode was not deterministic\n", stderr);
         return -1;
     }
 
     for (layer = 0u; layer < model->config.n_layers; layer++) {
-        if (lhs.layer_kv[layer].length != 1u) {
-            att1_infer_free(&lhs);
-            att1_infer_free(&rhs);
+        size_t length = 0u;
+        if ((att1_infer_layer_kv_length(lhs, layer, &length) != ATT1_OK) ||
+            (length != 1u)) {
+            att1_infer_destroy(lhs);
+            att1_infer_destroy(rhs);
             fputs("decode did not update KV cache once per layer\n", stderr);
             return -1;
         }
     }
 
-    if ((att1_sampler_greedy_f32(lhs.logits,
+    if ((att1_sampler_greedy_f32(lhs_logits,
                                  model->config.vocab_size,
                                  &sampled) != 0) ||
         (sampled != lhs_token) ||
         (sampled >= model->config.vocab_size)) {
-        att1_infer_free(&lhs);
-        att1_infer_free(&rhs);
+        att1_infer_destroy(lhs);
+        att1_infer_destroy(rhs);
         fputs("logits shape or sampled token check failed\n", stderr);
         return -1;
     }
 
-    att1_infer_free(&lhs);
-    att1_infer_free(&rhs);
+    att1_infer_destroy(lhs);
+    att1_infer_destroy(rhs);
     return 0;
 }
 
@@ -305,46 +373,48 @@ static int check_prefill(const att1_model *model)
     const unsigned char prompt[3] = {'A', 'T', 'T'};
     uint32_t out_tokens[1] = {0u};
     size_t out_count = 99u;
-    att1_infer infer;
+    size_t position = 0u;
+    att1_infer_t *infer = NULL;
 
-    if (att1_infer_init(&infer, model) != 0) {
+    if (att1_infer_create(model, &infer) != ATT1_OK) {
         fputs("prefill inference init failed\n", stderr);
         return -1;
     }
 
-    if ((att1_infer_generate(&infer,
+    if ((att1_infer_generate(infer,
                              prompt,
                              sizeof(prompt),
                              0u,
                              out_tokens,
                              0u,
-                             &out_count) != 0) ||
-        (infer.position != sizeof(prompt)) ||
+                             &out_count) != ATT1_OK) ||
+        (att1_infer_position(infer, &position) != ATT1_OK) ||
+        (position != sizeof(prompt)) ||
         (out_count != 0u)) {
-        att1_infer_free(&infer);
+        att1_infer_destroy(infer);
         fputs("prompt prefill position check failed\n", stderr);
         return -1;
     }
-    att1_infer_free(&infer);
+    att1_infer_destroy(infer);
 
-    if (att1_infer_init(&infer, model) != 0) {
+    if (att1_infer_create(model, &infer) != ATT1_OK) {
         fputs("empty prompt inference init failed\n", stderr);
         return -1;
     }
 
-    if (att1_infer_generate(&infer,
+    if (att1_infer_generate(infer,
                             prompt,
                             0u,
                             1u,
                             out_tokens,
                             1u,
-                            &out_count) == 0) {
-        att1_infer_free(&infer);
+                            &out_count) != ATT1_ERR_INVALID_ARG) {
+        att1_infer_destroy(infer);
         fputs("empty prompt should be rejected\n", stderr);
         return -1;
     }
 
-    att1_infer_free(&infer);
+    att1_infer_destroy(infer);
     return 0;
 }
 

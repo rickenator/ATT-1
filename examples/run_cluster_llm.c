@@ -12,20 +12,20 @@ int main(void)
     size_t token_count = 0u;
     size_t i = 0u;
     att1_model model;
-    att1_cluster_infer infer;
+    att1_cluster_infer_t *infer = NULL;
 
     if (att1_model_load("models/dummy/model.att1", &model) != 0) {
         fputs("failed to load models/dummy/model.att1\n", stderr);
         return 1;
     }
 
-    if (att1_cluster_infer_init(&infer, &model, &config) != 0) {
+    if (att1_cluster_infer_create(&model, &config, &infer) != ATT1_OK) {
         fputs("failed to initialize cluster inference context\n", stderr);
         att1_model_free(&model);
         return 1;
     }
 
-    if (att1_cluster_infer_generate(&infer,
+    if (att1_cluster_infer_generate(infer,
                                     prompt,
                                     sizeof(prompt) - 1u,
                                     4u,
@@ -33,7 +33,7 @@ int main(void)
                                     4u,
                                     &token_count) != 0) {
         fputs("cluster generation failed\n", stderr);
-        att1_cluster_infer_free(&infer);
+        att1_cluster_infer_destroy(infer);
         att1_model_free(&model);
         return 1;
     }
@@ -49,7 +49,7 @@ int main(void)
     }
     putchar('\n');
 
-    att1_cluster_infer_free(&infer);
+    att1_cluster_infer_destroy(infer);
     att1_model_free(&model);
     return 0;
 }

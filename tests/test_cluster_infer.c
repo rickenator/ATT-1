@@ -1,4 +1,5 @@
 #include "att1_cluster_infer.h"
+#include "att1_fabric.h"
 #include "att1_infer.h"
 
 #include <math.h>
@@ -27,93 +28,113 @@ static int check_single_cluster_equivalence(const att1_model *model)
 {
     const unsigned char prompt[2] = {'A', 'T'};
     const att1_cluster_infer_config config = {3u, 4u, 0u};
-    att1_infer single;
-    att1_cluster_infer cluster;
+    att1_infer_t *single = NULL;
+    att1_cluster_infer_t *cluster = NULL;
+    const float *single_logits = NULL;
+    const float *cluster_logits = NULL;
+    size_t single_logits_count = 0u;
+    size_t cluster_logits_count = 0u;
     uint32_t single_token = 0u;
     uint32_t cluster_token = 0u;
     att1_cluster_tile_counters counters;
     size_t tile = 0u;
     size_t i = 0u;
 
-    if ((att1_infer_init(&single, model) != 0) ||
-        (att1_cluster_infer_init(&cluster, model, &config) != 0)) {
+    if ((att1_infer_create(model, &single) != ATT1_OK) ||
+        (att1_cluster_infer_create(model, &config, &cluster) != ATT1_OK)) {
+        att1_infer_destroy(single);
+        att1_cluster_infer_destroy(cluster);
         fputs("failed to init single or cluster inference\n", stderr);
         return -1;
     }
 
     for (i = 0u; i < sizeof(prompt); i++) {
-        if ((att1_infer_decode_token(&single,
+        if ((att1_infer_decode_token(single,
                                      (uint32_t)prompt[i],
-                                     &single_token) != 0) ||
-            (att1_cluster_infer_decode_token(&cluster,
+                                     &single_token) != ATT1_OK) ||
+            (att1_cluster_infer_decode_token(cluster,
                                              (uint32_t)prompt[i],
-                                             &cluster_token) != 0)) {
-            att1_infer_free(&single);
-            att1_cluster_infer_free(&cluster);
+                                             &cluster_token) != ATT1_OK)) {
+            att1_infer_destroy(single);
+            att1_cluster_infer_destroy(cluster);
             fputs("single or cluster prompt decode failed\n", stderr);
             return -1;
         }
     }
 
+    single_logits = att1_infer_logits(single, &single_logits_count);
+    cluster_logits = att1_cluster_infer_logits(cluster, &cluster_logits_count);
     if ((single_token != cluster_token) ||
-        !logits_close(single.logits,
-                      cluster.logits,
+        (single_logits == NULL) ||
+        (cluster_logits == NULL) ||
+        (single_logits_count != model->config.vocab_size) ||
+        (cluster_logits_count != model->config.vocab_size) ||
+        !logits_close(single_logits,
+                      cluster_logits,
                       model->config.vocab_size,
                       0.000001f)) {
-        att1_infer_free(&single);
-        att1_cluster_infer_free(&cluster);
+        att1_infer_destroy(single);
+        att1_cluster_infer_destroy(cluster);
         fputs("single and cluster outputs differ\n", stderr);
         return -1;
     }
 
-    if (att1_cluster_infer_get_tile_counters(&cluster, 0u, &counters) != 0) {
-        att1_infer_free(&single);
-        att1_cluster_infer_free(&cluster);
+    if (att1_cluster_infer_get_tile_counters(cluster, 0u, &counters) != ATT1_OK) {
+        att1_infer_destroy(single);
+        att1_cluster_infer_destroy(cluster);
         return -1;
     }
     if (counters.activations_received != sizeof(prompt)) {
-        att1_infer_free(&single);
-        att1_cluster_infer_free(&cluster);
+        att1_infer_destroy(single);
+        att1_cluster_infer_destroy(cluster);
         fputs("tile 0 did not receive prompt activation first\n", stderr);
         return -1;
     }
 
-    for (tile = 0u; tile < cluster.shard_plan.tile_count; tile++) {
-        const uint64_t expected_layers =
-            (uint64_t)(cluster.shard_plan.tiles[tile].layer_end -
-                       cluster.shard_plan.tiles[tile].layer_start) *
+    for (tile = 0u; tile < config.tile_count; tile++) {
+        att1_layer_shard shard;
+        uint64_t expected_layers = 0u;
+
+        if (att1_cluster_infer_get_tile_shard(cluster,
+                                              (uint32_t)tile,
+                                              &shard) != ATT1_OK) {
+            att1_infer_destroy(single);
+            att1_cluster_infer_destroy(cluster);
+            return -1;
+        }
+        expected_layers = (uint64_t)(shard.layer_end - shard.layer_start) *
             (uint64_t)sizeof(prompt);
 
-        if (att1_cluster_infer_get_tile_counters(&cluster,
+        if (att1_cluster_infer_get_tile_counters(cluster,
                                                  (uint32_t)tile,
-                                                 &counters) != 0) {
-            att1_infer_free(&single);
-            att1_cluster_infer_free(&cluster);
+                                                 &counters) != ATT1_OK) {
+            att1_infer_destroy(single);
+            att1_cluster_infer_destroy(cluster);
             return -1;
         }
 
         if (counters.layers_run != expected_layers) {
-            att1_infer_free(&single);
-            att1_cluster_infer_free(&cluster);
+            att1_infer_destroy(single);
+            att1_cluster_infer_destroy(cluster);
             fputs("tile ran layers outside its assignment\n", stderr);
             return -1;
         }
     }
 
-    if (att1_cluster_infer_get_tile_counters(&cluster, 2u, &counters) != 0) {
-        att1_infer_free(&single);
-        att1_cluster_infer_free(&cluster);
+    if (att1_cluster_infer_get_tile_counters(cluster, 2u, &counters) != ATT1_OK) {
+        att1_infer_destroy(single);
+        att1_cluster_infer_destroy(cluster);
         return -1;
     }
     if (counters.logits_sent != sizeof(prompt)) {
-        att1_infer_free(&single);
-        att1_cluster_infer_free(&cluster);
+        att1_infer_destroy(single);
+        att1_cluster_infer_destroy(cluster);
         fputs("last tile did not produce final logits\n", stderr);
         return -1;
     }
 
-    att1_infer_free(&single);
-    att1_cluster_infer_free(&cluster);
+    att1_infer_destroy(single);
+    att1_cluster_infer_destroy(cluster);
     return 0;
 }
 
@@ -166,50 +187,24 @@ static int check_activation_packet_copy(void)
 static int check_error_paths(const att1_model *model)
 {
     const att1_cluster_infer_config invalid_config = {0u, 4u, 0u};
-    const att1_cluster_infer_config config = {2u, 4u, 0u};
-    const att1_cluster_infer_config full_config = {2u, 1u, 0u};
-    att1_cluster_infer cluster;
-    uint32_t token = 0u;
+    const att1_cluster_infer_config small_payload_config = {2u, 4u, 4u};
+    att1_cluster_infer_t *cluster = NULL;
 
-    if (att1_cluster_infer_init(&cluster, model, &invalid_config) == 0) {
-        att1_cluster_infer_free(&cluster);
+    if (att1_cluster_infer_create(model,
+                                  &invalid_config,
+                                  &cluster) != ATT1_ERR_INVALID_ARG) {
+        att1_cluster_infer_destroy(cluster);
         fputs("invalid tile count should fail\n", stderr);
         return -1;
     }
 
-    if (att1_cluster_infer_init(&cluster, model, &config) != 0) {
-        fputs("cluster init failed for missing-shard test\n", stderr);
+    if (att1_cluster_infer_create(model,
+                                  &small_payload_config,
+                                  &cluster) != ATT1_ERR_INVALID_ARG) {
+        att1_cluster_infer_destroy(cluster);
+        fputs("too-small fabric payload should fail\n", stderr);
         return -1;
     }
-    cluster.shard_plan.tiles[0].layer_end = 0u;
-    if (att1_cluster_infer_decode_token(&cluster, (uint32_t)'A', &token) == 0) {
-        att1_cluster_infer_free(&cluster);
-        fputs("missing layer shard should fail\n", stderr);
-        return -1;
-    }
-    att1_cluster_infer_free(&cluster);
-
-    if (att1_cluster_infer_init(&cluster, model, &full_config) != 0) {
-        fputs("cluster init failed for queue-full test\n", stderr);
-        return -1;
-    }
-    if (att1_fabric_send(&cluster.fabric,
-                         0u,
-                         1u,
-                         ATT1_PACKET_CONTROL,
-                         NULL,
-                         0u,
-                         99u) != ATT1_OK) {
-        att1_cluster_infer_free(&cluster);
-        fputs("failed to prefill fabric queue\n", stderr);
-        return -1;
-    }
-    if (att1_cluster_infer_decode_token(&cluster, (uint32_t)'A', &token) == 0) {
-        att1_cluster_infer_free(&cluster);
-        fputs("queue-full activation send should fail\n", stderr);
-        return -1;
-    }
-    att1_cluster_infer_free(&cluster);
 
     return 0;
 }
@@ -217,30 +212,42 @@ static int check_error_paths(const att1_model *model)
 static int check_determinism(const att1_model *model)
 {
     const att1_cluster_infer_config config = {2u, 4u, 0u};
-    att1_cluster_infer lhs;
-    att1_cluster_infer rhs;
+    att1_cluster_infer_t *lhs = NULL;
+    att1_cluster_infer_t *rhs = NULL;
+    const float *lhs_logits = NULL;
+    const float *rhs_logits = NULL;
+    size_t lhs_logits_count = 0u;
+    size_t rhs_logits_count = 0u;
     uint32_t lhs_token = 0u;
     uint32_t rhs_token = 0u;
 
-    if ((att1_cluster_infer_init(&lhs, model, &config) != 0) ||
-        (att1_cluster_infer_init(&rhs, model, &config) != 0)) {
+    if ((att1_cluster_infer_create(model, &config, &lhs) != ATT1_OK) ||
+        (att1_cluster_infer_create(model, &config, &rhs) != ATT1_OK)) {
+        att1_cluster_infer_destroy(lhs);
+        att1_cluster_infer_destroy(rhs);
         return -1;
     }
 
-    if ((att1_cluster_infer_decode_token(&lhs, (uint32_t)'T', &lhs_token) != 0) ||
-        (att1_cluster_infer_decode_token(&rhs, (uint32_t)'T', &rhs_token) != 0) ||
+    lhs_logits = att1_cluster_infer_logits(lhs, &lhs_logits_count);
+    rhs_logits = att1_cluster_infer_logits(rhs, &rhs_logits_count);
+    if ((att1_cluster_infer_decode_token(lhs, (uint32_t)'T', &lhs_token) != ATT1_OK) ||
+        (att1_cluster_infer_decode_token(rhs, (uint32_t)'T', &rhs_token) != ATT1_OK) ||
         (lhs_token != rhs_token) ||
-        (memcmp(lhs.logits,
-                rhs.logits,
+        (lhs_logits == NULL) ||
+        (rhs_logits == NULL) ||
+        (lhs_logits_count != model->config.vocab_size) ||
+        (rhs_logits_count != model->config.vocab_size) ||
+        (memcmp(lhs_logits,
+                rhs_logits,
                 model->config.vocab_size * sizeof(float)) != 0)) {
-        att1_cluster_infer_free(&lhs);
-        att1_cluster_infer_free(&rhs);
+        att1_cluster_infer_destroy(lhs);
+        att1_cluster_infer_destroy(rhs);
         fputs("cluster determinism check failed\n", stderr);
         return -1;
     }
 
-    att1_cluster_infer_free(&lhs);
-    att1_cluster_infer_free(&rhs);
+    att1_cluster_infer_destroy(lhs);
+    att1_cluster_infer_destroy(rhs);
     return 0;
 }
 

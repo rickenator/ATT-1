@@ -339,6 +339,11 @@ int main(void)
         return 1;
     }
 
+    if (att1_model_load(NULL, &model) != ATT1_ERR_INVALID_ARG) {
+        fputs("model load invalid-arg status failed\n", stderr);
+        return 1;
+    }
+
     if (!files_equal(model_a, model_b)) {
         fputs("dummy model determinism check failed\n", stderr);
         return 1;
@@ -396,7 +401,8 @@ int main(void)
                       0u,
                       (const unsigned char *)"BADMAGIC",
                       8u) != 0) ||
-        !expect_load_fail("build/model_test/bad_magic.att1")) {
+        (att1_model_load("build/model_test/bad_magic.att1", &model) !=
+         ATT1_ERR_BAD_FORMAT)) {
         fputs("bad magic validation failed\n", stderr);
         return 1;
     }
@@ -405,7 +411,8 @@ int main(void)
                      "build/model_test/bad_version.att1",
                      8u,
                      99u) != 0) ||
-        !expect_load_fail("build/model_test/bad_version.att1")) {
+        (att1_model_load("build/model_test/bad_version.att1", &model) !=
+         ATT1_ERR_UNSUPPORTED)) {
         fputs("bad version validation failed\n", stderr);
         return 1;
     }
