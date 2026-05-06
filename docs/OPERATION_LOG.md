@@ -83,6 +83,13 @@ Milestone 28: CUDA q8 cluster inference integration.
 - Commit with a milestone-specific message.
 - Update `docs/OPERATION_LOG.md`.
 
+Milestone 28 complete:
+- CUDA q8 cluster inference is integrated.
+- CPU f32, CUDA f32, CPU q8, and CUDA q8 all work in single and cluster modes for the dummy `.att1` model.
+- Default CPU-only build/test remains CUDA-free.
+- CUDA=1 build/test passes on RTX 3090 host.
+- q4 and real-model conversion are not implemented yet.
+
 Milestone 27 complete:
 - CPU q8 cluster inference validated against CPU f32 cluster reference.
 - `make test` passes on both CPU-only and RTX 3090 (38 tests).
