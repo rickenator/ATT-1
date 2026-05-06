@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 14: CUDA f32 matmul prototype (cuBLAS).
+Milestone 15: CUDA RMSNorm prototype.
 
 ## Hard Rules
 
@@ -42,8 +42,8 @@ Milestone 14: CUDA f32 matmul prototype (cuBLAS).
 
 ## Active Task
 
-Milestone 14 CUDA f32 matmul prototype implemented and locally validated
-(non-CUDA machine: 26 tests pass).  CUDA-capable validation pending.
+Milestone 14 CUDA f32 matmul prototype is complete and validated on both
+non-CUDA and CUDA-capable machines.
 
 Milestone 14 scope:
 - `src/backend_cuda.c`: `cuda_backend_matmul_f32` calls `cublasSgemm` using the
@@ -55,9 +55,13 @@ Milestone 14 scope:
   1×1×1 matmul succeeds and produces the correct result.
 - `docs/cuda_backend.md`: updated kernel-status and tests sections.
 
+Milestone 14 validation status:
+- `make clean && make && make test` passes on the default CPU-only build.
+- `make clean && make CUDA=1 && make test CUDA=1` passes on a CUDA-capable machine.
+
 ## Next Prompt for Codex
 
-After CUDA-capable validation of Milestone 14 succeeds, run Milestone 15 only.
+Run Milestone 15 only.
 
 Goal:
 Add CUDA RMSNorm kernel — single-pass reduction, per-element scale.
