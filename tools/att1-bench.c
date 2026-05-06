@@ -10,7 +10,7 @@
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N] [--backend cpu-f32|cpu-q8|cuda]\n",
+    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N] [--backend cpu-f32|cpu-q8|cuda|cuda-q8]\n",
            argv0);
 }
 
@@ -62,6 +62,9 @@ static att1_status_t create_backend(const char *name, att1_backend **out_backend
     }
     if (strcmp(name, "cuda") == 0) {
         return att1_backend_cuda_create(out_backend);
+    }
+    if (strcmp(name, "cuda-q8") == 0) {
+        return att1_backend_cuda_q8_create(out_backend);
     }
 
     return ATT1_ERR_INVALID_ARG;
@@ -212,6 +215,11 @@ static int run_cluster(const att1_model *model,
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
 
+    if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q8") == 0)) {
+        fprintf(stderr, "backend unsupported for cluster mode: %s\n", backend_name);
+        return 1;
+    }
+
     if (backend_name != NULL) {
         if (create_backend(backend_name, &backend) != ATT1_OK) {
             fprintf(stderr, "backend unsupported or unavailable: %s\n", backend_name);
@@ -302,7 +310,8 @@ int main(int argc, char **argv)
             backend_name = argv[++i];
             if ((strcmp(backend_name, "cpu-f32") != 0) &&
                 (strcmp(backend_name, "cpu-q8") != 0) &&
-                (strcmp(backend_name, "cuda") != 0)) {
+                (strcmp(backend_name, "cuda") != 0) &&
+                (strcmp(backend_name, "cuda-q8") != 0)) {
                 usage(argv[0]);
                 return 1;
             }

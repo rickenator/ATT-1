@@ -100,6 +100,26 @@ against CPU f32 where the existing q8 tolerance applies.
 This is not full CUDA quantized model inference. CUDA q8 inference and CUDA q4
 are not implemented.
 
+## CUDA q8 single-tile inference
+
+Milestone 25 adds explicit `--backend cuda-q8` selection for single-tile
+inference. It uses the same runtime q8 weight copies as the CPU q8 path, keeps
+activations float32, and dispatches q8 projection/logit matmuls through the
+CUDA `matmul_q8xf32` backend op.
+
+CPU q8 remains the direct correctness reference for CUDA q8. Tests compare
+one-token CUDA q8 logits against CPU q8 logits with a maximum absolute
+tolerance of `1e-3`. The existing CPU q8 versus CPU f32 checks remain the f32
+reference coverage for quantization error and use the documented `0.15`
+dummy-model logit tolerance.
+
+For the current dummy `.att1` fixture, CUDA q8 generated tokens are expected to
+match CPU q8 for the short tested prompt. As with CPU q8, token equivalence is
+not a general quantization contract for future models because small logit
+differences can move an argmax boundary.
+
+CUDA q8 cluster inference is not implemented. q4 is not implemented.
+
 ## Benchmark
 
 `build/att1-q8-bench` runs a deterministic small f32 matmul and q8xf32 matmul

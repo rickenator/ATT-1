@@ -419,8 +419,42 @@ the correctness reference.
    `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_create` and skip CUDA q8
    execution cleanly.
 
-Full CUDA q8 inference is still out of scope; only the backend q8xf32 matmul
-operator is added. CUDA q4 remains unsupported.
+At this milestone only the CUDA q8 matmul operator is added; single-tile CUDA
+q8 inference integration is documented below. CUDA q8 cluster inference and
+CUDA q4 remain unsupported.
+
+### Milestone 25: CUDA q8 single-tile inference
+
+The CUDA backend exposes an explicit `cuda-q8` backend name through
+`att1_backend_cuda_q8_create`. It shares the existing CUDA f32 operators plus
+the Milestone 23 `matmul_q8xf32` implementation, but the distinct backend name
+lets single-tile inference select the q8 weight path without changing
+`--backend cuda` f32 behavior.
+
+Single-tile inference treats `cuda-q8` like `cpu-q8` for weight preparation:
+the `.att1` file remains float32, owned runtime q8 copies are built for
+attention, FFN, and output projection weights, and activations stay float32.
+Those q8 matmuls dispatch through the selected CUDA backend. Non-matmul ops
+remain the existing CUDA f32 ops.
+
+`tests/test_cuda_infer.c` covers Milestone 25 q8 inference:
+
+1. **CUDA q8 logits** — one-token CUDA q8 logits match CPU q8 logits within
+   `1e-3`.
+2. **Generated tokens** — the current dummy-model short prompt matches CPU q8;
+   future token divergence remains acceptable when logits are within tolerance.
+3. **No silent CPU fallback** — the selected backend must report
+   `backend=cuda-q8`, not `cpu-q8` or `cpu-f32`.
+4. **Unsupported path clarity** — non-CUDA builds/devices report
+   `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_q8_create` and CLI
+   `--backend cuda-q8` exits nonzero cleanly.
+
+`tests/test_cuda_bench.c` also validates `att1-bench --mode single --backend
+cuda-q8` output labeling and unsupported-path behavior.
+
+CUDA q8 cluster inference is not implemented; `att1-bench --mode cluster
+--backend cuda-q8` is rejected instead of falling back to CUDA f32. CUDA q4
+remains unsupported.
 
 ## CLI
 
@@ -430,12 +464,15 @@ operator is added. CUDA q4 remains unsupported.
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cpu-f32
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cpu-q8
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cuda
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cuda-q8
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode cluster --tiles 2 --backend cuda
 ```
 
 `cpu-f32` remains the default. `cpu-q8` runs single-tile inference with runtime
-q8 copies of projection and output weights. `cuda` reports unsupported or
-unavailable when CUDA is not compiled in or no CUDA runtime device is available.
+q8 copies of projection and output weights. `cuda` runs the CUDA f32 path, while
+`cuda-q8` runs single-tile CUDA q8 inference. CUDA selections report unsupported
+or unavailable when CUDA is not compiled in or no CUDA runtime device is
+available.
 
 `att1-q8-bench` accepts `--backend cpu-q8|cuda`. The CUDA option is a skeleton
 path for q8xf32 matmul measurement only. It does not imply full q8 model

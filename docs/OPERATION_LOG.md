@@ -48,15 +48,17 @@ Milestone 21: CUDA benchmark and trace integration.
 
 ## Active Task
 
-Milestone 24: CPU q8 single-tile inference integration.
-- Goal: Allow single-tile inference to use CPU q8 matmul where supported.
-- CPU f32 remains the correctness reference.
+Milestone 25: CUDA q8 single-tile inference integration.
+- Goal: Allow single-tile inference to use CUDA q8 matmul where supported.
+- Explicit backend selection: `cuda-q8`.
+- CPU q8 is the direct correctness reference; CPU f32 remains the quantization reference.
 - `.att1` remains float32; q8 weights are owned runtime copies using the existing per-row int8 format.
 - Activations, norms, RoPE, softmax, SwiGLU, KV cache, and residuals remain float32.
-- Dummy-model tests compare CPU f32 and CPU q8 one-token logits within documented tolerance and assert current short generated-token equivalence.
-- Missing/unsupported q8 backend ops fail cleanly instead of falling back to CPU f32.
-- CUDA q8 inference and q4 remain out of scope.
-- Test suite: updated `test_infer.c` q8 inference coverage.
+- Dummy-model tests compare CUDA q8 one-token logits against CPU q8 within documented tolerance and assert current short generated-token equivalence.
+- Non-CUDA builds/devices report CUDA q8 unsupported cleanly.
+- CUDA f32 and CPU q8 behavior remain unchanged.
+- CUDA q8 cluster inference and q4 remain out of scope.
+- Test suite: updated `test_cuda_infer.c` and `test_cuda_bench.c` q8 coverage.
 
 ## Next Prompt for Codex
 

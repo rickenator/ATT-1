@@ -334,11 +334,62 @@ static int test_cuda_bench_backend_label(void)
     return 0;
 }
 
-/* Test 5: Non-CUDA build reports CUDA unsupported cleanly */
-static int test_cuda_bench_unsupported_message(void)
+/* Test 5: CUDA q8 single mode follows explicit backend selection */
+static int test_cuda_q8_bench_single_mode(void)
 {
     char output[4096];
     int rc = 0;
+
+    if (!att1_backend_cuda_available()) {
+        fputs("SKIP: CUDA not available\n", stderr);
+        return 0;
+    }
+
+    if (run_command_with_exit(
+            "./build/att1-bench --model models/dummy/model.att1 "
+            "--prompt hello --tokens 4 --mode single --backend cuda-q8 "
+            "> build/bench_cuda_q8_single.txt 2>&1",
+            &rc) != 0) {
+        return -1;
+    }
+
+    if (rc != 0) {
+        fputs("cuda q8 single mode exited non-zero\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/bench_cuda_q8_single.txt",
+                  output,
+                  sizeof(output)) != 0) {
+        fputs("failed to read cuda q8 bench output\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "mode=single") == NULL) ||
+        (strstr(output, "backend=cuda-q8") == NULL) ||
+        (strstr(output, "tokens_decoded=") == NULL) ||
+        (strstr(output, "generated_tokens=") == NULL)) {
+        fputs("cuda q8 bench output missing required fields\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "backend=cpu-f32") != NULL) ||
+        (strstr(output, "backend=cpu-q8") != NULL)) {
+        fputs("cuda q8 bench silently reported a CPU backend\n", stderr);
+        return -1;
+    }
+
+    fputs("PASS: cuda q8 bench single mode\n", stderr);
+    return 0;
+}
+
+/* Test 6: Non-CUDA build reports CUDA unsupported cleanly */
+static int test_cuda_bench_unsupported_message(void)
+{
+    char output[4096];
+    char q8_output[4096];
+    int rc = 0;
+    int q8_rc = 0;
 
     if (att1_backend_cuda_available()) {
         fputs("SKIP: CUDA is available (test requires CPU-only build)\n", stderr);
@@ -370,6 +421,31 @@ static int test_cuda_bench_unsupported_message(void)
         return -1;
     }
 
+    if (run_command_with_exit(
+            "./build/att1-bench --model models/dummy/model.att1 "
+            "--prompt hello --tokens 4 --mode single --backend cuda-q8 "
+            "> build/bench_cuda_q8_unsupported.txt 2>&1",
+            &q8_rc) != 0) {
+        return -1;
+    }
+
+    if (q8_rc == 0) {
+        fputs("expected non-zero exit for CUDA q8 on CPU-only build\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/bench_cuda_q8_unsupported.txt",
+                  q8_output,
+                  sizeof(q8_output)) != 0) {
+        fputs("failed to read cuda q8 bench output\n", stderr);
+        return -1;
+    }
+
+    if (strstr(q8_output, "unsupported") == NULL) {
+        fputs("missing cuda q8 'unsupported' error message\n", stderr);
+        return -1;
+    }
+
     fputs("PASS: CUDA unsupported message on CPU-only build\n", stderr);
     return 0;
 }
@@ -388,6 +464,9 @@ int main(void)
         failures++;
     }
     if (test_cuda_bench_backend_label() != 0) {
+        failures++;
+    }
+    if (test_cuda_q8_bench_single_mode() != 0) {
         failures++;
     }
     if (test_cuda_bench_unsupported_message() != 0) {

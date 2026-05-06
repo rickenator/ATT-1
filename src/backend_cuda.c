@@ -620,6 +620,19 @@ static const att1_backend_ops cuda_backend_ops = {
     cuda_backend_ffn_swiglu_f32
 };
 
+static const att1_backend_ops cuda_q8_backend_ops = {
+    "cuda-q8",
+    cuda_backend_alloc,
+    cuda_backend_free,
+    cuda_backend_sync,
+    cuda_backend_matmul_f32,
+    cuda_backend_matmul_q8xf32,
+    cuda_backend_rmsnorm_f32,
+    cuda_backend_softmax_f32,
+    cuda_backend_rope_f32,
+    cuda_backend_ffn_swiglu_f32
+};
+
 int att1_backend_cuda_available(void)
 {
 #ifdef ATT1_ENABLE_CUDA
@@ -635,12 +648,14 @@ int att1_backend_cuda_available(void)
 #endif
 }
 
-att1_status_t att1_backend_cuda_create(att1_backend **out_backend)
+static att1_status_t cuda_backend_create_with_ops(
+    att1_backend **out_backend,
+    const att1_backend_ops *ops)
 {
     att1_backend *backend = NULL;
     att1_cuda_backend_data *data = NULL;
 
-    if (out_backend == NULL) {
+    if ((out_backend == NULL) || (ops == NULL)) {
         return ATT1_ERR_INVALID_ARG;
     }
     *out_backend = NULL;
@@ -662,10 +677,20 @@ att1_status_t att1_backend_cuda_create(att1_backend **out_backend)
     }
 
     data->device_id = 0;
-    backend->ops = &cuda_backend_ops;
+    backend->ops = ops;
     backend->user_data = data;
     *out_backend = backend;
     return ATT1_OK;
+}
+
+att1_status_t att1_backend_cuda_create(att1_backend **out_backend)
+{
+    return cuda_backend_create_with_ops(out_backend, &cuda_backend_ops);
+}
+
+att1_status_t att1_backend_cuda_q8_create(att1_backend **out_backend)
+{
+    return cuda_backend_create_with_ops(out_backend, &cuda_q8_backend_ops);
 }
 
 att1_status_t att1_backend_cuda_copy_host_to_device(att1_backend *backend,
@@ -679,7 +704,8 @@ att1_status_t att1_backend_cuda_copy_host_to_device(att1_backend *backend,
     }
 
 #ifdef ATT1_ENABLE_CUDA
-    if (backend->ops != &cuda_backend_ops) {
+    if ((backend->ops != &cuda_backend_ops) &&
+        (backend->ops != &cuda_q8_backend_ops)) {
         return ATT1_ERR_INVALID_ARG;
     }
 
@@ -705,7 +731,8 @@ att1_status_t att1_backend_cuda_copy_device_to_host(att1_backend *backend,
     }
 
 #ifdef ATT1_ENABLE_CUDA
-    if (backend->ops != &cuda_backend_ops) {
+    if ((backend->ops != &cuda_backend_ops) &&
+        (backend->ops != &cuda_q8_backend_ops)) {
         return ATT1_ERR_INVALID_ARG;
     }
 

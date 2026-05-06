@@ -99,17 +99,18 @@ static void infer_release_members(att1_infer_t *infer)
     memset(infer, 0, sizeof(*infer));
 }
 
-static int infer_backend_is_cpu_q8(const att1_backend *backend)
+static int infer_backend_is_q8(const att1_backend *backend)
 {
     return (backend != NULL) &&
            (backend->ops != NULL) &&
            (backend->ops->name != NULL) &&
-           (strcmp(backend->ops->name, "cpu-q8") == 0);
+           ((strcmp(backend->ops->name, "cpu-q8") == 0) ||
+            (strcmp(backend->ops->name, "cuda-q8") == 0));
 }
 
 static int infer_backend_supports_q8(const att1_backend *backend)
 {
-    return infer_backend_is_cpu_q8(backend) &&
+    return infer_backend_is_q8(backend) &&
            (backend->ops->alloc != NULL) &&
            (backend->ops->free != NULL) &&
            (backend->ops->matmul_q8xf32 != NULL) &&
@@ -339,7 +340,7 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
         return ATT1_ERR_INVALID_ARG;
     }
 
-    use_q8 = infer_backend_is_cpu_q8(infer->backend);
+    use_q8 = infer_backend_is_q8(infer->backend);
     model = infer->model;
     if ((token_id >= model->config.vocab_size) ||
         (infer->position >= model->config.max_seq_len)) {
@@ -614,7 +615,7 @@ att1_status_t att1_infer_set_backend(att1_infer_t *infer,
         return ATT1_ERR_INVALID_ARG;
     }
 
-    if (infer_backend_is_cpu_q8(backend)) {
+    if (infer_backend_is_q8(backend)) {
         if (!infer_backend_supports_q8(backend)) {
             return ATT1_ERR_UNSUPPORTED;
         }
