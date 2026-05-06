@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 21: (to be determined by user request).
+Milestone 21: CUDA benchmark and trace integration.
 
 ## Hard Rules
 
@@ -48,16 +48,15 @@ Milestone 21: (to be determined by user request).
 
 ## Active Task
 
-Milestone 20 complete:
-- CUDA single-tile inference path wired through the backend API.
-- CPU f32 and CUDA outputs match on dummy `.att1` model tests.
-- CUDA=1 build/test passes on RTX 3090.
-- Default CPU-only build/test remains CUDA-free.
-- CUDA cluster inference, CUDA q8, and full real-model inference are not implemented yet.
+Milestone 21: CUDA benchmark and trace integration.
+- Goal: Expose CUDA single-tile inference through existing benchmark/trace tools.
+- `att1-bench --backend cuda --mode single` reports backend=cuda and trace counters.
+- CPU f32 and CUDA generate identical deterministic tokens for dummy model.
+- `att1-bench --backend cuda --mode cluster` fails clearly (cluster CUDA not implemented).
+- Non-CUDA build reports CUDA unsupported cleanly.
+- Test suite: `test_cuda_bench.c` with 5 required checks.
 
 ## Next Prompt for Codex
-
-Awaiting user request for Milestone 21 or later.
 
 ## Known Risks
 

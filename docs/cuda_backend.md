@@ -321,6 +321,56 @@ against CPU f32 reference on `models/dummy/model.att1`:
    `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_create` and skip CUDA infer
    execution cleanly.
 
+### Milestone 21: benchmark and trace integration
+
+Benchmark tool (`att1-bench`) now exposes CUDA single-tile inference with trace
+counters. Single-tile mode with `--backend cuda` reports per-token timing, total
+timing, generated token count, and backend name.
+
+`tests/test_cuda_bench.c` validates benchmark and trace integration:
+
+1. **Single-tile mode exits successfully** — `att1-bench --backend cuda --mode single`
+   exits with code 0, reports `backend=cuda`, `mode=single`, and trace counters
+   (`tokens_decoded`, `token_time_us_total`, etc.).
+2. **Cluster mode fails clearly** — `att1-bench --backend cuda --mode cluster`
+   exits non-zero with no silent CPU fallback (cluster CUDA is not implemented).
+3. **Deterministic token generation** — CPU f32 and CUDA benchmarks produce
+   identical token sequences for fixed dummy model and prompt, confirming
+   inference correctness.
+4. **Backend label clarity** — benchmark output explicitly prints `backend=cuda`
+   (or `backend=cpu-f32`, `backend=cpu-q8` for other selections); no missing or
+   misreported backend.
+5. **CUDA unsupported message** — non-CUDA builds report `unsupported` error when
+   `--backend cuda` is selected and CUDA is unavailable.
+
+Trace output format (from `att1_trace_t` callbacks):
+
+- `tokens_decoded=<count>` — number of tokens generated
+- `token_time_us_total=<microseconds>` — total time across all tokens
+- `token_time_us_max=<microseconds>` — max time for any single token
+- `layer_time_us_total=<microseconds>` — total time spent in layer operations
+- `layer[i].executions`, `layer[i].time_us`, `layer[i].kv_appends` — per-layer breakdown
+- Per-tile activation/logit byte counts and fabric packet counts (single-tile: mostly 0)
+
+Benchmark output format:
+
+```
+mode=single
+backend=cuda
+requested_tokens=8
+benchmark_tokens=<actual>
+generated_tokens=<count>
+last_token=<token_id>
+tokens_decoded=<count>
+token_time_us_total=<us>
+...
+layer[0].executions=<n> time_us=<us> kv_appends=<m>
+...
+```
+
+CUDA cluster mode remains unsupported for this milestone. A future milestone
+will add cluster fabric integration with CUDA backends.
+
 ## CLI
 
 `att1-bench` accepts:

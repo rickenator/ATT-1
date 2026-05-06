@@ -29,7 +29,7 @@ CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
 	tokenizer sampler infer shard cluster_infer trace quant matmul_q8 backend bench_smoke \
-	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer
+	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer cuda_bench
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
