@@ -245,14 +245,21 @@ static int check_cuda_backend_skeleton(void)
         return -1;
     }
 
+    /* Milestone 14: matmul_f32 is now implemented via cuBLAS.
+       1x1x1: dst = lhs * rhs = 1.0 * 1.0 = 1.0 */
     if (backend->ops->matmul_f32(backend,
                                  &value,
                                  &value,
                                  &value,
                                  1u,
                                  1u,
-                                 1u) == 0) {
-        fputs("cuda skeleton should not implement matmul yet\n", stderr);
+                                 1u) != 0) {
+        fputs("cuda matmul_f32 1x1x1 should succeed\n", stderr);
+        att1_backend_destroy(backend);
+        return -1;
+    }
+    if (!near_f32(value, 1.0f)) {
+        fputs("cuda matmul_f32 1x1x1 result mismatch\n", stderr);
         att1_backend_destroy(backend);
         return -1;
     }

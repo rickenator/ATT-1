@@ -3,7 +3,9 @@
 #include <stdlib.h>
 
 #ifdef ATT1_ENABLE_CUDA
+#include <cublas_v2.h>
 #include <cuda_runtime_api.h>
+#include <limits.h>
 #endif
 
 typedef struct att1_cuda_backend_data {
@@ -68,6 +70,96 @@ static int cuda_backend_matmul_f32(att1_backend *backend,
                                    size_t cols,
                                    size_t inner)
 {
+#ifdef ATT1_ENABLE_CUDA
+    att1_cuda_backend_data *data = (att1_cuda_backend_data *)backend->user_data;
+    cublasHandle_t handle;
+    float *d_lhs = NULL;
+    float *d_rhs = NULL;
+    float *d_dst = NULL;
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    int ok = 0;
+    int handle_valid = 0;
+
+    if ((dst == NULL) || (lhs == NULL) || (rhs == NULL)) {
+        return -1;
+    }
+    if ((rows == 0u) || (cols == 0u) || (inner == 0u)) {
+        return -1;
+    }
+    if ((rows > (size_t)INT_MAX) || (cols > (size_t)INT_MAX) ||
+        (inner > (size_t)INT_MAX)) {
+        return -1;
+    }
+
+    if (cudaSetDevice(data->device_id) != cudaSuccess) {
+        return -1;
+    }
+
+    if (cudaMalloc((void **)&d_lhs,
+                   rows * inner * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMalloc((void **)&d_rhs,
+                   inner * cols * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMalloc((void **)&d_dst,
+                   rows * cols * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMemcpy(d_lhs, lhs,
+                   rows * inner * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMemcpy(d_rhs, rhs,
+                   inner * cols * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+
+    if (cublasCreate(&handle) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+    handle_valid = 1;
+
+    /*
+     * Row-major C[M,N] = A[M,K] * B[K,N] via the cuBLAS column-major trick:
+     *   C^T = B^T * A^T
+     * Pass rhs as the first cuBLAS argument (read as N×K column-major)
+     * and lhs as the second (read as K×M column-major).  cuBLAS produces
+     * C^T in column-major (N×M), which is the row-major result C[M,N].
+     *   m = N = cols,  n = M = rows,  k = K = inner
+     *   lda = N = cols,  ldb = K = inner,  ldc = N = cols
+     */
+    if (cublasSgemm(handle,
+                    CUBLAS_OP_N, CUBLAS_OP_N,
+                    (int)cols, (int)rows, (int)inner,
+                    &alpha,
+                    d_rhs, (int)cols,
+                    d_lhs, (int)inner,
+                    &beta,
+                    d_dst, (int)cols) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+
+    if (cudaMemcpy(dst, d_dst,
+                   rows * cols * sizeof(float),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+        goto cleanup;
+    }
+    ok = 1;
+
+cleanup:
+    if (handle_valid) {
+        (void)cublasDestroy(handle);
+    }
+    (void)cudaFree(d_lhs);
+    (void)cudaFree(d_rhs);
+    (void)cudaFree(d_dst);
+    return ok ? 0 : -1;
+#else
     (void)backend;
     (void)dst;
     (void)lhs;
@@ -76,6 +168,7 @@ static int cuda_backend_matmul_f32(att1_backend *backend,
     (void)cols;
     (void)inner;
     return -1;
+#endif
 }
 
 static int cuda_backend_matmul_q8xf32(att1_backend *backend,

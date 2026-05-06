@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 13: CUDA validation plan.
+Milestone 14: CUDA f32 matmul prototype (cuBLAS).
 
 ## Hard Rules
 
@@ -36,36 +36,31 @@ Milestone 13: CUDA validation plan.
 - Milestone 9: tracing, benchmark tools, and synthetic sizing/reporting flow.
 - Milestone 10: q8 quantization primitives and q8xf32 matmul support.
 - Milestone 11: backend abstraction with CPU f32 and CPU q8 backends wired through inference.
+- Milestone 12: CUDA backend skeleton — opt-in CUDA build path, lifecycle hooks, copy helpers, and stub operator vtable.
+- Milestone 13: CUDA validation plan — `docs/CUDA_VALIDATION_PLAN.md` and environment-aware bench smoke test.
+- Milestone 14: CUDA f32 matmul prototype — `cublasSgemm` wired into `cuda_backend_matmul_f32`; five-case `test_cuda_matmul` validation suite.
 
 ## Active Task
 
-Create `docs/CUDA_VALIDATION_PLAN.md` for execution on a CUDA-capable machine.
+Milestone 14 CUDA f32 matmul prototype implemented and locally validated
+(non-CUDA machine: 26 tests pass).  CUDA-capable validation pending.
 
-Milestone 12 hardening status (local non-CUDA environment):
-- Default CPU build validated with `make clean`, `make`, and `make test`.
-- CLI CUDA selection now fails explicitly with unsupported/status messaging when CUDA is unavailable.
-- `CUDA=1` build/test path is pending validation on real CUDA hardware.
-
-Milestone 12 validation status:
-- Default CPU build/test passes on APEXX and RTX 3090.
-- CUDA-unavailable behavior is validated on APEXX.
-- CUDA-capable behavior is validated on RTX 3090.
-- CUDA backend skeleton remains plumbing only; no CUDA operator kernels or full inference yet.
+Milestone 14 scope:
+- `src/backend_cuda.c`: `cuda_backend_matmul_f32` calls `cublasSgemm` using the
+  column-major row-major trick; allocates/frees temporary device memory per call.
+- `Makefile`: `CUDA=1` now links `-lcublas` in addition to `-lcudart`.
+- `tests/test_cuda_matmul.c`: five-case suite (tiny known, larger deterministic,
+  shape handling, CUDA unavailable, no silent fallback).
+- `tests/test_backend.c`: updated `check_cuda_backend_skeleton` to verify
+  1×1×1 matmul succeeds and produces the correct result.
+- `docs/cuda_backend.md`: updated kernel-status and tests sections.
 
 ## Next Prompt for Codex
 
-After Milestone 13 plan completion and successful CUDA-host execution, run Milestone 14 only.
+After CUDA-capable validation of Milestone 14 succeeds, run Milestone 15 only.
 
 Goal:
-Start CUDA matmul/cuBLAS prototyping while preserving current CPU correctness behavior.
-
-Requirements:
-- Milestone 14 only: CUDA matmul/cuBLAS prototype.
-- Do not implement full transformer inference yet.
-- Keep CUDA opt-in (`make CUDA=1`) and non-CUDA default build behavior unchanged.
-- Keep CPU f32 as correctness reference and avoid regressions in CPU q8 behavior.
-
-Before finishing, update `docs/OPERATION_LOG.md`.
+Add CUDA RMSNorm kernel — single-pass reduction, per-element scale.
 
 ## Known Risks
 

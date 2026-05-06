@@ -16,7 +16,7 @@ CUDA_HOME ?= /usr/local/cuda
 ifeq ($(CUDA),1)
 CFLAGS += -DATT1_ENABLE_CUDA -I$(CUDA_HOME)/include
 LDFLAGS += -L$(CUDA_HOME)/lib64
-LDLIBS += -lcudart
+LDLIBS += -lcudart -lcublas
 endif
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
@@ -28,7 +28,8 @@ TINY_LLM_BIN := $(BUILD_DIR)/run_tiny_llm
 CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
-	tokenizer sampler infer shard cluster_infer trace quant matmul_q8 backend bench_smoke
+	tokenizer sampler infer shard cluster_infer trace quant matmul_q8 backend bench_smoke \
+	cuda_matmul
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \

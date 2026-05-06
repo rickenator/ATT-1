@@ -11,14 +11,14 @@ Default CPU-only build:
 make
 ```
 
-Opt-in CUDA build:
+Opt-in CUDA build (requires CUDA toolkit and cuBLAS):
 
 ```sh
 make CUDA=1
 ```
 
 `CUDA=1` defines `ATT1_ENABLE_CUDA`, adds `$(CUDA_HOME)/include`, adds
-`$(CUDA_HOME)/lib64`, and links `-lcudart`. `CUDA_HOME` defaults to
+`$(CUDA_HOME)/lib64`, and links `-lcudart -lcublas`. `CUDA_HOME` defaults to
 `/usr/local/cuda` and can be overridden:
 
 ```sh
@@ -54,13 +54,47 @@ calls. Host/device copy helpers are available for explicit transfers:
 
 ## Kernel status
 
-The CUDA backend does not implement transformer inference or CUDA operator
-kernels yet. Operator entries such as `matmul_f32`, `matmul_q8xf32`,
-`rmsnorm_f32`, `softmax_f32`, `rope_f32`, and `ffn_swiglu_f32` currently return
-failure.
+### Milestone 14: matmul_f32 (cuBLAS)
 
-This keeps the backend usable for lifecycle, allocation, copy, and integration
-testing while preventing accidental CUDA inference.
+`matmul_f32` is implemented using `cublasSgemm`.  Input and output buffers are
+host-resident; the implementation allocates temporary device memory per call,
+copies inputs to device, executes the GEMM, copies the result back, and frees
+device memory.  This proves CUDA execution correctness without requiring
+device-side buffer management in callers.
+
+Row-major semantics are preserved via the standard column-major trick:
+
+```
+C^T = B^T × A^T
+cublasSgemm(handle, N, N, cols, rows, inner,
+            alpha, d_rhs, cols, d_lhs, inner,
+            beta,  d_dst, cols)
+```
+
+A cuBLAS handle is created and destroyed per call.  This is intentionally
+simple for the prototype; a persistent handle will be introduced when the
+backend data struct gains a proper destroy hook.
+
+### Not yet implemented
+
+`matmul_q8xf32`, `rmsnorm_f32`, `softmax_f32`, `rope_f32`, and
+`ffn_swiglu_f32` still return failure.  Full transformer inference via CUDA
+is not attempted until all operator kernels are validated.
+
+## Tests
+
+`tests/test_cuda_matmul.c` validates the CUDA f32 matmul prototype:
+
+1. **Tiny known** — 2×3 × 3×1 with hand-checkable expected values [50, 122].
+2. **Larger deterministic** — 4×8 × 8×4 with deterministic fill, compared
+   to the CPU f32 reference within 1e-3 tolerance.
+3. **Shape handling** — NULL and zero-dimension arguments fail cleanly on
+   both CPU reference and CUDA backend.
+4. **CUDA unavailable** — `att1_backend_cuda_create` returns
+   `ATT1_ERR_UNSUPPORTED` when CUDA is not compiled in or no GPU is present.
+5. **No silent fallback** — Backend name is asserted as `"cuda"` before
+   calling `matmul_f32`; result is compared to CPU reference to confirm
+   CUDA execution produced correct output.
 
 ## CLI
 
