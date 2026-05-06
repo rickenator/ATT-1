@@ -1,5 +1,6 @@
 #include "att1_backend.h"
 
+#include <math.h>
 #include <stdlib.h>
 
 #ifdef ATT1_ENABLE_CUDA
@@ -11,6 +12,37 @@
 typedef struct att1_cuda_backend_data {
     int device_id;
 } att1_cuda_backend_data;
+
+#ifdef ATT1_ENABLE_CUDA
+static int cuda_backend_vector_mul_f32(cublasHandle_t handle,
+                                       float *dst,
+                                       const float *lhs,
+                                       const float *rhs,
+                                       size_t count)
+{
+    if ((dst == NULL) || (lhs == NULL) || (rhs == NULL)) {
+        return -1;
+    }
+    if ((count == 0u) || (count > (size_t)INT_MAX)) {
+        return -1;
+    }
+
+    if (cublasSdgmm(handle,
+                    CUBLAS_SIDE_LEFT,
+                    (int)count,
+                    1,
+                    lhs,
+                    (int)count,
+                    rhs,
+                    1,
+                    dst,
+                    (int)count) != CUBLAS_STATUS_SUCCESS) {
+        return -1;
+    }
+
+    return 0;
+}
+#endif
 
 #ifdef ATT1_ENABLE_CUDA
 static void *cuda_backend_alloc(att1_backend *backend, size_t bytes)
@@ -194,6 +226,102 @@ static int cuda_backend_rmsnorm_f32(att1_backend *backend,
                                     size_t count,
                                     float epsilon)
 {
+#ifdef ATT1_ENABLE_CUDA
+    att1_cuda_backend_data *data = NULL;
+    cublasHandle_t handle;
+    float *d_src = NULL;
+    float *d_weight = NULL;
+    float *d_dst = NULL;
+    float sum_squares = 0.0f;
+    float scale = 0.0f;
+    int ok = 0;
+    int handle_valid = 0;
+
+    if ((backend == NULL) || (backend->user_data == NULL) ||
+        (dst == NULL) || (src == NULL) || (weight == NULL)) {
+        return -1;
+    }
+    if ((count == 0u) || (epsilon <= 0.0f) ||
+        (count > (size_t)INT_MAX)) {
+        return -1;
+    }
+
+    data = (att1_cuda_backend_data *)backend->user_data;
+    if (cudaSetDevice(data->device_id) != cudaSuccess) {
+        return -1;
+    }
+
+    if (cudaMalloc((void **)&d_src, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMalloc((void **)&d_weight, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMalloc((void **)&d_dst, count * sizeof(float)) != cudaSuccess) {
+        goto cleanup;
+    }
+
+    if (cudaMemcpy(d_src,
+                   src,
+                   count * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+    if (cudaMemcpy(d_weight,
+                   weight,
+                   count * sizeof(float),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        goto cleanup;
+    }
+
+    if (cublasCreate(&handle) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+    handle_valid = 1;
+
+    if (cublasSdot(handle,
+                   (int)count,
+                   d_src,
+                   1,
+                   d_src,
+                   1,
+                   &sum_squares) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+
+    scale = 1.0f / sqrtf((sum_squares / (float)count) + epsilon);
+    if (cuda_backend_vector_mul_f32(handle,
+                                    d_dst,
+                                    d_src,
+                                    d_weight,
+                                    count) != 0) {
+        goto cleanup;
+    }
+    if (cublasSscal(handle,
+                    (int)count,
+                    &scale,
+                    d_dst,
+                    1) != CUBLAS_STATUS_SUCCESS) {
+        goto cleanup;
+    }
+
+    if (cudaMemcpy(dst,
+                   d_dst,
+                   count * sizeof(float),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+        goto cleanup;
+    }
+    ok = 1;
+
+cleanup:
+    if (handle_valid) {
+        (void)cublasDestroy(handle);
+    }
+    (void)cudaFree(d_src);
+    (void)cudaFree(d_weight);
+    (void)cudaFree(d_dst);
+    return ok ? 0 : -1;
+#else
     (void)backend;
     (void)dst;
     (void)src;
@@ -201,6 +329,7 @@ static int cuda_backend_rmsnorm_f32(att1_backend *backend,
     (void)count;
     (void)epsilon;
     return -1;
+#endif
 }
 
 static int cuda_backend_softmax_f32(att1_backend *backend,

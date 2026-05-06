@@ -10,6 +10,11 @@ static int near_f32(float lhs, float rhs)
     return fabsf(lhs - rhs) < 0.00001f;
 }
 
+static int near_cuda_f32(float lhs, float rhs)
+{
+    return fabsf(lhs - rhs) < 0.001f;
+}
+
 static int check_cpu_f32_backend(void)
 {
     const float lhs[6] = {
@@ -212,7 +217,12 @@ static int check_cuda_backend_skeleton(void)
 {
     att1_backend *backend = NULL;
     att1_status_t status = ATT1_OK;
+    const float norm_src[4] = {1.0f, -2.0f, 3.0f, -4.0f};
+    const float norm_weight[4] = {1.0f, 0.5f, 1.5f, 2.0f};
+    float backend_norm[4] = {0.0f};
+    float reference_norm[4] = {0.0f};
     float value = 1.0f;
+    size_t i = 0u;
 
     status = att1_backend_cuda_create(&backend);
     if (!att1_backend_cuda_available()) {
@@ -262,6 +272,31 @@ static int check_cuda_backend_skeleton(void)
         fputs("cuda matmul_f32 1x1x1 result mismatch\n", stderr);
         att1_backend_destroy(backend);
         return -1;
+    }
+
+    if ((backend->ops->rmsnorm_f32 == NULL) ||
+        (backend->ops->rmsnorm_f32(backend,
+                                   backend_norm,
+                                   norm_src,
+                                   norm_weight,
+                                   4u,
+                                   0.000001f) != 0) ||
+        (att1_rmsnorm_f32(reference_norm,
+                          norm_src,
+                          norm_weight,
+                          4u,
+                          0.000001f) != 0)) {
+        fputs("cuda rmsnorm_f32 should succeed\n", stderr);
+        att1_backend_destroy(backend);
+        return -1;
+    }
+
+    for (i = 0u; i < 4u; i++) {
+        if (!near_cuda_f32(backend_norm[i], reference_norm[i])) {
+            fputs("cuda rmsnorm_f32 result mismatch\n", stderr);
+            att1_backend_destroy(backend);
+            return -1;
+        }
     }
 
     att1_backend_destroy(backend);

@@ -75,11 +75,29 @@ A cuBLAS handle is created and destroyed per call.  This is intentionally
 simple for the prototype; a persistent handle will be introduced when the
 backend data struct gains a proper destroy hook.
 
+### Milestone 15: rmsnorm_f32 (cuBLAS)
+
+`rmsnorm_f32` is implemented without introducing a separate CUDA kernel build
+path. The current prototype stays inside the existing `cc` + cuBLAS toolchain:
+
+1. `cublasSdot` computes `sum(src[i] * src[i])`
+2. the host computes `scale = 1 / sqrt((sum / count) + epsilon)`
+3. `cublasSdgmm` performs elementwise `src[i] * weight[i]`
+4. `cublasSscal` applies the final normalization scale in-place
+
+This keeps default builds CUDA-free, keeps `make CUDA=1` opt-in, and provides a
+real CUDA-backed RMSNorm path using CPU f32 RMSNorm as the correctness reference.
+
+The prototype also adds a private cuBLAS-based vector multiply helper used by
+RMSNorm. Standalone CUDA SiLU, add, and other elementwise primitives are not yet
+exposed through the backend API because the current milestone only needs the
+multiply primitive to validate normalization.
+
 ### Not yet implemented
 
-`matmul_q8xf32`, `rmsnorm_f32`, `softmax_f32`, `rope_f32`, and
-`ffn_swiglu_f32` still return failure.  Full transformer inference via CUDA
-is not attempted until all operator kernels are validated.
+`matmul_q8xf32`, `softmax_f32`, `rope_f32`, and `ffn_swiglu_f32` still return
+failure. Full transformer inference via CUDA is not attempted until all
+operator kernels are validated.
 
 ## Tests
 
@@ -95,6 +113,18 @@ is not attempted until all operator kernels are validated.
 5. **No silent fallback** — Backend name is asserted as `"cuda"` before
    calling `matmul_f32`; result is compared to CPU reference to confirm
    CUDA execution produced correct output.
+
+`tests/test_cuda_norm.c` validates the CUDA RMSNorm prototype:
+
+1. **Tiny RMSNorm** — small deterministic input compared to CPU RMSNorm.
+2. **Larger deterministic RMSNorm** — 32-element generated input and weights,
+   compared to the CPU f32 reference within 1e-3 tolerance.
+3. **Shape handling** — NULL arguments, zero count, and nonpositive epsilon
+   fail cleanly on both CPU reference and CUDA backend.
+4. **CUDA unavailable** — `att1_backend_cuda_create` returns
+   `ATT1_ERR_UNSUPPORTED` when CUDA is not compiled in or no GPU is present.
+5. **No silent fallback** — Backend name is asserted as `"cuda"` before
+   calling `rmsnorm_f32`; result is compared to CPU reference.
 
 ## CLI
 

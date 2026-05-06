@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 15: CUDA RMSNorm prototype.
+Milestone 16: CUDA softmax prototype.
 
 ## Hard Rules
 
@@ -39,32 +39,39 @@ Milestone 15: CUDA RMSNorm prototype.
 - Milestone 12: CUDA backend skeleton — opt-in CUDA build path, lifecycle hooks, copy helpers, and stub operator vtable.
 - Milestone 13: CUDA validation plan — `docs/CUDA_VALIDATION_PLAN.md` and environment-aware bench smoke test.
 - Milestone 14: CUDA f32 matmul prototype — `cublasSgemm` wired into `cuda_backend_matmul_f32`; five-case `test_cuda_matmul` validation suite.
+- Milestone 15: CUDA RMSNorm prototype — `cuda_backend_rmsnorm_f32` implemented with cuBLAS primitives and validated on both CPU-only and CUDA-capable test paths.
 
 ## Active Task
 
-Milestone 14 CUDA f32 matmul prototype is complete and validated on both
-non-CUDA and CUDA-capable machines.
+Milestone 15 CUDA RMSNorm prototype is complete and validated on both the
+default CPU-only build and the CUDA-enabled build.
 
-Milestone 14 scope:
-- `src/backend_cuda.c`: `cuda_backend_matmul_f32` calls `cublasSgemm` using the
-  column-major row-major trick; allocates/frees temporary device memory per call.
-- `Makefile`: `CUDA=1` now links `-lcublas` in addition to `-lcudart`.
-- `tests/test_cuda_matmul.c`: five-case suite (tiny known, larger deterministic,
-  shape handling, CUDA unavailable, no silent fallback).
-- `tests/test_backend.c`: updated `check_cuda_backend_skeleton` to verify
-  1×1×1 matmul succeeds and produces the correct result.
-- `docs/cuda_backend.md`: updated kernel-status and tests sections.
+Milestone 15 scope:
+- `src/backend_cuda.c`: `cuda_backend_rmsnorm_f32` uses cuBLAS primitives only
+  (`cublasSdot`, `cublasSdgmm`, `cublasSscal`) so the project keeps the current
+  `cc` + cuBLAS build path and does not require `nvcc`.
+- `src/backend_cuda.c`: adds a private cuBLAS-backed vector-multiply helper used
+  by RMSNorm.
+- `tests/test_backend.c`: updated CUDA backend coverage to verify `rmsnorm_f32`
+  succeeds and matches the CPU reference within CUDA tolerance.
+- `tests/test_cuda_norm.c`: added dedicated five-case CUDA RMSNorm validation
+  (tiny deterministic, larger deterministic, shape handling, unavailable path,
+  and no silent fallback).
+- `docs/cuda_backend.md`: updated kernel-status and CUDA test coverage.
 
-Milestone 14 validation status:
-- `make clean && make && make test` passes on the default CPU-only build.
-- `make clean && make CUDA=1 && make test CUDA=1` passes on a CUDA-capable machine.
+Milestone 15 validation status:
+- `make clean && make && make test` passes locally on the default CPU-only build
+  (27/27 tests pass, including `cuda_norm`).
+- `make clean && make CUDA=1 && make test CUDA=1` passes on a CUDA-capable
+  machine.
 
 ## Next Prompt for Codex
 
-Run Milestone 15 only.
+Run Milestone 16 only.
 
 Goal:
-Add CUDA RMSNorm kernel — single-pass reduction, per-element scale.
+Add CUDA softmax kernel — numerically stable float32 normalization using the
+existing backend API and CPU f32 as the correctness reference.
 
 ## Known Risks
 
