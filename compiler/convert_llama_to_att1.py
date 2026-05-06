@@ -1,16 +1,32 @@
 #!/usr/bin/env python3
 """
-ATT-1 LLaMA converter skeleton (Milestone 31).
+ATT-1 LLaMA converter (Milestone 32 — deterministic stub emitter).
 
-Validates a LLaMA-style model directory layout, resolves architecture fields
-to the ATT-1 config, and prints the planned conversion without loading weights.
+Validates a LLaMA-style config, resolves architecture fields to the ATT-1
+config schema, and emits a deterministic synthetic `.att1` model artifact
+compatible with the C model loader, att1-inspect, and att1-bench.
+
+No safetensors or real weight loading is performed; all tensor values are
+deterministic synthetic floats derived from the validated config.
 
 Usage:
-    python3 compiler/convert_llama_to_att1.py --model-dir PATH [--output PATH] [--rope-theta FLOAT]
+    # dry run — validate and print plan only
+    python3 compiler/convert_llama_to_att1.py --model-dir PATH
+
+    # emit deterministic stub .att1 artifact
+    python3 compiler/convert_llama_to_att1.py --model-dir PATH --output OUT.att1
+
+    # short-form aliases
+    python3 compiler/convert_llama_to_att1.py --config PATH/config.json --out OUT.att1
+
+    # manual validation sequence after emission
+    ./build/att1-inspect OUT.att1
+    ./build/att1-bench --model OUT.att1 --prompt hello --tokens 4 \\
+        --mode single --backend cpu-f32
 
 Exit codes:
-    0  plan printed (stub only — no weights converted yet)
-    1  config missing or invalid
+    0  success
+    1  config missing, invalid, or failed validation
     2  architecture not supported
 """
 
@@ -18,7 +34,19 @@ import argparse
 import json
 import math
 import os
+import struct
 import sys
+
+# ---------------------------------------------------------------------------
+# .att1 binary format constants (must match C header att1_model.h)
+# ---------------------------------------------------------------------------
+
+_MAGIC       = b"ATT1MODL"
+_VERSION     = 1
+_HEADER_SIZE = 80
+_CONFIG_SIZE = 36   # 9 × uint32 LE
+_DESC_SIZE   = 128
+_DTYPE_F32   = 1
 
 # ---------------------------------------------------------------------------
 # Supported architectures
@@ -61,19 +89,6 @@ def _resolve(cfg: dict, aliases: list[str], *, required: bool = True):
     if required:
         return None
     return None
-
-
-def load_config(model_dir: str) -> dict:
-    path = os.path.join(model_dir, "config.json")
-    if not os.path.exists(path):
-        print(f"error: config.json not found in {model_dir!r}", file=sys.stderr)
-        sys.exit(1)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError as exc:
-        print(f"error: config.json is invalid JSON: {exc}", file=sys.stderr)
-        sys.exit(1)
 
 
 def check_arch(cfg: dict) -> str:
@@ -173,43 +188,165 @@ def print_plan(arch: str, att1: dict, output_path: str | None) -> None:
     print(f"  rope_dim      : {att1['rope_dim']}")
     print(f"  rope_theta    : {att1['rope_theta']}")
     print(f"  head_dim      : {att1['d_model'] // att1['n_heads']}")
-    n_tensors = 2 + att1["n_layers"] * 9  # embed + 9/layer + output_norm + output_weight
+    n_tensors = 3 + att1["n_layers"] * 9  # tok_embed + 9/layer + output_norm + output_weight
     print(f"  planned tensors: {n_tensors}")
     if output_path:
         print(f"  output path   : {output_path}")
     else:
         print("  output path   : (not specified — dry run)")
-    print()
-    print("status: STUB ONLY — weight loading and .att1 emission not yet implemented")
-    print("        To complete conversion, provide safetensors/bin weight files.")
 
 
 # ---------------------------------------------------------------------------
-# Tensor name plan (for documentation / future use)
+# .att1 binary emission helpers
 # ---------------------------------------------------------------------------
 
-def tensor_name_plan(att1: dict) -> list[tuple[str, list[int]]]:
-    """Return the ordered list of (att1_name, shape) for the planned model."""
+def _synthetic_values(tensor_index: int, count: int) -> list[float]:
+    """Deterministic per-element floats that are unique per tensor."""
+    base = (tensor_index + 1) * 0.01
+    return [base + (i * 0.001) for i in range(count)]
+
+
+def _make_tensor(name: str, shape: list[int], tensor_index: int) -> dict:
+    count = 1
+    for dim in shape:
+        count *= dim
+    data = b"".join(
+        struct.pack("<f", v) for v in _synthetic_values(tensor_index, count)
+    )
+    return {"name": name, "shape": shape, "data": data}
+
+
+def _descriptor(tensor: dict, offset: int) -> bytes:
+    name_bytes = tensor["name"].encode("ascii")
+    if len(name_bytes) >= 64:
+        raise ValueError(f"tensor name too long: {tensor['name']!r}")
+    name_padded = name_bytes + b"\x00" * (64 - len(name_bytes))
+    shape = list(tensor["shape"]) + [1] * (4 - len(tensor["shape"]))
+    return struct.pack(
+        "<64sIIQQQQQQII",
+        name_padded,
+        _DTYPE_F32,
+        len(tensor["shape"]),
+        shape[0],
+        shape[1],
+        shape[2],
+        shape[3],
+        offset,
+        len(tensor["data"]),
+        0,  # shard_id
+        0,  # flags
+    )
+
+
+def build_att1_bytes(att1: dict) -> bytes:
+    """
+    Build a complete deterministic .att1 binary from a resolved ATT-1 config.
+
+    Tensor names match exactly what the C model_view.c layer_name() and
+    att1_model_view_* functions expect.
+    """
     d  = att1["d_model"]
     v  = att1["vocab_size"]
     ff = att1["d_ff"]
-    plan = [("token_embedding", [v, d])]
+
+    tensors: list[dict] = []
+    index = 0
+
+    tensors.append(_make_tensor("tok_embeddings.weight", [v, d], index))
+    index += 1
+
     for layer in range(att1["n_layers"]):
-        prefix = f"L{layer}"
+        pfx = f"layers.{layer}"
+        tensors.append(_make_tensor(f"{pfx}.attention_norm.weight", [d],    index));     index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wq.weight",   [d, d], index));     index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wk.weight",   [d, d], index));     index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wv.weight",   [d, d], index));     index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wo.weight",   [d, d], index));     index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn_norm.weight",       [d],    index));     index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn.w_gate.weight",     [d, ff], index));    index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn.w_up.weight",       [d, ff], index));    index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn.w_down.weight",     [ff, d], index));    index += 1
+
+    tensors.append(_make_tensor("output_norm.weight", [d],    index)); index += 1
+    tensors.append(_make_tensor("output.weight",      [d, v], index))
+
+    config_offset = _HEADER_SIZE
+    desc_offset   = config_offset + _CONFIG_SIZE
+    data_offset   = desc_offset + len(tensors) * _DESC_SIZE
+
+    desc_blob = bytearray()
+    data_blob = bytearray()
+    byte_offset = 0
+    for tensor in tensors:
+        desc_blob += _descriptor(tensor, byte_offset)
+        data_blob += tensor["data"]
+        byte_offset += len(tensor["data"])
+
+    header = struct.pack(
+        "<8sIIQQQQQQQQ",
+        _MAGIC,
+        _VERSION,
+        _HEADER_SIZE,
+        config_offset,
+        _CONFIG_SIZE,
+        desc_offset,
+        len(tensors),
+        data_offset,
+        len(data_blob),
+        0,
+        0,
+    )
+    config_blob = struct.pack(
+        "<IIIIIIIII",
+        att1["vocab_size"],
+        att1["n_layers"],
+        att1["n_heads"],
+        att1["d_model"],
+        att1["d_ff"],
+        att1["max_seq_len"],
+        att1["rope_dim"],
+        att1["n_tiles"],
+        att1["shard_count"],
+    )
+    return header + config_blob + bytes(desc_blob) + bytes(data_blob)
+
+
+def emit_att1(att1: dict, output_path: str) -> None:
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    payload = build_att1_bytes(att1)
+    with open(output_path, "wb") as f:
+        f.write(payload)
+    print(f"wrote {len(payload)} bytes → {output_path}")
+
+
+# ---------------------------------------------------------------------------
+# Tensor layout plan (informational)
+# ---------------------------------------------------------------------------
+
+def tensor_name_plan(att1: dict) -> list[tuple[str, list[int]]]:
+    """Ordered list of (att1_name, shape) matching the C runtime expectations."""
+    d  = att1["d_model"]
+    v  = att1["vocab_size"]
+    ff = att1["d_ff"]
+    plan: list[tuple[str, list[int]]] = [("tok_embeddings.weight", [v, d])]
+    for layer in range(att1["n_layers"]):
+        pfx = f"layers.{layer}"
         plan += [
-            (f"{prefix}.attention_norm", [d]),
-            (f"{prefix}.wq",             [d, d]),
-            (f"{prefix}.wk",             [d, d]),
-            (f"{prefix}.wv",             [d, d]),
-            (f"{prefix}.wo",             [d, d]),
-            (f"{prefix}.ffn_norm",       [d]),
-            (f"{prefix}.w_gate",         [ff, d]),
-            (f"{prefix}.w_up",           [ff, d]),
-            (f"{prefix}.w_down",         [d, ff]),
+            (f"{pfx}.attention_norm.weight", [d]),
+            (f"{pfx}.attention.wq.weight",   [d, d]),
+            (f"{pfx}.attention.wk.weight",   [d, d]),
+            (f"{pfx}.attention.wv.weight",   [d, d]),
+            (f"{pfx}.attention.wo.weight",   [d, d]),
+            (f"{pfx}.ffn_norm.weight",       [d]),
+            (f"{pfx}.ffn.w_gate.weight",     [d, ff]),
+            (f"{pfx}.ffn.w_up.weight",       [d, ff]),
+            (f"{pfx}.ffn.w_down.weight",     [ff, d]),
         ]
     plan += [
-        ("output_norm",   [d]),
-        ("output_weight", [v, d]),
+        ("output_norm.weight", [d]),
+        ("output.weight",      [d, v]),
     ]
     return plan
 
@@ -220,23 +357,54 @@ def tensor_name_plan(att1: dict) -> list[tuple[str, list[int]]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert a LLaMA-style model directory to ATT-1 format (skeleton)."
+        description="Convert a LLaMA-style model directory to ATT-1 format."
     )
-    parser.add_argument("--model-dir", required=True,
-                        help="Path to model directory containing config.json")
-    parser.add_argument("--output", default=None,
-                        help="Output .att1 file path (optional; dry run if omitted)")
+    # model source — either a directory (containing config.json) or a file
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--model-dir", metavar="DIR",
+                     help="Model directory containing config.json")
+    src.add_argument("--config", metavar="FILE",
+                     help="Path to config.json directly")
+
+    # output — either --output or --out
+    out = parser.add_mutually_exclusive_group()
+    out.add_argument("--output", metavar="PATH",
+                     help="Output .att1 file path (emit artifact)")
+    out.add_argument("--out", metavar="PATH",
+                     help="Alias for --output")
+
     parser.add_argument("--rope-theta", type=float, default=None,
-                        help="Override rope_theta (default: read from config or 10000.0)")
+                        help="Override rope_theta (default: from config or 10000.0)")
     parser.add_argument("--show-tensors", action="store_true",
                         help="Print planned tensor names and shapes")
     args = parser.parse_args()
 
-    if not os.path.isdir(args.model_dir):
-        print(f"error: model directory not found: {args.model_dir!r}", file=sys.stderr)
+    output_path = args.output or args.out
+
+    # --- resolve config.json path ---
+    if args.config:
+        config_file = args.config
+        if not os.path.isfile(config_file):
+            print(f"error: config file not found: {config_file!r}", file=sys.stderr)
+            sys.exit(1)
+        model_dir = os.path.dirname(os.path.abspath(config_file))
+    else:
+        if not os.path.isdir(args.model_dir):
+            print(f"error: model directory not found: {args.model_dir!r}", file=sys.stderr)
+            sys.exit(1)
+        model_dir = args.model_dir
+        config_file = os.path.join(model_dir, "config.json")
+        if not os.path.exists(config_file):
+            print(f"error: config.json not found in {model_dir!r}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"error: config.json is invalid JSON: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    cfg  = load_config(args.model_dir)
     arch = check_arch(cfg)
     att1 = resolve_att1_config(cfg, args.rope_theta)
 
@@ -247,14 +415,22 @@ def main() -> None:
             print(f"  {e}", file=sys.stderr)
         sys.exit(1)
 
-    print_plan(arch, att1, args.output)
+    print_plan(arch, att1, output_path)
 
     if args.show_tensors:
         print()
         print("planned tensor layout:")
         for name, shape in tensor_name_plan(att1):
-            shape_str = " × ".join(str(s) for s in shape)
-            print(f"  {name:<40} {shape_str}")
+            shape_str = " \u00d7 ".join(str(s) for s in shape)
+            print(f"  {name:<50} {shape_str}")
+
+    if output_path:
+        print()
+        emit_att1(att1, output_path)
+        print("note: tensor data is deterministic synthetic values — not real weights")
+    else:
+        print()
+        print("note: dry run — pass --output PATH to emit a .att1 artifact")
 
 
 if __name__ == "__main__":

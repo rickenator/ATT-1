@@ -38,23 +38,23 @@ initial target.
 ## Tensor naming convention
 
 The `.att1` tensor `name[64]` field encodes each tensor with a flat ASCII key.
-Layer-scoped tensors prefix with `L%u.` where `%u` is the zero-based layer
-index.
+Layer-scoped tensors use the `layers.%u.` prefix where `%u` is the zero-based
+layer index, matching the C `layer_name()` helper in `src/model_view.c`.
 
 ```text
-token_embedding          shape [vocab_size, d_model]        f32
-L0.attention_norm        shape [d_model]                    f32
-L0.wq                    shape [d_model, d_model]           f32
-L0.wk                    shape [d_model, d_model]           f32
-L0.wv                    shape [d_model, d_model]           f32
-L0.wo                    shape [d_model, d_model]           f32
-L0.ffn_norm              shape [d_model]                    f32
-L0.w_gate                shape [d_ff, d_model]              f32
-L0.w_up                  shape [d_ff, d_model]              f32
-L0.w_down                shape [d_model, d_ff]              f32
-...                      (repeat for each layer)
-output_norm              shape [d_model]                    f32
-output_weight            shape [vocab_size, d_model]        f32
+tok_embeddings.weight               shape [vocab_size, d_model]    f32
+layers.0.attention_norm.weight      shape [d_model]                f32
+layers.0.attention.wq.weight        shape [d_model, d_model]       f32
+layers.0.attention.wk.weight        shape [d_model, d_model]       f32
+layers.0.attention.wv.weight        shape [d_model, d_model]       f32
+layers.0.attention.wo.weight        shape [d_model, d_model]       f32
+layers.0.ffn_norm.weight            shape [d_model]                f32
+layers.0.ffn.w_gate.weight          shape [d_model, d_ff]          f32
+layers.0.ffn.w_up.weight            shape [d_model, d_ff]          f32
+layers.0.ffn.w_down.weight          shape [d_ff, d_model]          f32
+...                                 (repeat for each layer)
+output_norm.weight                  shape [d_model]                f32
+output.weight                       shape [d_model, vocab_size]    f32
 ```
 
 All names must be null-terminated within the 64-byte field.  Names that
@@ -171,14 +171,12 @@ No file format changes are required to support cluster mode.
 
 ## Validation ladder
 
-| Stage | Model | Purpose |
-|-------|-------|---------|
-| 1 | Converted tiny synthetic model | Converter round-trip; loader acceptance |
-| 2 | Tiny trained toy model (e.g. char-level) | End-to-end logit sanity |
-| 3 | Small public LLaMA-like model | Real tokenizer output; greedy token spot-check |
-| 4 | Larger architecture | Simulation only; timing and memory counters |
-
-Stage 1 is the next implementation milestone after this plan is accepted.
+| Stage | Model | Purpose | Status |
+|-------|-------|---------|--------|
+| 1 | Converted tiny synthetic model | Converter round-trip; loader acceptance | **complete (M32)** |
+| 2 | Tiny trained toy model (e.g. char-level) | End-to-end logit sanity | pending |
+| 3 | Small public LLaMA-like model | Real tokenizer output; greedy token spot-check | pending |
+| 4 | Larger architecture | Simulation only; timing and memory counters | pending |
 
 ---
 
@@ -193,3 +191,43 @@ Stage 1 is the next implementation milestone after this plan is accepted.
 | Tokenizer mismatch | Tokenizer is out of scope; converter emits raw byte IDs only for initial tests |
 | Model format drift | Version field enforced; loader rejects unknown versions |
 | safetensors C dependency | Converter is Python-only under `compiler/`; runtime never links it |
+
+---
+
+## Converter status (Milestone 32)
+
+`compiler/convert_llama_to_att1.py` supports validated config parsing and
+deterministic stub emission.  Real safetensors weight loading is not yet
+implemented.
+
+**Supported architectures:** `llama`, `mistral`
+
+**Fixture:** `compiler/fixtures/tiny_llama/config.json`
+
+### Manual validation sequence
+
+```bash
+# 1. Emit the deterministic stub model
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama/config.json \
+    --out models/converted_stub/model.att1
+
+# 2. Inspect the emitted artifact
+./build/att1-inspect models/converted_stub/model.att1
+
+# 3. Run CPU f32 single-tile inference on the stub
+./build/att1-bench \
+    --model models/converted_stub/model.att1 \
+    --prompt hello --tokens 4 \
+    --mode single --backend cpu-f32
+```
+
+All three commands must exit 0.  The bench output should report
+`generated_tokens=4` and nonzero `tokens_decoded`.
+
+### Not yet implemented
+
+- Safetensors or `.bin` shard weight loading
+- Tokenizer vocabulary import
+- Real weight transposition and shape alignment
+- q8 pre-quantized `.att1` file emission (dtype `2`)

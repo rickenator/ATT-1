@@ -2,11 +2,11 @@
 
 ## Current Objective
 
-Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inference, using binary `.att1` model artifacts, CPU reference execution, CUDA live-model validation later, and ATT-1 custom PCIe silicon as the future Phase 3 hardware target.
+Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inference, using binary `.att1` model artifacts, CPU reference execution, CUDA live-model validation later, and ATT-1 custom PCIe silicon as the future Phase 3 hardware target. 
 
 ## Current Milestone
 
-Milestone 31: ATT-1 LLaMA converter skeleton.
+Milestone 32: Deterministic converter stub output.
 
 ## Hard Rules
 
@@ -48,15 +48,19 @@ Milestone 31: ATT-1 LLaMA converter skeleton.
 - Milestone 28: CUDA q8 cluster inference enabled — removed cpu-only rejection from `run_cluster()`; validated cuda-q8 cluster path matches cpu-q8 last token; new `test_cuda_q8_cluster` and `test_q8_bench` coverage.
 - Milestone 29: Backend matrix regression harness — `tests/test_backend_matrix.c` exercises all 8 (backend × mode) combos against the dummy `.att1` model; reports pass/fail, timing, token, and counter info.
 - Milestone 30: Real model conversion plan — `docs/real_model_conversion.md` documents tensor naming, dtypes, matrix conventions, q8 rules, and validation ladder; no code changes.
+- Milestone 31: ATT-1 converter skeleton — `compiler/convert_llama_to_att1.py` validates a LLaMA-style `config.json`, resolves field aliases, derives `rope_dim`, and prints a planned ATT-1 config; exits cleanly on unsupported arch or missing config; `compiler/fixtures/tiny_llama/` fixture added.
 
 ## Active Task
 
-Milestone 31: ATT-1 LLaMA converter skeleton.
-- `compiler/convert_llama_to_att1.py`: validates model dir layout, resolves architecture fields (both camelCase HF aliases and short-form), derives `rope_dim`, prints planned ATT-1 config, reports `STUB ONLY` — no weight loading yet.
-- `compiler/fixtures/tiny_llama/config.json`: minimal 2-layer, 2-head, d=32 LLaMA fixture for smoke testing.
-- `compiler/fixtures/tiny_llama_config.json`: named reference copy of the fixture.
-- Converter exits cleanly on missing config (exit 1), unknown architecture (exit 2), invalid dir (exit 1), or failed config validation (exit 1).
-- `make test` remains Python-free; no C test files changed.
+Milestone 32: Deterministic converter stub output.
+- `compiler/convert_llama_to_att1.py` extended with binary `.att1` emitter using correct C-runtime tensor names and shapes.
+- Tensor names now match `src/model_view.c` exactly: `tok_embeddings.weight`, `layers.{l}.attention_norm.weight`, `layers.{l}.attention.wq.weight`, etc.
+- `--out PATH` / `--config FILE` CLI aliases added alongside existing `--model-dir` / `--output`.
+- `compiler/fixtures/tiny_llama/config.json` (vocab_size=256) used as fixture.
+- `models/converted_stub/model.att1` emitted, validated with `att1-inspect` and `att1-bench --mode single --backend cpu-f32`.
+- Output is byte-for-byte deterministic; SHA256 confirmed stable across runs.
+- `docs/real_model_conversion.md` tensor naming table corrected; Stage 1 validation ladder marked complete.
+- No C source changes; `make test` remains Python-free.
 
 ## Next Prompt for Codex
 
