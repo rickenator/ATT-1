@@ -5,6 +5,7 @@
 #include "att1_fabric.h"
 #include "att1_kv.h"
 #include "att1_log.h"
+#include "att1_math.h"
 #include "att1_model.h"
 #include "att1_quant.h"
 #include "att1_runtime.h"
