@@ -10,7 +10,7 @@ LDFLAGS :=
 LDLIBS := -lm
 
 SIM_BIN := $(BUILD_DIR)/att1-sim
-TEST_NAMES := smoke tensor matmul rmsnorm softmax rope ffn
+TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \

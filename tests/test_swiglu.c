@@ -12,18 +12,8 @@ int main(void)
 {
     const float gate[3] = {-1.0f, 0.0f, 2.0f};
     const float value[3] = {2.0f, 3.0f, -4.0f};
-    const float expected[3] = {
-        (-1.0f / (1.0f + expf(1.0f))) * 2.0f,
-        0.0f,
-        (2.0f / (1.0f + expf(-2.0f))) * -4.0f
-    };
     float actual[3] = {0.0f, 0.0f, 0.0f};
     size_t i = 0u;
-
-    if (!near_f32(att1_silu_f32(0.0f), 0.0f)) {
-        fputs("silu value check failed\n", stderr);
-        return 1;
-    }
 
     if (att1_swiglu_f32(actual, gate, value, 3u) != 0) {
         fputs("swiglu call failed\n", stderr);
@@ -31,12 +21,14 @@ int main(void)
     }
 
     for (i = 0u; i < 3u; i++) {
-        if (!near_f32(actual[i], expected[i])) {
+        const float expected = (gate[i] / (1.0f + expf(-gate[i]))) * value[i];
+
+        if (!near_f32(actual[i], expected)) {
             fputs("swiglu value check failed\n", stderr);
             return 1;
         }
     }
 
-    puts("ffn test passed");
+    puts("swiglu test passed");
     return 0;
 }
