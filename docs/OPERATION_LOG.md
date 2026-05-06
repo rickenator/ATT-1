@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 28: CUDA q8 cluster inference integration.
+Milestone 29: Backend matrix regression harness.
 
 ## Hard Rules
 
@@ -48,14 +48,11 @@ Milestone 28: CUDA q8 cluster inference integration.
 
 ## Active Task
 
-Milestone 28: CUDA q8 cluster inference integration.
-- Goal: Allow cluster inference to run with `--backend cuda-q8` using CPU q8 cluster and CPU f32 cluster as correctness references.
-- The cuda-q8 backend dispatches all block matmuls through cuBLAS f32 (same operator as the cuda backend) since cluster inference uses float32 weights via `att1_transformer_block_forward_backend()`.
-- Keep activations/KV/residual paths float32.
-- Validate cuda-q8 cluster benchmark output and counters (`backend=cuda-q8`, fabric and byte counters nonzero).
-- Validate CPU q8 cluster vs CUDA q8 cluster token sequences match exactly on dummy model.
-- Preserve no-silent-fallback guarantee: backend ops name must be `cuda-q8`.
-- Non-CUDA builds still reject `--backend cuda-q8` cluster mode with an unsupported message.
+Milestone 29: Backend matrix regression harness.
+- Goal: Single test target that exercises all 8 backend×mode combinations (cpu-f32/cpu-q8/cuda/cuda-q8 × single/cluster) and reports pass/fail, timing, generated token, and trace counters.
+- CUDA entries skip gracefully when CUDA is unavailable.
+- Cross-backend consistency: all passing entries in the same mode must produce the same last_token on the dummy model.
+- No inference behavior changes; no new backends.
 
 ## Next Prompt for Codex
 
