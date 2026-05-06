@@ -212,15 +212,16 @@ static int run_cluster(const att1_model *model,
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
 
-    if ((backend_name != NULL) && (strcmp(backend_name, "cuda") == 0)) {
-        fprintf(stderr,
-                "cuda backend not yet supported for cluster mode\n");
-        return 1;
+    if (backend_name != NULL) {
+        if (create_backend(backend_name, &backend) != ATT1_OK) {
+            fprintf(stderr, "backend unsupported or unavailable: %s\n", backend_name);
+            return 1;
+        }
     }
 
     tokens = calloc(capacity, sizeof(*tokens));
     if (tokens == NULL) {
-        return 1;
+        goto cleanup;
     }
 
     config.tile_count = tile_count;
@@ -232,13 +233,8 @@ static int run_cluster(const att1_model *model,
         goto cleanup;
     }
 
-    if (backend_name != NULL) {
-        if (create_backend(backend_name, &backend) != ATT1_OK) {
-            fprintf(stderr, "backend unsupported or unavailable: %s\n", backend_name);
-            goto cleanup;
-        }
+    if (backend != NULL) {
         if (att1_cluster_infer_set_backend(infer, backend) != ATT1_OK) {
-            att1_backend_destroy(backend);
             goto cleanup;
         }
         backend = NULL;

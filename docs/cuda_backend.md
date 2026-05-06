@@ -332,8 +332,9 @@ timing, generated token count, and backend name.
 1. **Single-tile mode exits successfully** — `att1-bench --backend cuda --mode single`
    exits with code 0, reports `backend=cuda`, `mode=single`, and trace counters
    (`tokens_decoded`, `token_time_us_total`, etc.).
-2. **Cluster mode fails clearly** — `att1-bench --backend cuda --mode cluster`
-   exits non-zero with no silent CPU fallback (cluster CUDA is not implemented).
+2. **Cluster mode availability behavior** — `att1-bench --backend cuda --mode cluster`
+   exits with code 0 and reports `backend=cuda` only when CUDA is compiled in
+   and available at runtime; non-CUDA builds/devices report unsupported cleanly.
 3. **Deterministic token generation** — CPU f32 and CUDA benchmarks produce
    identical token sequences for fixed dummy model and prompt, confirming
    inference correctness.
@@ -368,8 +369,30 @@ layer[0].executions=<n> time_us=<us> kv_appends=<m>
 ...
 ```
 
-CUDA cluster mode remains unsupported for this milestone. A future milestone
-will add cluster fabric integration with CUDA backends.
+### Milestone 22: cluster inference integration
+
+Cluster inference can now use the CUDA backend for per-tile/layer execution
+through the existing backend vtable. The fabric simulation, packet accounting,
+activation/logit byte counters, and trace output remain on the same host-side
+cluster path as CPU cluster inference. CPU cluster remains the correctness
+reference.
+
+`tests/test_cuda_cluster.c` validates CUDA cluster inference:
+
+1. **Next-token equivalence** — CPU cluster and CUDA cluster produce the same
+   next token for the dummy `.att1` model.
+2. **Generated sequence equivalence** — CPU cluster and CUDA cluster produce the
+   same 2-token and 4-token generated sequences for a fixed prompt.
+3. **Trace/counter preservation** — CUDA cluster fabric packet counts remain
+   nonzero, and activation/logit byte counters match CPU cluster.
+4. **No silent CPU fallback** — the selected backend is verified as `"cuda"`
+   before it is installed into the cluster inference context.
+5. **Unavailable CUDA clarity** — non-CUDA builds/devices still report
+   `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_create` and skip CUDA cluster
+   execution cleanly.
+
+CUDA q8 remains unsupported; CUDA cluster integration is limited to the f32
+backend operations already exposed by the CUDA backend.
 
 ## CLI
 
@@ -379,11 +402,13 @@ will add cluster fabric integration with CUDA backends.
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cpu-f32
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cpu-q8
 ./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode single --backend cuda
+./build/att1-bench --model models/dummy/model.att1 --prompt hello --tokens 8 --mode cluster --tiles 2 --backend cuda
 ```
 
 `cpu-f32` remains the default. `cpu-q8` can run the current f32 inference path
 because it provides f32 ops plus q8 matmul support. `cuda` reports unsupported
-or unavailable unless a future milestone adds CUDA kernels.
+or unavailable when CUDA is not compiled in or no CUDA runtime device is
+available.
 
 `att1-q8-bench` accepts `--backend cpu-q8|cuda`. The CUDA option is a skeleton
 path and is not expected to run q8 matmul until CUDA kernels are implemented.

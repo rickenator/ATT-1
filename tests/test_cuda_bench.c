@@ -86,6 +86,36 @@ static int parse_u32_line(const char *text, const char *key, uint32_t *out)
     return 0;
 }
 
+static int parse_u64_line(const char *text, const char *key, uint64_t *out)
+{
+    const char *line = NULL;
+    char *end = NULL;
+    unsigned long long value = 0u;
+
+    if ((text == NULL) || (key == NULL) || (out == NULL)) {
+        return -1;
+    }
+
+    line = strstr(text, key);
+    if (line == NULL) {
+        return -1;
+    }
+
+    line += strlen(key);
+    if (*line != '=') {
+        return -1;
+    }
+    line++;
+
+    value = strtoull(line, &end, 10);
+    if (end == line) {
+        return -1;
+    }
+
+    *out = (uint64_t)value;
+    return 0;
+}
+
 /* Test 1: att1-bench --backend cuda --mode single exits zero (CUDA-only) */
 static int test_cuda_bench_single_mode(void)
 {
@@ -139,12 +169,14 @@ static int test_cuda_bench_single_mode(void)
     return 0;
 }
 
-/* Test 2: att1-bench --backend cuda --mode cluster fails clearly */
-static int test_cuda_bench_cluster_fails(void)
+/* Test 2: att1-bench --backend cuda --mode cluster follows availability */
+static int test_cuda_bench_cluster_mode(void)
 {
     char output[4096];
     int rc = 0;
     int exit_code = 0;
+    uint64_t fabric_packets = 0u;
+    uint64_t activation_bytes = 0u;
 
     if (run_command_with_exit(
             "./build/att1-bench --model models/dummy/model.att1 "
@@ -169,30 +201,49 @@ static int test_cuda_bench_cluster_fails(void)
         return -1;
     }
 
-    /* Cluster CUDA is not implemented; expect non-zero exit */
-    if (rc == 0) {
-        fputs("cuda cluster mode unexpectedly succeeded\n", stderr);
-        return -1;
-    }
-
     if (read_file("build/bench_cuda_cluster.txt", output, sizeof(output)) != 0) {
         fputs("failed to read cuda cluster bench output\n", stderr);
         return -1;
     }
 
-    if (strstr(output, "cuda backend not yet supported for cluster mode") ==
-        NULL) {
-        fputs("cuda cluster mode missing unsupported message\n", stderr);
-        return -1;
+    if (att1_backend_cuda_available()) {
+        if (rc != 0) {
+            fputs("cuda cluster mode exited non-zero\n", stderr);
+            return -1;
+        }
+        if ((strstr(output, "mode=cluster") == NULL) ||
+            (strstr(output, "backend=cuda") == NULL) ||
+            (strstr(output, "tokens_decoded=") == NULL) ||
+            (parse_u64_line(output,
+                            "fabric_packets_sent",
+                            &fabric_packets) != 0) ||
+            (parse_u64_line(output,
+                            "activation_bytes_sent",
+                            &activation_bytes) != 0) ||
+            (fabric_packets == 0u) ||
+            (activation_bytes == 0u)) {
+            fputs("cuda cluster bench output missing required counters\n",
+                  stderr);
+            return -1;
+        }
+    } else {
+        if (rc == 0) {
+            fputs("cuda cluster mode unexpectedly succeeded\n", stderr);
+            return -1;
+        }
+        if (strstr(output, "backend unsupported or unavailable: cuda") ==
+            NULL) {
+            fputs("cuda cluster mode missing unsupported message\n", stderr);
+            return -1;
+        }
     }
 
-    /* Should have clear error, not silent fallback to cpu-f32 */
     if (strstr(output, "backend=cpu-f32") != NULL) {
         fputs("cuda cluster mode silently fell back to cpu-f32\n", stderr);
         return -1;
     }
 
-    fputs("PASS: cuda cluster mode fails clearly\n", stderr);
+    fputs("PASS: cuda cluster mode availability behavior\n", stderr);
     return 0;
 }
 
@@ -330,7 +381,7 @@ int main(void)
     if (test_cuda_bench_single_mode() != 0) {
         failures++;
     }
-    if (test_cuda_bench_cluster_fails() != 0) {
+    if (test_cuda_bench_cluster_mode() != 0) {
         failures++;
     }
     if (test_cuda_bench_deterministic_output() != 0) {

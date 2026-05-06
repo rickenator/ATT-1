@@ -48,15 +48,14 @@ Milestone 21: CUDA benchmark and trace integration.
 
 ## Active Task
 
-Milestone 21: CUDA benchmark and trace integration.
-- Goal: Expose CUDA single-tile inference through existing benchmark/trace tools.
-- Milestone 21 complete once CUDA single-mode benchmark/trace works and CUDA cluster mode exits cleanly unsupported.
-- `att1-bench --backend cuda --mode single` reports backend=cuda and trace counters.
-- CPU f32 and CUDA generate identical deterministic tokens for dummy model.
-- `att1-bench --backend cuda --mode cluster` fails clearly (cluster CUDA not implemented).
-- Non-CUDA build reports CUDA unsupported cleanly.
-- Test suite: `test_cuda_bench.c` with 5 required checks.
-- CUDA cluster inference is deferred to Milestone 22.
+Milestone 22: CUDA cluster inference integration.
+- Goal: Allow cluster inference to use the CUDA backend for per-tile/layer execution where supported.
+- CPU cluster remains the correctness reference.
+- `att1-bench --backend cuda --mode cluster` exits zero only when CUDA is compiled in and available at runtime.
+- Non-CUDA builds/devices report CUDA cluster unsupported cleanly.
+- Fabric packet accounting and activation/logit byte trace counters remain intact.
+- CUDA q8 remains unsupported.
+- Test suite: `test_cuda_cluster.c` plus updated CUDA benchmark checks.
 
 ## Next Prompt for Codex
 
