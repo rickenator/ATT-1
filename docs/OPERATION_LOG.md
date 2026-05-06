@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 20: (to be determined by user request).
+Milestone 21: (to be determined by user request).
 
 ## Hard Rules
 
@@ -44,30 +44,31 @@ Milestone 20: (to be determined by user request).
 - Milestone 17: CUDA RoPE prototype — `cuda_backend_rope_f32` implemented with per-pair `cublasSrot` rotation and validated against CPU f32 RoPE reference.
 - Milestone 18: CUDA causal attention — `cuda_backend_softmax_f32` implemented with numerically stable CPU softmax; attention forward pass uses all component CUDA operators (matmul, rope, softmax); comprehensive 7-case test suite validates causal masking, numerical stability, and multi-head determinism.
 - Milestone 19: CUDA transformer block prototype — single-block backend path validated on CUDA backend using composed primitives (RMSNorm, causal attention, matmul, SwiGLU) against CPU f32 reference.
+- Milestone 20: CUDA single-tile inference integration — existing single-tile decode path now validated with CUDA backend selection and CPU-vs-CUDA equivalence checks on dummy `.att1` model.
 
 ## Active Task
 
-Milestone 19 CUDA transformer block prototype is complete and validated.
+Milestone 20 CUDA single-tile inference integration is complete and validated.
 
-Milestone 19 scope:
-- `tests/test_cuda_transformer_block.c`: added required CUDA block tests for
-  residual behavior with zero weights, CPU-vs-CUDA output comparison,
-  KV position/cache update parity, deterministic multi-head medium case,
-  and no silent CPU fallback checks.
-- `Makefile`: test suite now includes `cuda_transformer_block`.
-- `docs/cuda_backend.md`: added Milestone 19 block execution notes and
-  test coverage details.
-- `docs/OPERATION_LOG.md`: updated to mark Milestone 19 complete.
+Milestone 20 scope:
+- `tests/test_cuda_infer.c`: added single-tile inference CUDA tests covering
+  next-token equivalence, 2/4-token sequence equivalence, prompt prefill
+  position parity, KV cache update parity, explicit CUDA backend path checks,
+  and unsupported-path behavior.
+- `Makefile`: test suite now includes `cuda_infer`.
+- `docs/cuda_backend.md`: added Milestone 20 integration notes for single-tile
+  decode and test coverage.
+- `docs/OPERATION_LOG.md`: updated to mark Milestone 20 complete.
 
-Milestone 19 validation status:
-- `make clean && make && make test` passes on default CPU-only build
-  with CUDA tests skipping cleanly when CUDA is unavailable.
+Milestone 20 validation status:
+- `make clean && make && make test` passes on default CPU-only build, with CUDA
+  tests reporting unsupported/skip cleanly when CUDA is unavailable.
 - `make clean && make CUDA=1 && make test CUDA=1` passes on CUDA-capable
-  machine with block output matching CPU f32 reference within tolerance.
+  machine with CPU-vs-CUDA single-tile inference parity checks passing.
 
 ## Next Prompt for Codex
 
-Awaiting user request for Milestone 20 or later.
+Awaiting user request for Milestone 21 or later.
 
 ## Known Risks
 

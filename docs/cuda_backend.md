@@ -185,6 +185,30 @@ already validated CUDA-backed primitives for batch size 1 decode:
 This milestone intentionally keeps the patch narrow and does not attempt full
 CUDA model inference. CUDA q8 remains out of scope.
 
+### Milestone 20: single-tile inference integration (CUDA backend)
+
+Single-tile decode now runs through the CUDA backend when selected by caller
+(`att1_infer_set_backend` with a CUDA backend handle, or `att1-bench`
+`--mode single --backend cuda`).
+
+Integration details:
+
+1. The existing single-tile inference loop in `att1_infer_decode_token`
+   already routes per-layer execution through
+   `att1_transformer_block_forward_backend`.
+2. With a CUDA backend selected, each block executes via the Milestone 19
+   composed CUDA primitive path.
+3. Final RMSNorm and logits projection in `att1_infer_decode_token` also use
+   backend ops, so CUDA selection applies consistently for the full single-tile
+   decode step.
+
+Behavioral scope:
+
+- Byte tokenizer and greedy sampler behavior are unchanged.
+- CUDA unsupported/unavailable remains explicit through
+  `att1_backend_cuda_create` returning `ATT1_ERR_UNSUPPORTED`.
+- CUDA cluster inference is intentionally out of scope for this milestone.
+
 ### Not yet implemented
 
 `matmul_q8xf32` still returns failure. Full transformer inference via CUDA is
@@ -279,6 +303,23 @@ execution against CPU f32 reference:
    outputs across sequential positions within 1e-3 tolerance.
 5. **No silent fallback** — asserts backend name is `"cuda"` and block forward
    succeeds only through CUDA-selected backend path.
+
+`tests/test_cuda_infer.c` validates CUDA single-tile inference integration
+against CPU f32 reference on `models/dummy/model.att1`:
+
+1. **Next-token equivalence** — CPU and CUDA produce identical next token for
+   the same byte input.
+2. **Generated sequence equivalence (2 and 4 tokens)** — CPU and CUDA produce
+   identical greedy-generated token sequences.
+3. **Prompt prefill position parity** — decode position progression matches CPU
+   during prompt prefill.
+4. **KV cache update parity** — per-layer KV lengths match CPU after each
+   prefill decode step.
+5. **No silent fallback** — CUDA backend name is asserted and inference decode
+   succeeds via explicit CUDA backend selection.
+6. **Unsupported path clarity** — non-CUDA builds/devices must report
+   `ATT1_ERR_UNSUPPORTED` from `att1_backend_cuda_create` and skip CUDA infer
+   execution cleanly.
 
 ## CLI
 
