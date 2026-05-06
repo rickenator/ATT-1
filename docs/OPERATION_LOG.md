@@ -46,6 +46,12 @@ Milestone 12 hardening status (local non-CUDA environment):
 - CLI CUDA selection now fails explicitly with unsupported/status messaging when CUDA is unavailable.
 - `CUDA=1` build/test path is pending validation on real CUDA hardware.
 
+Milestone 12 validation status:
+- Default CPU build/test passes on APEXX and RTX 3090.
+- CUDA-unavailable behavior is validated on APEXX.
+- CUDA-capable behavior is validated on RTX 3090.
+- CUDA backend skeleton remains plumbing only; no CUDA operator kernels or full inference yet.
+
 ## Next Prompt for Codex
 
 After Milestone 13 plan completion and successful CUDA-host execution, run Milestone 14 only.
