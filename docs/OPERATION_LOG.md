@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 12 hardening: CUDA backend skeleton validation.
+Milestone 13: CUDA validation plan.
 
 ## Hard Rules
 
@@ -39,39 +39,25 @@ Milestone 12 hardening: CUDA backend skeleton validation.
 
 ## Active Task
 
-Milestone 12 remains current: CUDA backend skeleton.
+Create `docs/CUDA_VALIDATION_PLAN.md` for execution on a CUDA-capable machine.
 
-Current repo state already includes:
-- opt-in CUDA build plumbing in `Makefile` via `CUDA=1`
-- `src/backend_cuda.c` and public CUDA backend declarations in `include/att1_backend.h`
-- CUDA availability detection plus create/destroy/alloc/free/sync hooks
-- host/device copy helpers
-- `docs/cuda_backend.md`
-- backend and bench smoke coverage for the skeleton path
-
-Milestone 12 scope remains CUDA plumbing only:
-- keep normal builds CPU-only by default
-- keep CUDA lifecycle and copy hooks available behind the backend API
-- keep unsupported/unavailable CUDA paths explicit and testable
-- do not add full CUDA transformer inference yet
+Milestone 12 hardening status (local non-CUDA environment):
+- Default CPU build validated with `make clean`, `make`, and `make test`.
+- CLI CUDA selection now fails explicitly with unsupported/status messaging when CUDA is unavailable.
+- `CUDA=1` build/test path is pending validation on real CUDA hardware.
 
 ## Next Prompt for Codex
 
-Continue Milestone 12 only: harden the CUDA backend skeleton without expanding scope.
+After Milestone 13 plan completion and successful CUDA-host execution, run Milestone 14 only.
 
 Goal:
-Keep CUDA opt-in and integration-safe while CPU remains the correctness reference.
+Start CUDA matmul/cuBLAS prototyping while preserving current CPU correctness behavior.
 
 Requirements:
-- Preserve default `make` and `make test` behavior without CUDA.
-- Preserve opt-in CUDA builds with `make CUDA=1`.
-- Keep `att1_backend_cuda_available`, `att1_backend_cuda_create`, alloc/free/sync, and copy helpers behind the current backend API.
-- Keep CLI/backend selection behavior aligned with the repo docs and tests.
-- Keep CUDA unavailable paths returning clear unsupported/status results.
-- Do not add CUDA operator kernels, cuBLAS, or full transformer inference.
-- Do not change CPU f32 or CPU q8 behavior except for shared backend plumbing.
-- Run `make clean`, `make`, and `make test`.
-- If CUDA is available in the environment, also run `make clean`, `make CUDA=1`, and `make test CUDA=1`.
+- Milestone 14 only: CUDA matmul/cuBLAS prototype.
+- Do not implement full transformer inference yet.
+- Keep CUDA opt-in (`make CUDA=1`) and non-CUDA default build behavior unchanged.
+- Keep CPU f32 as correctness reference and avoid regressions in CPU q8 behavior.
 
 Before finishing, update `docs/OPERATION_LOG.md`.
 
