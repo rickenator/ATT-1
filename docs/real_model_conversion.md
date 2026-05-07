@@ -241,7 +241,7 @@ All three commands must exit 0.  The bench output should report
 
 ### Still not implemented
 
-- Tokenizer vocabulary import
+- Tokenizer vocabulary import and runtime tokenizer selection
 - Multi-shard safetensors or `.bin` shard weight loading
 - BF16/F16 source upcast
 - q4 conversion
@@ -449,6 +449,20 @@ validation, and the exact future milestone split.
 See [docs/real_tiny_model_import.md](real_tiny_model_import.md) for the
 complete plan.
 
+## Tokenizer import plan (Milestone 50)
+
+M50 is documentation-only.  The current byte tokenizer remains the runtime
+default for tests and benchmarks.  Real tokenizer import is planned as a
+converter-side Python path first, using `tokenizer.json`,
+`tokenizer_config.json`, `special_tokens_map.json`, and later
+`tokenizer.model` for SentencePiece models.
+
+The import plan requires token ID stability, `vocab_size` agreement across
+config, embedding rows, lm_head rows, and tokenizer vocab count, explicit
+BOS/EOS/PAD/UNK handling, and documented byte-fallback behavior.  Runtime
+tokenizer selection and optional `.att1` tokenizer metadata are deferred to
+later milestones.
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -458,3 +472,8 @@ complete plan.
 | M48 | Real f32 converted tiny model — first non-synthetic `.att1` artifact |
 | M49 | q8 converted tiny model — dtype-2 loader extension, cross-backend check |
 | M50 | Tokenizer import plan (documentation only) |
+| M51 | Tokenizer metadata schema |
+| M52 | Tokenizer scanner/parser skeleton |
+| M53 | Tokenizer fixture import |
+| M54 | Optional `.att1` tokenizer metadata section |
+| M55 | Runtime tokenizer selection |

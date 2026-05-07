@@ -20,7 +20,7 @@ here.  Safetensors parsing is explicitly deferred.
 | Weight dtype | `bfloat16` or `float32` source; ATT-1 target is `f32` first, then `q8` |
 | q4 weights | Deferred |
 | Tied embeddings | Allowed; converter writes explicit copy of `output.weight` |
-| Tokenizer | Deferred (M50) |
+| Tokenizer | Byte-level runtime default remains; real tokenizer import is converter-side first and runtime integration is deferred |
 
 ### Explicitly out of scope for M46–M49
 
@@ -40,8 +40,10 @@ here.  Safetensors parsing is explicitly deferred.
 | `config.json` | Yes | Provides all shape constants; already parsed by converter |
 | `model.safetensors` | Yes (M47) | Single-shard; multi-shard via `model.safetensors.index.json` deferred |
 | `generation_config.json` | Optional | Ignored by the converter |
-| `tokenizer.json` / `tokenizer.model` | No | Deferred to M50 |
-| `special_tokens_map.json` | No | Deferred |
+| `tokenizer.json` | No | Primary future tokenizer source; parsed by converter-side tooling first |
+| `tokenizer.model` | No | Future SentencePiece source if a target fixture uses it |
+| `tokenizer_config.json` | No | Future source for model-specific tokenizer behavior and special IDs |
+| `special_tokens_map.json` | No | Future source for BOS/EOS/PAD/UNK names and IDs |
 
 All weight loading is Python-only under `compiler/`.  The C runtime never
 loads safetensors directly.
@@ -426,13 +428,78 @@ The quantization tolerance remains the documented q8 logit tolerance in
 
 ### M50 — tokenizer import plan
 
-**Goal:** Document and prototype the path from `tokenizer.json` or
-`tokenizer.model` (SentencePiece) to `att1_tokenizer_t`.
+**Goal:** Define how real tokenizer assets will be imported into ATT-1
+conversion tooling without implementing parsing or runtime integration yet.
 
-**Scope (documentation only in M50):**
-- Required vocabulary fields; BPE merge rules; byte-fallback handling.
-- ATT-1 tokenizer binary format extension (or new file alongside `.att1`).
-- No implementation in M50 — plan only, mirroring the approach of M45.
+**Scope:** documentation/spec only.  No C source changes, Makefile changes,
+external dependencies, `.att1` model-format changes, tokenizer parser, or
+runtime tokenizer selection are part of M50.
+
+**First supported tokenizer path:**
+
+- Current tests and benchmarks keep the existing byte-level tokenizer behavior.
+  The tiny real-model fixtures still require raw byte IDs in the valid
+  vocabulary range until a later runtime milestone.
+- Real tokenizer import starts in Python converter tooling under `compiler/`.
+  The first parser should inspect and validate tokenizer assets, then report
+  metadata needed for future `.att1` integration.
+- Runtime tokenizer integration is deferred.  No tokenizer import is required
+  by `make test`.
+
+**Expected tokenizer assets:**
+
+| File | Role |
+|------|------|
+| `tokenizer.json` | First target for Hugging Face byte-level BPE tokenizer metadata, vocab entries, merges, normalizer/pre-tokenizer declarations, and added tokens |
+| `tokenizer.model` | Future SentencePiece source if a target model uses SentencePiece instead of `tokenizer.json` |
+| `tokenizer_config.json` | Source for tokenizer class, byte fallback settings, normalization flags, model max length, and declared special token fields |
+| `special_tokens_map.json` | Source for BOS, EOS, PAD, UNK, and any additional special-token strings |
+
+**Vocabulary mapping requirements:**
+
+- Token IDs must be stable: the imported vocabulary index for every token must
+  exactly match the source tokenizer ID.
+- `vocab_size` must agree across `config.json`, `tok_embeddings.weight` rows,
+  and `lm_head.weight` rows.  Any mismatch is a hard validation error.
+- BOS, EOS, PAD, and UNK handling must preserve both token string and token ID
+  when present.  Missing PAD is allowed only if the source tokenizer omits it;
+  missing BOS/EOS/UNK must be reported explicitly.
+- Added tokens must not shift base vocabulary IDs.  Duplicate token strings or
+  duplicate IDs are fatal unless the source format explicitly aliases them and
+  the aliasing rule is documented.
+- Byte fallback behavior must be detected and reported.  If byte fallback is
+  absent, future runtime code must not silently substitute the current byte
+  tokenizer.
+
+**Runtime options for future milestones:**
+
+- Keep the current byte tokenizer as the default path for existing tests,
+  dummy models, and tiny fixtures.
+- Add optional tokenizer metadata to `.att1` in a later milestone only after a
+  schema is documented and hostile-input validation rules are defined.
+- Allow converted models to remain weight-only; tokenizer import must stay
+  optional and must not become a dependency of `make test`.
+
+**Validation risks:**
+
+| Risk | Required mitigation |
+|------|---------------------|
+| Mismatched vocab size | Compare config, embedding rows, lm_head rows, and tokenizer vocab count before conversion succeeds |
+| Shifted token IDs | Verify selected known tokens and specials retain exact source IDs |
+| Special-token mismatch | Report BOS/EOS/PAD/UNK string and ID from all available tokenizer files and fail on disagreement |
+| UTF-8 normalization differences | Record normalizer/pre-tokenizer settings; future runtime must match or explicitly reject unsupported settings |
+| BPE/SentencePiece incompatibility | Treat tokenizer type as part of metadata; do not parse one format as the other |
+| Prompt encoding divergence | Add future golden prompt-to-ID fixtures before runtime tokenizer selection is enabled |
+
+**Future milestone split:**
+
+| Milestone | Goal |
+|-----------|------|
+| M51 | Tokenizer metadata schema: document fields, binary/sidecar options, versioning, and hostile-input validation rules |
+| M52 | Tokenizer scanner/parser skeleton under `compiler/`; inventory assets and report tokenizer type without runtime integration |
+| M53 | Tokenizer fixture import; checked-in tiny tokenizer metadata fixture and golden prompt-to-ID cases |
+| M54 | Optional `.att1` tokenizer metadata section; loader/inspect reporting only, no default runtime selection |
+| M55 | Runtime tokenizer selection; opt-in real tokenizer path while byte tokenizer remains available for tests |
 
 ---
 
