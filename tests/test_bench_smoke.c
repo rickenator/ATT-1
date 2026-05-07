@@ -1007,6 +1007,119 @@ static int check_hf_tokenizer(void)
     return 0;
 }
 
+/*
+ * check_pretokenized_pipeline() — M60
+ *
+ * Python-skippable.  When tokenizers or transformers is available, validates
+ * the full M59+M60 pipeline: tokenize_hf.py writes token IDs → att1-bench
+ * accepts them via --tokenizer external on real_tiny_f32 / real_tiny_q8.
+ *
+ * This exercises the end-to-end path; tokenizer output is not semantically
+ * meaningful because the tiny tokenizer fixture is synthetic.
+ */
+static int check_pretokenized_pipeline(void)
+{
+    char output[4096];
+    int  has_tokenizers;
+    int  has_transformers;
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    has_tokenizers   = (run_command(
+        "python3 -c 'import tokenizers' > /dev/null 2>&1") == 0);
+    has_transformers = (run_command(
+        "python3 -c 'import transformers' > /dev/null 2>&1") == 0);
+    if (!has_tokenizers && !has_transformers) {
+        return 0; /* skip — neither tokenizers nor transformers installed */
+    }
+
+    /* Tokenize "abc" with the tiny fixture, skip BOS/EOS. */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer compiler/fixtures/tiny_tokenizer "
+                    "--text abc "
+                    "--add-special-tokens false "
+                    "--out build/m60_hf_ids.txt "
+                    "> /dev/null 2>&1") != 0) {
+        fputs("m60_pipe: tokenize_hf failed\n", stderr);
+        return -1;
+    }
+
+    /* --- real_tiny_f32 single via --tokens-file --- */
+    if (run_command("./build/att1-bench "
+                    "--model models/real_tiny_f32/model.att1 "
+                    "--tokens 2 --mode single --backend cpu-f32 "
+                    "--tokenizer external "
+                    "--tokens-file build/m60_hf_ids.txt "
+                    "> build/m60_hf_f32_single.txt 2>&1") != 0) {
+        fputs("m60_pipe: f32 single failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m60_hf_f32_single.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL) ||
+        (strstr(output, "mode=single")        == NULL) ||
+        (strstr(output, "backend=cpu-f32")    == NULL)) {
+        fputs("m60_pipe: f32 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* --- real_tiny_f32 cluster via --tokens-file --- */
+    if (run_command("./build/att1-bench "
+                    "--model models/real_tiny_f32/model.att1 "
+                    "--tokens 2 --mode cluster --tiles 2 --backend cpu-f32 "
+                    "--tokenizer external "
+                    "--tokens-file build/m60_hf_ids.txt "
+                    "> build/m60_hf_f32_cluster.txt 2>&1") != 0) {
+        fputs("m60_pipe: f32 cluster failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m60_hf_f32_cluster.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL) ||
+        (strstr(output, "mode=cluster")       == NULL)) {
+        fputs("m60_pipe: f32 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    /* --- real_tiny_q8 single via --tokens-file --- */
+    if (run_command("./build/att1-bench "
+                    "--model models/real_tiny_q8/model.att1 "
+                    "--tokens 2 --mode single --backend cpu-q8 "
+                    "--tokenizer external "
+                    "--tokens-file build/m60_hf_ids.txt "
+                    "> build/m60_hf_q8_single.txt 2>&1") != 0) {
+        fputs("m60_pipe: q8 single failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m60_hf_q8_single.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL) ||
+        (strstr(output, "backend=cpu-q8")     == NULL)) {
+        fputs("m60_pipe: q8 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* --- real_tiny_q8 cluster via --tokens-file --- */
+    if (run_command("./build/att1-bench "
+                    "--model models/real_tiny_q8/model.att1 "
+                    "--tokens 2 --mode cluster --tiles 2 --backend cpu-q8 "
+                    "--tokenizer external "
+                    "--tokens-file build/m60_hf_ids.txt "
+                    "> build/m60_hf_q8_cluster.txt 2>&1") != 0) {
+        fputs("m60_pipe: q8 cluster failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m60_hf_q8_cluster.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL) ||
+        (strstr(output, "mode=cluster")       == NULL) ||
+        (strstr(output, "backend=cpu-q8")     == NULL)) {
+        fputs("m60_pipe: q8 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1018,7 +1131,8 @@ int main(void)
         (check_tokenizer_import_report()  != 0) ||
         (check_tokenizer_selection()      != 0) ||
         (check_external_tokenizer()       != 0) ||
-        (check_hf_tokenizer()             != 0)) {
+        (check_hf_tokenizer()             != 0) ||
+        (check_pretokenized_pipeline()    != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

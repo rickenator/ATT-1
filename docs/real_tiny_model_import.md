@@ -503,7 +503,7 @@ runtime tokenizer selection are part of M50.
 | M57 | Metadata tokenizer validation path; no BPE parser yet. |
 | M58 | External tokenizer preprocessing mode. ✅ |
 | M59 | Local HF tokenizer helper: `compiler/tokenize_hf.py` — local text → token IDs; no C changes; no network. ✅ |
-| M60 | Tokenizer-aware converted model validation. |
+| M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent. ✅ |
 
 ### M51 — tokenizer metadata schema
 
@@ -773,6 +773,41 @@ python3 compiler/tokenize_hf.py \
 See `docs/tokenizer_metadata.md` §M59 for full specification.
 
 `make test` passes (41 tests) after M59.
+
+### M60 — converted model validation with pretokenized input (complete)
+
+**Goal:** Validate that `att1-bench --tokenizer external` works end-to-end
+with the checked-in `real_tiny_f32` and `real_tiny_q8` model artifacts.
+
+**Why external mode is required here:** Both models have `vocab_size=16`.
+The byte tokenizer maps text to ASCII code-points, which for any typical
+English text produce IDs ≥ 32 — all out of range.  External mode with
+fixture IDs (1,3,5 — BOS, 'a', 'c' in the synthetic tiny tokenizer) is the
+correct path.
+
+**Coverage added:**
+
+| Check | Model | Mode | Backend |
+|-------|-------|------|---------| 
+| `--tokens-file` and `--input-token-ids` single | `real_tiny_f32` | single | cpu-f32 |
+| `--tokens-file` cluster | `real_tiny_f32` | cluster | cpu-f32 |
+| `--tokens-file` single | `real_tiny_q8` | single | cpu-q8 |
+| `--tokens-file` cluster | `real_tiny_q8` | cluster | cpu-q8 |
+| CUDA f32/q8 single+cluster | both | single+cluster | cuda/cuda-q8 |
+| M59 helper pipeline (Python-skippable) | both | single+cluster | cpu-f32/q8 |
+
+CUDA tests skip gracefully when CUDA is unavailable.  The M59 pipeline
+check (`check_pretokenized_pipeline` in `test_bench_smoke.c`) runs
+`tokenize_hf.py` on the tiny tokenizer fixture and feeds the output to the
+bench tool; it is skipped when neither `tokenizers` nor `transformers` is
+installed.
+
+**Files changed:** `tests/test_converter_validation.c`,
+`tests/test_bench_smoke.c`.  No C source changes.  No Makefile changes.
+
+See `docs/tokenizer_metadata.md` §M60 for full specification.
+
+`make test` passes (41 tests) after M60.
 
 1. **Single vs multi-shard safetensors:** Initial target is single-file
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is

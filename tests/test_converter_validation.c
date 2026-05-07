@@ -4,6 +4,7 @@
  * M44: Validation of converter-generated .att1 artifacts with shard metadata.
  * M48: Validation of checked-in tiny f32 safetensors conversion artifact.
  * M49: Validation of checked-in tiny q8 safetensors conversion artifact.
+ * M60: Validation of real tiny f32/q8 artifacts with pretokenized external input.
  *
  * Uses checked-in .att1 fixtures only; no Python is required at test time.
  *
@@ -12,6 +13,8 @@
  *   2. att1-bench with --shard-plan runtime produces correct output.
  *   3. att1-bench with --shard-plan metadata produces identical last_token,
  *      logits_bytes_produced, and fabric_packets_sent.
+ *   4. (M60) real_tiny_f32 / real_tiny_q8 accept --tokenizer external with
+ *      fixed pretokenized IDs; all CPU and CUDA paths exercised.
  */
 
 #include <stdint.h>
@@ -380,14 +383,256 @@ static int check_real_tiny_q8(void)
     return 0;
 }
 
+/* --------------------------------------------------------- M60 pretokenized */
+
+/*
+ * check_real_tiny_pretokenized() — M60
+ *
+ * Validates that real_tiny_f32 and real_tiny_q8 model artifacts accept
+ * externally pretokenized token IDs via att1-bench --tokenizer external.
+ * Token IDs are synthetic fixtures — they exercise the token-ID plumbing
+ * path, not meaningful language generation.
+ *
+ * Token IDs used: 1,3,5 — all within the tiny model's vocab_size=16.
+ * Mapping (tiny tokenizer fixture): BOS=1, 'a'=3, 'c'=5.
+ *
+ * This function writes a one-ID-per-line fixture file and runs all CPU paths.
+ * CUDA paths are attempted and skipped if CUDA is unavailable.
+ * No Python is required.
+ */
+static int check_real_tiny_pretokenized(void)
+{
+    char     out[4096];
+    uint64_t f32_last = 0u;
+    uint64_t q8_last  = 0u;
+    uint64_t pkts     = 0u;
+
+    /* Write a fixture token IDs file (one ID per line). */
+    {
+        FILE *fp = fopen("build/m60_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("m60: could not create token IDs fixture file\n", stderr);
+            return -1;
+        }
+        fputs("1\n3\n5\n", fp);
+        fclose(fp);
+    }
+
+    /* ------ f32 single ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --tokens 2 --mode single --backend cpu-f32"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_f32_single.txt 2>&1") != 0) {
+        fputs("m60: f32 single failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m60_f32_single.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=single")           == NULL) ||
+        (strstr(out, "backend=cpu-f32")        == NULL) ||
+        (strstr(out, "tokenizer=external")     == NULL) ||
+        (strstr(out, "prompt_tokens=3")        == NULL) ||
+        (strstr(out, "generated_tokens=2")     == NULL)) {
+        fputs("m60: f32 single output check failed\n", stderr);
+        return -1;
+    }
+    if (parse_u64_line(out, "last_token", &f32_last) != 0) {
+        fputs("m60: f32 single: could not parse last_token\n", stderr);
+        return -1;
+    }
+
+    /* ------ f32 cluster ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cpu-f32"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_f32_cluster.txt 2>&1") != 0) {
+        fputs("m60: f32 cluster failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m60_f32_cluster.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=cluster")           == NULL) ||
+        (strstr(out, "backend=cpu-f32")         == NULL) ||
+        (strstr(out, "tokenizer=external")      == NULL) ||
+        (strstr(out, "tiles=2")                 == NULL) ||
+        (strstr(out, "prompt_tokens=3")         == NULL) ||
+        (strstr(out, "generated_tokens=2")      == NULL) ||
+        (parse_u64_line(out, "fabric_packets_sent", &pkts) != 0) ||
+        (pkts == 0u)) {
+        fputs("m60: f32 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    /* ------ q8 single ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --tokens 2 --mode single --backend cpu-q8"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_q8_single.txt 2>&1") != 0) {
+        fputs("m60: q8 single failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m60_q8_single.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=single")           == NULL) ||
+        (strstr(out, "backend=cpu-q8")         == NULL) ||
+        (strstr(out, "tokenizer=external")     == NULL) ||
+        (strstr(out, "prompt_tokens=3")        == NULL) ||
+        (strstr(out, "generated_tokens=2")     == NULL)) {
+        fputs("m60: q8 single output check failed\n", stderr);
+        return -1;
+    }
+    if (parse_u64_line(out, "last_token", &q8_last) != 0) {
+        fputs("m60: q8 single: could not parse last_token\n", stderr);
+        return -1;
+    }
+
+    /* f32 and q8 last_token may differ (quantization rounding); just assert
+     * they are in range.  Both must be < vocab_size=16. */
+    if ((f32_last >= 16u) || (q8_last >= 16u)) {
+        fputs("m60: last_token out of range for vocab_size=16\n", stderr);
+        return -1;
+    }
+
+    /* ------ q8 cluster ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cpu-q8"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_q8_cluster.txt 2>&1") != 0) {
+        fputs("m60: q8 cluster failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m60_q8_cluster.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=cluster")           == NULL) ||
+        (strstr(out, "backend=cpu-q8")         == NULL) ||
+        (strstr(out, "tokenizer=external")     == NULL) ||
+        (strstr(out, "tiles=2")                 == NULL) ||
+        (strstr(out, "prompt_tokens=3")         == NULL) ||
+        (strstr(out, "generated_tokens=2")      == NULL) ||
+        (parse_u64_line(out, "fabric_packets_sent", &pkts) != 0) ||
+        (pkts == 0u)) {
+        fputs("m60: q8 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    /* ------ also verify with --input-token-ids (inline form) ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --tokens 2 --mode single --backend cpu-f32"
+                    " --tokenizer external --input-token-ids \"1,3,5\""
+                    " > build/m60_f32_inline.txt 2>&1") != 0) {
+        fputs("m60: f32 single --input-token-ids failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m60_f32_inline.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "tokenizer=external") == NULL) ||
+        (strstr(out, "prompt_tokens=3") == NULL)) {
+        fputs("m60: f32 --input-token-ids output check failed\n", stderr);
+        return -1;
+    }
+
+    /* ------ CUDA f32 single (skip if unavailable) ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --tokens 2 --mode single --backend cuda"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_f32_cuda_single.txt 2>&1") != 0) {
+        if ((read_file("build/m60_f32_cuda_single.txt", out, sizeof(out)) != 0) ||
+            !output_is_cuda_unavailable(out)) {
+            fputs("m60: cuda f32 single failed unexpectedly\n", stderr);
+            return -1;
+        }
+        /* CUDA unavailable — skip remaining CUDA tests */
+        return 0;
+    }
+    if ((read_file("build/m60_f32_cuda_single.txt", out, sizeof(out)) != 0) ||
+        (strstr(out, "mode=single")       == NULL) ||
+        (strstr(out, "backend=cuda")      == NULL) ||
+        (strstr(out, "tokenizer=external") == NULL)) {
+        fputs("m60: cuda f32 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* ------ CUDA f32 cluster ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cuda"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_f32_cuda_cluster.txt 2>&1") != 0) {
+        if ((read_file("build/m60_f32_cuda_cluster.txt", out, sizeof(out)) != 0) ||
+            !output_is_cuda_unavailable(out)) {
+            fputs("m60: cuda f32 cluster failed unexpectedly\n", stderr);
+            return -1;
+        }
+        return 0;
+    }
+    if ((read_file("build/m60_f32_cuda_cluster.txt", out, sizeof(out)) != 0) ||
+        (strstr(out, "mode=cluster")      == NULL) ||
+        (strstr(out, "backend=cuda")      == NULL) ||
+        (strstr(out, "tokenizer=external") == NULL)) {
+        fputs("m60: cuda f32 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    /* ------ CUDA q8 single ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --tokens 2 --mode single --backend cuda-q8"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_q8_cuda_single.txt 2>&1") != 0) {
+        if ((read_file("build/m60_q8_cuda_single.txt", out, sizeof(out)) != 0) ||
+            !output_is_cuda_unavailable(out)) {
+            fputs("m60: cuda q8 single failed unexpectedly\n", stderr);
+            return -1;
+        }
+        return 0;
+    }
+    if ((read_file("build/m60_q8_cuda_single.txt", out, sizeof(out)) != 0) ||
+        (strstr(out, "mode=single")       == NULL) ||
+        (strstr(out, "backend=cuda-q8")   == NULL) ||
+        (strstr(out, "tokenizer=external") == NULL)) {
+        fputs("m60: cuda q8 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* ------ CUDA q8 cluster ------ */
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cuda-q8"
+                    " --tokenizer external --tokens-file build/m60_ids.txt"
+                    " > build/m60_q8_cuda_cluster.txt 2>&1") != 0) {
+        if ((read_file("build/m60_q8_cuda_cluster.txt", out, sizeof(out)) != 0) ||
+            !output_is_cuda_unavailable(out)) {
+            fputs("m60: cuda q8 cluster failed unexpectedly\n", stderr);
+            return -1;
+        }
+        return 0;
+    }
+    if ((read_file("build/m60_q8_cuda_cluster.txt", out, sizeof(out)) != 0) ||
+        (strstr(out, "mode=cluster")      == NULL) ||
+        (strstr(out, "backend=cuda-q8")   == NULL) ||
+        (strstr(out, "tokenizer=external") == NULL)) {
+        fputs("m60: cuda q8 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 /* --------------------------------------------------------------- main ------- */
 
 int main(void)
 {
-    if ((check_inspect()           != 0) ||
-        (check_bench_consistency() != 0) ||
-        (check_real_tiny_f32()     != 0) ||
-        (check_real_tiny_q8()      != 0)) {
+    if ((check_inspect()                  != 0) ||
+        (check_bench_consistency()        != 0) ||
+        (check_real_tiny_f32()            != 0) ||
+        (check_real_tiny_q8()             != 0) ||
+        (check_real_tiny_pretokenized()   != 0)) {
         fputs("converter validation test failed\n", stderr);
         return 1;
     }

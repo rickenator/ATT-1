@@ -211,7 +211,7 @@ real tokenizer is explicitly requested.
 | M57 | Metadata tokenizer validation path: load, range-check, vocab cross-check; no BPE parser. ✅ |
 | M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
 | M59 | Local Hugging Face tokenizer helper: `compiler/tokenize_hf.py` converts text to token IDs using a local tokenizer directory; no C runtime changes; no network access. ✅ |
-| M60 | Tokenizer-aware converted model validation. |
+| M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` validated end-to-end on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent; M59 helper pipeline Python-skippable. ✅ |
 
 ## M54 Binary Section Layout
 
@@ -382,7 +382,7 @@ hard error, not a fallback.
 | M57 | Metadata tokenizer validation path: selection precondition checks, vocab/hash cross-check; no BPE parser yet. ✅ |
 | M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
 | M59 | Local Hugging Face tokenizer helper: `compiler/tokenize_hf.py` converts text to token IDs using a local tokenizer directory; no C runtime changes; no network access. ✅ |
-| M60 | Tokenizer-aware converted model validation: golden prompt-to-ID fixtures, round-trip checks. |
+| M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` validated end-to-end on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent; M59 helper pipeline Python-skippable. ✅ |
 
 ## M56 Tokenizer Selection CLI Stub
 
@@ -601,6 +601,59 @@ python3 compiler/tokenize_hf.py --tokenizer PATH --text-file PATH
 - Always runs (Python present): missing-path → exit nonzero with `"not found"`
 - Skipped when neither `tokenizers` nor `transformers` is installed
 - When package present: basic tokenize, JSON output fields, `--out` file, pipeline to `att1-bench --tokens-file`, `--timing` flag
+
+`make test` passes (41 tests).  No `.att1` format change.  No C source change.
+No backend change.  No new C test files.
+
+## M60 Converted Model Validation with Pretokenized Input
+
+M60 validates that the external-tokenizer mode from M58 works end-to-end with
+the checked-in `real_tiny_f32` and `real_tiny_q8` model artifacts.  No BPE
+parser, no byte tokenizer, no Python required for the core checks.
+
+### Design
+
+- Both models have `vocab_size=16`.  The byte tokenizer cannot handle typical
+  ASCII text (e.g. `'h'`=104 ≥ 16); external mode with fixture IDs is the
+  only safe path for these models.
+- Fixture IDs `1,3,5` (BOS, 'a', 'c' in the synthetic tiny tokenizer) are
+  written to `build/m60_ids.txt` by the test and used as prompt tokens.
+  These validate token-ID plumbing; output tokens are not semantically
+  meaningful.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `tests/test_converter_validation.c` | Added `check_real_tiny_pretokenized()` and wired into `main()` |
+| `tests/test_bench_smoke.c` | Added `check_pretokenized_pipeline()` (Python-skippable M59+M60 pipeline) |
+
+No C source changes.  No Makefile changes.  No `.att1` format change.
+
+### Coverage (check_real_tiny_pretokenized)
+
+| Check | Model | Mode | Backend |
+|-------|-------|------|---------|
+| `--tokens-file` single | `real_tiny_f32` | single | cpu-f32 |
+| `--tokens-file` cluster | `real_tiny_f32` | cluster | cpu-f32 |
+| `--input-token-ids` single | `real_tiny_f32` | single | cpu-f32 |
+| `--tokens-file` single | `real_tiny_q8` | single | cpu-q8 |
+| `--tokens-file` cluster | `real_tiny_q8` | cluster | cpu-q8 |
+| CUDA f32 single | `real_tiny_f32` | single | cuda |
+| CUDA f32 cluster | `real_tiny_f32` | cluster | cuda |
+| CUDA q8 single | `real_tiny_q8` | single | cuda-q8 |
+| CUDA q8 cluster | `real_tiny_q8` | cluster | cuda-q8 |
+
+CUDA tests skip gracefully (`output_is_cuda_unavailable()`) when CUDA is absent.
+Each passing test validates: `tokenizer=external`, `mode=`, `backend=`,
+`prompt_tokens=3`, `generated_tokens=2`, and (for cluster) `fabric_packets_sent>0`.
+
+### check_pretokenized_pipeline (smoke test, Python-skippable)
+
+- Skipped when Python 3 absent or neither `tokenizers` nor `transformers` installed
+- When available: runs `tokenize_hf.py` on tiny tokenizer fixture to produce
+  `build/m60_hf_ids.txt`, then bench both `real_tiny_f32` and `real_tiny_q8`
+  via `--tokens-file` for single and cluster modes
 
 `make test` passes (41 tests).  No `.att1` format change.  No C source change.
 No backend change.  No new C test files.
