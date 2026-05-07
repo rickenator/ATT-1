@@ -1,4 +1,5 @@
 #include "att1_model.h"
+#include "att1_tok_meta.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -187,6 +188,8 @@ att1_status_t att1_model_load(const char *path, att1_model *model)
     uint64_t data_size = 0u;
     uint64_t shard_offset = 0u;
     uint64_t shard_size = 0u;
+    uint64_t tok_meta_offset = 0u;
+    uint64_t tok_meta_size = 0u;
     uint64_t desc_bytes = 0u;
     uint64_t i = 0u;
 
@@ -212,8 +215,26 @@ att1_status_t att1_model_load(const char *path, att1_model *model)
 
     version = att1_read_u32le(&data[8]);
     header_size = att1_read_u32le(&data[12]);
-    if ((version != ATT1_MODEL_VERSION) ||
-        (header_size != ATT1_MODEL_HEADER_SIZE)) {
+
+    /* Accept v1 (80-byte header, no tokenizer metadata) and
+     * v2 (96-byte header, optional tokenizer metadata section). */
+    if (version == ATT1_MODEL_VERSION) {
+        if (header_size != ATT1_MODEL_HEADER_SIZE) {
+            free(data);
+            return ATT1_ERR_UNSUPPORTED;
+        }
+    } else if (version == ATT1_MODEL_VERSION_2) {
+        if (header_size != ATT1_MODEL_HEADER_SIZE_V2) {
+            free(data);
+            return ATT1_ERR_UNSUPPORTED;
+        }
+        if (!att1_range_valid(file_size, 0u, ATT1_MODEL_HEADER_SIZE_V2)) {
+            free(data);
+            return ATT1_ERR_BAD_FORMAT;
+        }
+        tok_meta_offset = att1_read_u64le(&data[80]);
+        tok_meta_size   = att1_read_u64le(&data[88]);
+    } else {
         free(data);
         return ATT1_ERR_UNSUPPORTED;
     }
@@ -240,6 +261,13 @@ att1_status_t att1_model_load(const char *path, att1_model *model)
 
     if (((shard_offset == 0u) != (shard_size == 0u)) ||
         ((shard_size != 0u) && !att1_range_valid(file_size, shard_offset, shard_size))) {
+        free(data);
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* Validate tokenizer metadata section range (zero means absent). */
+    if (((tok_meta_offset == 0u) != (tok_meta_size == 0u)) ||
+        ((tok_meta_size != 0u) && !att1_range_valid(file_size, tok_meta_offset, tok_meta_size))) {
         free(data);
         return ATT1_ERR_BAD_FORMAT;
     }
@@ -324,6 +352,19 @@ att1_status_t att1_model_load(const char *path, att1_model *model)
         if (meta_rc != ATT1_OK) {
             att1_model_free(model);
             return meta_rc;
+        }
+    }
+
+    if (tok_meta_size != 0u) {
+        const att1_status_t tok_rc = att1_tok_meta_parse(
+            &data[tok_meta_offset],
+            tok_meta_size,
+            model->config.vocab_size,
+            &model->tok_meta);
+
+        if (tok_rc != ATT1_OK) {
+            att1_model_free(model);
+            return tok_rc;
         }
     }
 

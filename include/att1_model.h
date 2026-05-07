@@ -3,6 +3,7 @@
 
 #include "att1_status.h"
 #include "att1_shard_meta.h"
+#include "att1_tok_meta.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -10,9 +11,11 @@
 #define ATT1_MODEL_MAGIC "ATT1MODL"
 #define ATT1_MODEL_MAGIC_SIZE 8u
 #define ATT1_MODEL_VERSION 1u
+#define ATT1_MODEL_VERSION_2 2u
 #define ATT1_MODEL_NAME_SIZE 64u
 #define ATT1_MODEL_MAX_DIMS 4u
 #define ATT1_MODEL_HEADER_SIZE 80u
+#define ATT1_MODEL_HEADER_SIZE_V2 96u
 #define ATT1_MODEL_CONFIG_SIZE 36u
 #define ATT1_MODEL_TENSOR_DESC_SIZE 128u
 
@@ -58,6 +61,7 @@ typedef struct att1_model {
     unsigned char *file_data;
     size_t file_size;
     att1_shard_meta shard_meta;
+    att1_tok_meta   tok_meta;   /* present==0 when section absent */
 } att1_model;
 
 /*

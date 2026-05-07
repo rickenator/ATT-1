@@ -1,6 +1,7 @@
 #include "att1_model.h"
 #include "att1_shard.h"
 #include "att1_shard_meta.h"
+#include "att1_tok_meta.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -192,6 +193,35 @@ int main(int argc, char **argv)
                 att1_meta_plan_free(&proposed);
             }
         }
+    }
+
+    /* Tokenizer metadata section (M54, version-2 models only). */
+    if (model.tok_meta.present) {
+        const att1_tok_meta *tm = &model.tok_meta;
+        uint32_t k = 0u;
+
+        printf("tok_meta: present\n");
+        printf("tok_meta_schema_version=%u\n",  tm->schema_version);
+        printf("tok_meta_type=%s\n",             att1_tok_type_name(tm->tokenizer_type));
+        printf("tok_meta_vocab_size=%u\n",       tm->vocab_size);
+        printf("tok_meta_bos=%d\n",              tm->bos_token_id);
+        printf("tok_meta_eos=%d\n",              tm->eos_token_id);
+        printf("tok_meta_pad=%d\n",              tm->pad_token_id);
+        printf("tok_meta_unk=%d\n",              tm->unk_token_id);
+        printf("tok_meta_byte_fallback=%u\n",    tm->byte_fallback);
+        printf("tok_meta_normalization=%s\n",    att1_tok_norm_name(tm->normalization_policy));
+        printf("tok_meta_pretokenizer=%s\n",     att1_tok_pretok_name(tm->pretokenizer_policy));
+        if (tm->asset_hash_kind == ATT1_TOK_HASH_SHA256) {
+            printf("tok_meta_asset_hash=");
+            for (k = 0u; k < 32u; k++) {
+                printf("%02x", tm->asset_hash[k]);
+            }
+            printf("\n");
+        } else {
+            printf("tok_meta_asset_hash=none\n");
+        }
+    } else {
+        printf("tok_meta: absent\n");
     }
 
     att1_model_free(&model);

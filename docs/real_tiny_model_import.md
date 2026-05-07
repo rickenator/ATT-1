@@ -497,7 +497,7 @@ runtime tokenizer selection are part of M50.
 |-----------|------|
 | M51 | Tokenizer metadata schema: document fields, binary/sidecar options, versioning, and hostile-input validation rules |
 | M52 | Tokenizer scanner/parser skeleton under `compiler/`; inventory assets and report tokenizer type without runtime integration |
-| M53 | Tokenizer fixture import; checked-in tiny tokenizer metadata fixture and golden prompt-to-ID cases |
+| M54 | Optional `.att1` tokenizer metadata section; C parser, loader detection, inspect reporting, Python fixture generator. ✅ |
 | M54 | Optional `.att1` tokenizer metadata section; loader/inspect reporting only, no default runtime selection |
 | M55 | Runtime tokenizer selection; opt-in real tokenizer path while byte tokenizer remains available for tests |
 
@@ -634,6 +634,59 @@ JSON goes to the file.
 
 No C source change (other than `test_bench_smoke.c`), no Makefile change,
 no `.att1` format change.  `make test` passes (39 tests).
+
+### M54 — optional `.att1` tokenizer metadata section (complete)
+
+**Goal:** Add an optional 96-byte tokenizer metadata section to `.att1` v2
+files.  No runtime tokenization behavior changes.  Old v1 models remain
+fully compatible.
+
+**`.att1` version 2:**  Header grows from 80 to 96 bytes.  Bytes 80–95 carry
+two new `uint64` fields: `tok_meta_offset` and `tok_meta_size`.  The version
+field is `2` and `header_size` is `96`.  Version 1 models (80-byte header)
+load unchanged; `tok_meta.present` is `0` for them.
+
+**New files:**
+
+| File | Purpose |
+|------|---------|
+| `include/att1_tok_meta.h` | Wire layout constants, `att1_tok_meta` struct, `att1_tok_meta_parse()`, enum name helpers |
+| `src/tok_meta.c` | `att1_tok_meta_parse()` implementation with full hostile-input validation |
+| `compiler/make_tok_meta_fixture.py` | Generates `models/tok_meta/model.att1` (868 bytes) |
+| `models/tok_meta/model.att1` | Checked-in 868-byte v2 fixture (bpe_json, vocab=16, bos=1, eos=2) |
+| `tests/test_tok_meta.c` | 8 test cases (absent, valid, bad_version, bad_tok_type, vocab_mismatch, truncated, bad_flags, v1_compat) |
+
+**Modified files:**
+
+| File | Change |
+|------|--------|
+| `include/att1_model.h` | `ATT1_MODEL_VERSION_2=2`, `ATT1_MODEL_HEADER_SIZE_V2=96`, `tok_meta` field in `att1_model` |
+| `src/model_loader.c` | v1/v2 dispatch; tok_meta offset/size range validation; calls `att1_tok_meta_parse()` |
+| `tools/att1-inspect.c` | Reports `tok_meta: present` with all fields, or `tok_meta: absent` |
+| `Makefile` | `tok_meta.c` in `COMMON_SRCS`; `test_tok_meta` in `TEST_NAMES` |
+
+**Fixture tokenizer metadata wire values:**
+`tokenizer_type=bpe_json`, `vocab_size=16`, `bos=1`, `eos=2`, `pad=-1`,
+`unk=0`, `byte_fallback=0`, `normalization=none`, `pretokenizer=byte_level`,
+`asset_hash_kind=sha256`,
+`asset_hash=da38c00aa0b62d2699c46cb2d1ccadce14b36815d784265680b78a7a31ab1034`,
+`flags=0`, `asset_offset=0`, `asset_size=0`.
+
+**Validation rules enforced by `att1_tok_meta_parse()`:**
+- Section size must be exactly 96 bytes.
+- `schema_version` must be `1`.
+- `tokenizer_type` must be in `[0, 3]`.
+- `vocab_size > 0` and must equal model config `vocab_size`.
+- Special token IDs must be `−1` or in `[0, vocab_size)`.
+- `byte_fallback` must be `0` or `1`.
+- `normalization_policy` must be in `[0, 4]`.
+- `pretokenizer_policy` must be in `[0, 5]`.
+- `asset_hash_kind` must be `0` or `1`.
+- `flags` must be `0`.
+- `asset_offset` and `asset_size` must be both zero or both nonzero.
+
+`make test` passes (40 tests).  No inference behavior change.  No C tokenizer
+parser added.
 
 1. **Single vs multi-shard safetensors:** Initial target is single-file
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is
