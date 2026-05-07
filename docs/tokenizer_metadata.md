@@ -212,6 +212,7 @@ real tokenizer is explicitly requested.
 | M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
 | M59 | Local Hugging Face tokenizer helper: `compiler/tokenize_hf.py` converts text to token IDs using a local tokenizer directory; no C runtime changes; no network access. ✅ |
 | M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` validated end-to-end on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent; M59 helper pipeline Python-skippable. ✅ |
+| M61 | Source-model comparison harness: Python harness validates ATT-1 converted f32/q8 artifacts against source safetensors; static tensor mapping with transpose rules; numpy LLaMA reference forward pass; next-token match; m61 fixture with seeded random weights. ✅ |
 
 ## M54 Binary Section Layout
 
@@ -383,6 +384,7 @@ hard error, not a fallback.
 | M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
 | M59 | Local Hugging Face tokenizer helper: `compiler/tokenize_hf.py` converts text to token IDs using a local tokenizer directory; no C runtime changes; no network access. ✅ |
 | M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` validated end-to-end on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent; M59 helper pipeline Python-skippable. ✅ |
+| M61 | Source-model comparison harness: Python harness validates ATT-1 converted f32/q8 artifacts against source safetensors; static tensor mapping with transpose rules; numpy LLaMA reference forward pass; next-token match; m61 fixture with seeded random weights. ✅ |
 
 ## M56 Tokenizer Selection CLI Stub
 
@@ -657,6 +659,47 @@ Each passing test validates: `tokenizer=external`, `mode=`, `backend=`,
 
 `make test` passes (41 tests).  No `.att1` format change.  No C source change.
 No backend change.  No new C test files.
+
+## M61 Source-Model Comparison Harness
+
+M61 adds a Python comparison harness that validates ATT-1 converted model
+artifacts against the source safetensors weights and against a Python-native
+LLaMA reference forward pass.
+
+### Design
+
+- **Static tensor comparison:** for all 21 LLaMA tensors the converter applies
+  a transpose rule (projection/output matrices transposed; embeddings and norms
+  kept as-is).  The harness replicates those rules and computes `max_abs_error`
+  between source values and ATT-1 values.  For f32 models the error is 0.0
+  (exact float copy).  For q8 models the error reflects per-row int8
+  quantisation noise (< 0.6 on the m61 fixture).
+- **Forward-pass comparison:** a numpy LLaMA reference (`_python_forward_pass`)
+  runs RMSNorm → Q/K/V matmul → RoPE → KV-cache → causal attention → FFN
+  (SwiGLU) for each prompt token, then computes `argmax(logits)`.  The result
+  is compared to `last_token` from `att1-bench` using the cpu-f32 and cpu-q8
+  backends.  For the m61 fixture with prompt `[5]`: `ref_last_token=10`,
+  `bench_last_token=10`, `forward_match=yes`.
+- **m61 fixture:** `compiler/fixtures/m61_llama_2l.safetensors` uses seeded
+  random weights (seed=61, scale=0.1, all projections non-zero) to ensure
+  non-trivial numerics.  The all-zero `tiny_llama_2l.safetensors` cannot
+  distinguish a correct from an incorrect forward pass.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `compiler/fixtures/make_m61_fixture.py` | Generator for `m61_llama_2l.safetensors` (seeded random weights) |
+| `compiler/fixtures/m61_llama_2l.safetensors` | Checked-in non-trivial fixture (8347 bytes, 21 tensors) |
+| `models/m61_f32/model.att1` | Converted f32 model (9108 bytes; `last_token=10` for prompt `[5]`) |
+| `models/m61_q8/model.att1` | Converted q8 model (5524 bytes) |
+| `compiler/read_att1.py` | Stdlib-only ATT-1 binary reader (v1/v2, f32 and q8 decode) |
+| `compiler/compare_att1_to_source.py` | Full comparison harness with static and forward-pass checks |
+| `tests/test_bench_smoke.c` | Added `check_source_comparison()` (Python/numpy-skippable) |
+
+No C source changes.  No Makefile changes.  No `.att1` format change.
+
+`make test` passes (41 tests).  No new C test binary.
 
 ## Canonical Asset Hash (M53)
 

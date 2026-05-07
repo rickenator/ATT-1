@@ -1120,6 +1120,60 @@ static int check_pretokenized_pipeline(void)
     return 0;
 }
 
+/*
+ * check_source_comparison() — M61
+ *
+ * Python-skippable.  Requires numpy.  Runs the M61 comparison harness
+ * (compiler/compare_att1_to_source.py) against the m61 f32/q8 fixtures and
+ * verifies that the static tensor mapping and the forward-pass next-token
+ * prediction both pass.
+ */
+static int check_source_comparison(void)
+{
+    char output[4096];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* numpy is required for the forward-pass comparison. */
+    if (run_command("python3 -c 'import numpy' > /dev/null 2>&1") != 0) {
+        return 0; /* skip — numpy not installed */
+    }
+
+    /* Run the M61 comparison harness and capture output. */
+    if (run_command("python3 compiler/compare_att1_to_source.py "
+                    "--report-json build/m61_comparison.json "
+                    "> build/m61_comparison.txt 2>&1") != 0) {
+        fputs("m61_compare: harness exited with non-zero status\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m61_comparison.txt", output, sizeof(output)) != 0) {
+        fputs("m61_compare: cannot read harness output\n", stderr);
+        return -1;
+    }
+
+    /* Check overall result. */
+    if (strstr(output, "result:") != NULL) {
+        if (strstr(output, "result:              pass") == NULL) {
+            fputs("m61_compare: result is not pass\n", stderr);
+            return -1;
+        }
+    }
+
+    /* Check forward-pass match. */
+    if (strstr(output, "forward_match:") != NULL) {
+        if (strstr(output, "forward_match:       yes") == NULL) {
+            fputs("m61_compare: forward_match is not yes\n", stderr);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1132,7 +1186,8 @@ int main(void)
         (check_tokenizer_selection()      != 0) ||
         (check_external_tokenizer()       != 0) ||
         (check_hf_tokenizer()             != 0) ||
-        (check_pretokenized_pipeline()    != 0)) {
+        (check_pretokenized_pipeline()    != 0) ||
+        (check_source_comparison()        != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

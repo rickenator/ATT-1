@@ -504,6 +504,7 @@ runtime tokenizer selection are part of M50.
 | M58 | External tokenizer preprocessing mode. ✅ |
 | M59 | Local HF tokenizer helper: `compiler/tokenize_hf.py` — local text → token IDs; no C changes; no network. ✅ |
 | M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent. ✅ |
+| M61 | Source-model comparison harness: Python harness validates ATT-1 f32/q8 artifacts against source safetensors; static tensor mapping with transpose rules; numpy LLaMA forward pass; next-token match; m61 fixture with seeded random weights. ✅ |
 
 ### M51 — tokenizer metadata schema
 
@@ -809,7 +810,58 @@ See `docs/tokenizer_metadata.md` §M60 for full specification.
 
 `make test` passes (41 tests) after M60.
 
-1. **Single vs multi-shard safetensors:** Initial target is single-file
+### M61 — source-model comparison harness (complete)
+
+**Goal:** Add a Python comparison harness that validates ATT-1 converted
+f32/q8 model artifacts against the source LLaMA-style safetensors weights
+and against a Python-native reference forward pass.  No C changes.  No
+`.att1` format changes.  No network access.  Checked-in fixtures only.
+
+**New files:**
+
+| File | Purpose |
+|------|---------|
+| `compiler/fixtures/make_m61_fixture.py` | Generates `m61_llama_2l.safetensors` with seeded random weights |
+| `compiler/fixtures/m61_llama_2l.safetensors` | Non-trivial fixture: seed=61, scale=0.1 (8347 bytes, 21 tensors) |
+| `models/m61_f32/model.att1` | Converted f32 artifact (9108 bytes; `last_token=10` for prompt `[5]`) |
+| `models/m61_q8/model.att1` | Converted q8 artifact (5524 bytes) |
+| `compiler/read_att1.py` | Stdlib-only ATT-1 binary reader (v1/v2, f32 and q8 dequantize) |
+| `compiler/compare_att1_to_source.py` | Full comparison harness (static + forward-pass) |
+
+**Modified files:**
+
+| File | Change |
+|------|--------|
+| `tests/test_bench_smoke.c` | Added `check_source_comparison()` (Python/numpy-skippable) |
+
+**Static tensor comparison** verifies all 21 LLaMA tensor mappings (embedding,
+norms, Q/K/V/O projections, gate/up/down FFN, output norm, lm_head) applying
+the same transpose rules as the converter:
+- Projection and output matrices (wq, wk, wv, wo, w_gate, w_up, w_down,
+  output.weight): transposed (HF stores [out, in]; ATT-1 stores [in, out]).
+- Embeddings and norm weights: no transpose.
+
+Results: f32 `max_abs_error=0.000e+00` (exact float copy), q8
+`max_abs_error=5.407e-01` (within tolerance 0.6).
+
+**Forward-pass comparison** (`_python_forward_pass` in
+`compare_att1_to_source.py`) implements:
+- RMSNorm: `x / sqrt(mean(x²) + 1e-6) * weight`
+- RoPE: per-pair `(x0·cos − x1·sin, x0·sin + x1·cos)`, frequency =
+  `1/theta^(i/count)`, matching `att1_rope_f32` exactly
+- SwiGLU: `silu(gate) * up`, where `silu(x) = x / (1 + exp(−x))`
+- Causal attention: per-head scaled dot-product with incremental KV cache
+- All math via ATT-1 weight layout (`output = input @ weight`)
+
+For prompt `[5]` on the m61 fixture: `ref_last_token=10`, `bench_last_token=10`,
+`forward_match=yes`, `q8_bench_last_token=10`, `q8_forward_match=yes`.
+
+**Why a new fixture?** The existing `tiny_llama_2l.safetensors` has all-zero
+weights, making numerics trivial — any implementation produces the same
+argmax (all-zero logits → argmax=0).  The m61 fixture uses seeded random
+weights to ensure a non-trivial, deterministic next-token prediction.
+
+`make test` passes (41 tests) after M61.  No new C test binary.
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is
    out of scope until after M48.
 
