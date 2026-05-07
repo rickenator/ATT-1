@@ -501,7 +501,7 @@ runtime fallback rules.
 | M63 | Larger tiny-model fixture (vocab=64, d_model=32) and validation |
 | M64 | Public small-model import candidate selection (documentation only) |
 | M65 | Public model acquisition and import instructions (documentation only) |
-| M66 | Converter compatibility scanner for SmolLM2-135M (documentation only) |
+| M66 | Public model compatibility scanner (`compiler/check_llama_compat.py`) |
 | M67 | BF16/F16 source dtype coercion in `load_safetensors.py` |
 | M68 | GQA support: `n_kv_heads` config field, converter, runtime attention |
 | M69 | SmolLM2-135M import and validation (first real public model) |

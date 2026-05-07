@@ -1394,6 +1394,112 @@ static int check_m63_validation(void)
     return 0;
 }
 
+/*
+ * check_compat_scanner() — M66
+ *
+ * Python-skippable.  Validates compiler/check_llama_compat.py against the
+ * checked-in m66_compat_fixture (vocab=16, d_model=8, n_heads=2, n_layers=2)
+ * and tiny_llama_2l.safetensors (F32, 21 tensors):
+ *   1. Human-readable pass report
+ *   2. JSON pass report
+ *   3. Missing model-dir fails with exit 1 and "compat: error"
+ *   4. Missing safetensors (no --no-tensors) → compat: fail with error message
+ */
+static int check_compat_scanner(void)
+{
+    char output[16384];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* 1. Human-readable pass report against tiny fixture. */
+    if (run_command(
+            "python3 compiler/check_llama_compat.py"
+            " --model-dir compiler/fixtures/m66_compat_fixture"
+            " --safetensors compiler/fixtures/tiny_llama_2l.safetensors"
+            " > build/compat_pass.txt 2>&1") != 0) {
+        fputs("compat: pass run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/compat_pass.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "compat: pass")          == NULL) ||
+        (strstr(output, "model_type")             == NULL) ||
+        (strstr(output, "llama")                  == NULL) ||
+        (strstr(output, "tensor_count")           == NULL) ||
+        (strstr(output, "21")                     == NULL) ||
+        (strstr(output, "source_dtype")           == NULL) ||
+        (strstr(output, "F32")                    == NULL) ||
+        (strstr(output, "llama_check")            == NULL) ||
+        (strstr(output, "ok")                     == NULL) ||
+        (strstr(output, "vocab_size_match")       == NULL) ||
+        (strstr(output, "yes")                    == NULL) ||
+        (strstr(output, "required_changes")       == NULL) ||
+        (strstr(output, "none")                   == NULL)) {
+        fputs("compat: pass output missing expected fields\n", stderr);
+        return -1;
+    }
+
+    /* 2. JSON pass report. */
+    if (run_command(
+            "python3 compiler/check_llama_compat.py"
+            " --model-dir compiler/fixtures/m66_compat_fixture"
+            " --safetensors compiler/fixtures/tiny_llama_2l.safetensors"
+            " --json"
+            " > build/compat_pass.json 2>&1") != 0) {
+        fputs("compat: --json run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/compat_pass.json", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "\"compat\"")           == NULL) ||
+        (strstr(output, "\"pass\"")             == NULL) ||
+        (strstr(output, "\"arch\"")             == NULL) ||
+        (strstr(output, "\"llama\"")            == NULL) ||
+        (strstr(output, "\"required_changes\"") == NULL) ||
+        (strstr(output, "\"safetensors\"")      == NULL) ||
+        (strstr(output, "\"tokenizer\"")        == NULL) ||
+        (strstr(output, "\"estimates\"")        == NULL)) {
+        fputs("compat: --json output missing expected keys\n", stderr);
+        return -1;
+    }
+
+    /* 3. Missing model-dir must exit non-zero and print "compat: error". */
+    if (run_command(
+            "python3 compiler/check_llama_compat.py"
+            " --model-dir /nonexistent_att1_m66_test_dir"
+            " > build/compat_nodir.txt 2>&1") == 0) {
+        fputs("compat: missing dir should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/compat_nodir.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "compat: error") == NULL)) {
+        fputs("compat: expected \"compat: error\" for missing dir\n", stderr);
+        return -1;
+    }
+
+    /* 4. Missing safetensors (default path, no --no-tensors) must exit
+     *    non-zero and report "safetensors file not found". */
+    if (run_command(
+            "python3 compiler/check_llama_compat.py"
+            " --model-dir compiler/fixtures/m66_compat_fixture"
+            " > build/compat_no_st.txt 2>&1") == 0) {
+        fputs("compat: missing safetensors should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/compat_no_st.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "safetensors file not found") == NULL)) {
+        fputs("compat: expected \"safetensors file not found\" message\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1408,7 +1514,8 @@ int main(void)
         (check_hf_tokenizer()             != 0) ||
         (check_pretokenized_pipeline()    != 0) ||
         (check_source_comparison()        != 0) ||
-        (check_m63_validation()           != 0)) {
+        (check_m63_validation()           != 0) ||
+        (check_compat_scanner()           != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

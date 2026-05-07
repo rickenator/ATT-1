@@ -1548,12 +1548,173 @@ free RAM during conversion: **2 GB**.
 
 #### Next milestone
 
-M66 — converter compatibility scanner: document all gaps between the current
-`convert_llama_to_att1.py` implementation and the requirements of
-SmolLM2-135M, including BF16 dtype, GQA tensor shapes, config field
-resolution, and tokenizer vocab size.  Documentation and planning only.
+M66 — compatibility scanner (`compiler/check_llama_compat.py`): inspects a
+local model directory and produces a pass/fail compat report with a list of
+required converter changes.  Validated against the checked-in tiny fixture.
 
 `make test` passes (41 tests) after M65.  No code changes; documentation only.
+
+---
+
+### M66 — public model compatibility scanner (complete)
+
+**Goal:** Add `compiler/check_llama_compat.py` — a converter-side compatibility
+scanner that inspects a local model directory and reports whether the model is
+ready for ATT-1 LLaMA conversion.  Validated against the checked-in tiny
+fixture.  No C source changes, no Makefile changes, no `.att1` format changes,
+no model weights committed.
+
+#### New file: `compiler/check_llama_compat.py`
+
+```
+Usage:
+  python3 compiler/check_llama_compat.py --model-dir PATH
+  python3 compiler/check_llama_compat.py --model-dir PATH \\
+      --safetensors PATH/model.safetensors
+  python3 compiler/check_llama_compat.py --model-dir PATH --no-tensors
+  python3 compiler/check_llama_compat.py --model-dir PATH --json
+
+Exit codes:
+  0  compat pass (model ready for ATT-1 conversion)
+  1  fatal error (dir not found, config missing/unparseable)
+  2  compat fail (required converter changes present)
+```
+
+The scanner validates:
+
+| Check | Field |
+|-------|-------|
+| Directory exists | `--model-dir` path |
+| `config.json` present and parseable | always |
+| `model_type` in `SUPPORTED_ARCH` | `{"llama", "mistral"}` |
+| All 6 required fields present | `vocab_size`, `n_layers`, `n_heads`, `d_model`, `d_ff`, `max_seq_len` |
+| `d_model % n_heads == 0` | derived validation |
+| GQA detected and reported | `num_key_value_heads` ≠ `num_attention_heads` |
+| MoE detected and reported | `num_local_experts` etc. |
+| `model.safetensors` present | unless `--no-tensors` |
+| Safetensors header scans clean | via `scan_safetensors.py` |
+| All required LLaMA tensor keys present | via `check_llama_tensors()` |
+| Source dtype (F32 passes, BF16/F16 → required change) | per-tensor dtype scan |
+| Tokenizer assets in model directory | via `scan_tokenizer_dir()` |
+| `vocab_size` cross-check between tokenizer and config | if tokenizer present |
+
+#### Report output (human-readable)
+
+Passing case against the tiny MHA fixture (`compiler/fixtures/m66_compat_fixture`):
+
+```
+# ATT-1 LLaMA compatibility scan
+
+# config
+config_path               compiler/fixtures/m66_compat_fixture/config.json
+model_type                llama
+vocab_size                16
+n_layers                  2
+n_heads                   2
+d_model                   8
+d_ff                      16
+max_seq_len               128
+n_kv_heads                absent (MHA assumed)
+gqa_detected              no
+
+# safetensors
+safetensors_path          compiler/fixtures/tiny_llama_2l.safetensors
+tensor_count              21
+source_dtype              F32
+llama_check               ok
+llama_missing             0
+
+# tokenizer
+tokenizer_type            bpe_json
+vocab_size                16
+vocab_size_match          yes
+bos_id                    1
+eos_id                    2
+
+# artifact size estimates
+n_params                  1608
+n_tensors_est             21
+f32_bytes                 9200
+q8_bytes                  5360
+f32_size                  9.0 KB
+q8_size                   5.2 KB
+
+# required converter changes
+required_changes          none
+
+compat: pass
+```
+
+Failing case against a SmolLM2-135M-like config (GQA + no tokenizer assets):
+
+```
+n_kv_heads                3
+gqa_detected              yes
+...
+# required converter changes
+  required_change: GQA: num_key_value_heads=3, num_attention_heads=9 (ratio
+    3:1); GQA requires format change (n_kv_heads in att1_model_config),
+    converter change, and runtime attention change (M68)
+
+compat: fail
+```
+
+#### New fixture: `compiler/fixtures/m66_compat_fixture/`
+
+Combined fixture directory for compat scanner tests:
+
+| File | Source |
+|------|--------|
+| `config.json` | `tiny_llama_config.json` (vocab=16, d_model=8, n_heads=2, n_layers=2) |
+| `tokenizer.json` | `tiny_tokenizer/tokenizer.json` |
+| `tokenizer_config.json` | `tiny_tokenizer/tokenizer_config.json` |
+| `special_tokens_map.json` | `tiny_tokenizer/special_tokens_map.json` |
+
+The safetensors file is **not** copied — the scanner test passes
+`--safetensors compiler/fixtures/tiny_llama_2l.safetensors` explicitly.
+
+#### Test integration
+
+`check_compat_scanner()` in `tests/test_bench_smoke.c` (Python-skippable,
+no numpy required) runs four sub-checks:
+
+1. Human-readable pass report: `compat: pass`, all key fields present.
+2. JSON pass report: `"compat"`, `"pass"`, `"arch"`, `"llama"`, etc.
+3. Missing model-dir: exit ≠1, `compat: error` in output.
+4. Missing safetensors (no `--no-tensors`): exit ≠0, `safetensors file not found`.
+
+#### Manual scanner command for SmolLM2-135M (when available)
+
+After downloading to `~/Models/SmolLM2-135M/` (see M65 acquisition guide):
+
+```sh
+python3 compiler/check_llama_compat.py \
+    --model-dir ~/Models/SmolLM2-135M
+```
+
+Expected outcome (before M67/M68 blockers are resolved):
+
+```
+gqa_detected              yes
+...
+# required converter changes
+  required_change: GQA: num_key_value_heads=3, num_attention_heads=9 ...
+  required_change: source dtype ['BF16']: BF16/F16 coercion to F32 required ...
+
+compat: fail
+```
+
+This command is not required by `make test`; it requires a local download
+of the model (see M65).
+
+#### Next milestone
+
+M67 — BF16/F16 source dtype coercion in `compiler/load_safetensors.py`:
+extend the tensor reader to upcast BF16 and F16 payloads to F32 before
+returning values.  Python only; validate with a synthetic BF16 fixture.
+
+`make test` passes (41 tests) after M66.  No C source changes, no Makefile
+changes, no `.att1` format changes.
 
 ---
 
