@@ -505,6 +505,7 @@ runtime tokenizer selection are part of M50.
 | M59 | Local HF tokenizer helper: `compiler/tokenize_hf.py` — local text → token IDs; no C changes; no network. ✅ |
 | M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent. ✅ |
 | M61 | Source-model comparison harness: Python harness validates ATT-1 f32/q8 artifacts against source safetensors; static tensor mapping with transpose rules; numpy LLaMA forward pass; next-token match; m61 fixture with seeded random weights. ✅ |
+| M62 | Source comparison report integration: `--report`, `--report-json`, `--tokens-file`, `--backend`, `max_rel_error`, `logits_shape`; structured JSON result dict; hard fail on bad report path; smoke test extended. ✅ |
 
 ### M51 — tokenizer metadata schema
 
@@ -862,6 +863,63 @@ argmax (all-zero logits → argmax=0).  The m61 fixture uses seeded random
 weights to ensure a non-trivial, deterministic next-token prediction.
 
 `make test` passes (41 tests) after M61.  No new C test binary.
+
+### M62 — source comparison report integration (complete)
+
+**Goal:** Extend `compiler/compare_att1_to_source.py` to produce deterministic
+human-readable and JSON reports, expose `max_rel_error` and `logits_shape`
+fields, and add a `--tokens-file` / `--backend` option.  No C changes.  No
+`.att1` format changes.
+
+**New CLI flags:**
+
+| Flag | Meaning |
+|------|---------|
+| `--report` | Rich structured text report (`report: ok` at the end) |
+| `--report-json PATH` | Write JSON report to PATH; exit 1 on IO error |
+| `--tokens-file PATH` | Load prompt token IDs from file (overrides `--prompt-ids`) |
+| `--backend {cpu-f32,cpu-q8,cuda,cuda-q8}` | Backend for f32 forward-pass bench |
+
+**New output fields (default key=value mode):**
+
+- `f32_max_rel_error` — maximum relative error across f32 static tensor check
+- `q8_max_rel_error` — maximum relative error across q8 static tensor check
+- `logits_shape` — shape of the reference forward-pass output tensor
+
+**JSON report structure (`--report-json`):**
+
+```json
+{
+  "date":        "YYYY-MM-DD",
+  "safetensors": "...",
+  "config_path": "...",
+  "config":      { "vocab_size": ..., "n_layers": ..., ... },
+  "f32_static":  { "tensors_checked": ..., "max_abs_error": ..., "max_rel_error": ...,
+                   "tolerance": ..., "status": "pass|fail", "per_tensor": [...] },
+  "q8_static":   { ... },
+  "forward":     { "prompt_ids": [...], "logits_shape": [...], "ref_last_token": ...,
+                   "f32_forward_match": ..., "q8_forward_match": ..., ... },
+  "result":      "pass|fail"
+}
+```
+
+**Failure policy:**
+- `--report-json` with an unwritable path → print error to stderr, exit 1
+  (hard fail, no warning-only fallback).
+- Static error above tolerance → `status: fail`, overall `result: fail`.
+- Forward-pass argmax mismatch (f32) → hard fail.
+- Forward-pass argmax mismatch (q8) → warning only (quantisation rounding
+  can shift near-tied logits).
+
+**Smoke test additions (`tests/test_bench_smoke.c`):**
+
+1. `--report` mode: asserts `report: ok` and `result: pass` in output.
+2. `--report-json`: asserts JSON file contains `"result"`, `"f32_static"`,
+   `"q8_static"`, `"forward"`, `"config"`.
+3. Bad `--report-json` path: uses new `command_fails()` helper to assert
+   non-zero exit status.
+
+`make test` passes (41 tests) after M62.  No new C test binary.
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is
    out of scope until after M48.
 

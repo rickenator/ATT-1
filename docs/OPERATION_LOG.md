@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 61: source-model comparison harness.
+Milestone 62: source comparison report integration.
 
 ## Hard Rules
 
@@ -80,12 +80,13 @@ Milestone 61: source-model comparison harness.
 - Milestone 59: local Hugging Face tokenizer helper — `compiler/tokenize_hf.py` added; converts text to pretokenized token IDs using a local Hugging Face tokenizer directory; outputs comma-separated IDs to stdout (for `att1-bench --input-token-ids`) and optionally one-ID-per-line files (for `att1-bench --tokens-file`) and JSON metadata; tries `tokenizers` library first then falls back to `transformers` with `local_files_only=True`; exits 1 on missing path, 2 on missing package (with install guidance), 3 on tokenization error; `tests/test_bench_smoke.c` `check_hf_tokenizer()` added (always tests missing-path error; skips positive-path tests if neither package is installed); `docs/tokenizer_metadata.md` §M59 added and milestone tables updated; `docs/real_tiny_model_import.md` §M59 and §M56–M58 added; no C source change, no Makefile change, no `.att1` format change. `make test` passes (41 tests).
 - Milestone 60: converted model validation with pretokenized input — `tests/test_converter_validation.c` extended with `check_real_tiny_pretokenized()`: writes fixture IDs file (1,3,5), runs `--tokenizer external` bench with `--tokens-file` and `--input-token-ids` on `real_tiny_f32` and `real_tiny_q8` for cpu-f32/cpu-q8 single and cluster modes, asserts `tokenizer=external`/`prompt_tokens=3`/`generated_tokens=2`/`fabric_packets_sent>0` (cluster), skips CUDA tests when CUDA unavailable; `tests/test_bench_smoke.c` `check_pretokenized_pipeline()` added (Python-skippable: runs `tokenize_hf.py` on tiny tokenizer fixture then benches both real_tiny models via `--tokens-file`); milestone tables and §M60 sections added to `docs/tokenizer_metadata.md` and `docs/real_tiny_model_import.md`; no C source change, no Makefile change, no `.att1` format change. `make test` passes (41 tests).
 - Milestone 61: source-model comparison harness — `compiler/fixtures/make_m61_fixture.py` generates `compiler/fixtures/m61_llama_2l.safetensors` (seeded random weights, seed=61, scale=0.1, vocab_size=16, d_model=8, d_ff=16, n_layers=2, n_heads=2); `models/m61_f32/model.att1` and `models/m61_q8/model.att1` converted from fixture and checked in; `compiler/read_att1.py` added (stdlib-only ATT-1 binary reader, v1/v2, f32 and q8 decode including `dequantize()`); `compiler/compare_att1_to_source.py` added (full comparison harness: static tensor mapping with transpose rules for all 21 LLaMA tensors, max_abs_error report, numpy LLaMA reference forward pass with RMSNorm/RoPE/SwiGLU/causal attention, att1-bench subprocess call for f32 and q8 forward-pass next-token comparison; f32 max_abs_error=0, f32 forward_match=yes, q8 max_abs_error<0.6, q8 forward_match=yes); `tests/test_bench_smoke.c` `check_source_comparison()` added (Python-skippable, numpy-skippable: runs harness and checks `result: pass` and `forward_match: yes`); no C source change, no Makefile change, no `.att1` format change. `make test` passes (41 tests).
+- Milestone 62: source comparison report integration — `compiler/compare_att1_to_source.py` extended with `--report` (rich structured text report ending with `report: ok`), `--report-json PATH` (JSON report, hard exit 1 on IO error), `--tokens-file PATH` (load prompt IDs from file, overrides `--prompt-ids`), `--backend {cpu-f32,cpu-q8,cuda,cuda-q8}` (select f32 bench backend); `_compare_static` updated to return 5-tuple including `max_rel_error` and per-tensor list; `_call_att1_bench_generic` replaces old per-backend variants; structured `rpt` dict added (`date`, `safetensors`, `config_path`, `config`, `f32_static`, `q8_static`, `forward`, `result`); `logits_shape` and `max_rel_error` fields added to default key=value output; `tests/test_bench_smoke.c` `check_source_comparison()` extended with `command_fails()` helper and M62 sub-tests (`--report`, `--report-json`, bad path fails); no C source change, no Makefile change, no `.att1` format change. `make test` passes (41 tests).
 
 ## Next Prompt for Codex
 
 ## Active Task
 
-Milestone 61 complete. Await Milestone 62 scope.
+Milestone 62 complete. Await Milestone 63 scope.
 
 ## Known Risks
 

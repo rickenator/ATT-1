@@ -1123,14 +1123,28 @@ static int check_pretokenized_pipeline(void)
 /*
  * check_source_comparison() — M61
  *
- * Python-skippable.  Requires numpy.  Runs the M61 comparison harness
- * (compiler/compare_att1_to_source.py) against the m61 f32/q8 fixtures and
- * verifies that the static tensor mapping and the forward-pass next-token
- * prediction both pass.
+ * Python-skippable.  Requires numpy.  Tests the M62 report harness against
+ * the m61 f32/q8 fixtures:
+ *   1. Default mode (key=value): checks result/forward_match lines.
+ *   2. --report mode: checks report: ok line.
+ *   3. --report-json: checks JSON file contains expected keys.
+ *   4. Bad --report-json path: checks that the harness exits non-zero.
  */
+
+/*
+ * command_fails() — runs a command and returns 0 iff the command exits
+ * non-zero.  Inverse of run_command(); used for negative tests.
+ */
+static int command_fails(const char *command)
+{
+    const int rc = system(command);
+
+    return (rc != 0) ? 0 : -1;
+}
+
 static int check_source_comparison(void)
 {
-    char output[4096];
+    char output[16384];
 
     /* Skip gracefully when Python 3 is not available. */
     if (run_command("python3 --version > /dev/null 2>&1") != 0) {
@@ -1142,7 +1156,7 @@ static int check_source_comparison(void)
         return 0; /* skip — numpy not installed */
     }
 
-    /* Run the M61 comparison harness and capture output. */
+    /* 1. Default (key=value) mode: harness must exit 0 and report pass. */
     if (run_command("python3 compiler/compare_att1_to_source.py "
                     "--report-json build/m61_comparison.json "
                     "> build/m61_comparison.txt 2>&1") != 0) {
@@ -1169,6 +1183,60 @@ static int check_source_comparison(void)
             fputs("m61_compare: forward_match is not yes\n", stderr);
             return -1;
         }
+    }
+
+    /* 2. --report mode: must produce report: ok */
+    if (run_command("python3 compiler/compare_att1_to_source.py "
+                    "--report "
+                    "> build/m61_report.txt 2>&1") != 0) {
+        fputs("m62_report: --report run failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m61_report.txt", output, sizeof(output)) != 0) {
+        fputs("m62_report: cannot read --report output\n", stderr);
+        return -1;
+    }
+
+    if (strstr(output, "report:              ok") == NULL) {
+        fputs("m62_report: report: ok not found\n", stderr);
+        return -1;
+    }
+
+    if (strstr(output, "result:              pass") == NULL) {
+        fputs("m62_report: result: pass not found in --report output\n", stderr);
+        return -1;
+    }
+
+    /* 3. --report-json: JSON file must contain expected top-level keys. */
+    if (run_command("python3 compiler/compare_att1_to_source.py "
+                    "--report-json build/m61_rpt.json "
+                    "> /dev/null 2>&1") != 0) {
+        fputs("m62_report: --report-json run failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m61_rpt.json", output, sizeof(output)) != 0) {
+        fputs("m62_report: cannot read JSON report\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "\"result\"")     == NULL) ||
+        (strstr(output, "\"f32_static\"") == NULL) ||
+        (strstr(output, "\"q8_static\"")  == NULL) ||
+        (strstr(output, "\"forward\"")    == NULL) ||
+        (strstr(output, "\"config\"")     == NULL)) {
+        fputs("m62_report: JSON missing expected keys\n", stderr);
+        return -1;
+    }
+
+    /* 4. Bad --report-json path: harness must exit non-zero. */
+    if (command_fails(
+            "python3 compiler/compare_att1_to_source.py "
+            "--report-json /nonexistent/path/m62.json "
+            "> /dev/null 2>&1") != 0) {
+        fputs("m62_report: bad report-json path did not fail\n", stderr);
+        return -1;
     }
 
     return 0;

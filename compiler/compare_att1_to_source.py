@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ATT-1 source-model comparison harness (Milestone 61).
+ATT-1 source-model comparison harness (M61 core, M62 report extension).
 
 Validates that an ATT-1 converted model artifact (f32 or q8) faithfully
 represents the source LLaMA-style safetensors weights, and that its forward
@@ -12,8 +12,8 @@ Two validation layers
 1. Static tensor comparison
    For every tensor in the conversion plan, load the source value (applying
    the same transpose rule used by the converter), load the ATT-1 value, and
-   compute max_abs_error.  For f32 this should be < 1e-5 (float precision).
-   For q8 this reflects per-row quantisation error.
+   compute max_abs_error and max_rel_error.  For f32 this should be < 1e-4.
+   For q8 this reflects per-row quantisation error (< 0.6 on the m61 fixture).
 
 2. Dynamic forward-pass comparison  (requires numpy)
    Runs a Python LLaMA reference transformer on the prompt token IDs using
@@ -21,7 +21,14 @@ Two validation layers
    generated last_token.  Exact match is expected for f32; exact match is
    also expected for q8 since argmax is robust to small quantisation error.
 
-Fixtures used by default (M61):
+Report modes (M62)
+------------------
+No flag:      Print machine-readable key=value lines to stdout (default).
+--report:     Print a rich structured text report to stdout instead.
+--report-json PATH: Write a structured JSON report to PATH (hard fail on
+              IO error, exit 1).  Can be combined with --report.
+
+Fixtures used by default (M61/M62):
     --safetensors  compiler/fixtures/m61_llama_2l.safetensors
     --config       compiler/fixtures/tiny_llama_config.json
     --att1-f32     models/m61_f32/model.att1
@@ -29,6 +36,8 @@ Fixtures used by default (M61):
 
 Usage:
     python3 compiler/compare_att1_to_source.py [options]
+    python3 compiler/compare_att1_to_source.py --report
+    python3 compiler/compare_att1_to_source.py --report-json build/report.json
     python3 compiler/compare_att1_to_source.py \\
         --safetensors compiler/fixtures/m61_llama_2l.safetensors \\
         --config      compiler/fixtures/tiny_llama_config.json \\
@@ -42,6 +51,7 @@ Exit codes:
 """
 
 import argparse
+import datetime
 import json
 import math
 import os
@@ -225,13 +235,18 @@ def _transpose_2d(values, rows, cols):
 def _compare_static(safetensors_path, att1_model, cfg_dict, verbose):
     """Compare all mapped tensors between source safetensors and ATT-1.
 
-    Returns (n_checked, max_abs_error, error_message_or_None)
+    Returns (n_checked, max_abs_error, max_rel_error, per_tensor, error_or_None)
+
+    per_tensor is a list of dicts:
+        {"name": str, "shape": list[int], "max_abs_error": float, "max_rel_error": float}
     """
     hdr, data_offset = _load_safetensors_header(safetensors_path)
     plan             = _build_plan(cfg_dict)
 
     max_abs_error = 0.0
+    max_rel_error = 0.0
     n_checked     = 0
+    per_tensor    = []
 
     # lm_head may be missing (shared with embed); the converter falls back to
     # embed_tokens in that case.  Our fixture always has lm_head.
@@ -249,7 +264,7 @@ def _compare_static(safetensors_path, att1_model, cfg_dict, verbose):
                     safetensors_path, hdr, data_offset, "model.embed_tokens.weight"
                 )
             else:
-                return 0, 0.0, f"source tensor {src_name!r} not found"
+                return 0, 0.0, 0.0, [], f"source tensor {src_name!r} not found"
 
         # Apply expected transpose to get ATT-1 layout.
         if transpose:
@@ -259,29 +274,41 @@ def _compare_static(safetensors_path, att1_model, cfg_dict, verbose):
         # Load ATT-1 tensor.
         att1_t = att1_model.find_tensor(dst_name)
         if att1_t is None:
-            return 0, 0.0, f"ATT-1 tensor {dst_name!r} not found"
+            return 0, 0.0, 0.0, [], f"ATT-1 tensor {dst_name!r} not found"
 
         if att1_t.dtype == DTYPE_F32:
             dst_vals = att1_t.f32_values
         elif att1_t.dtype == DTYPE_Q8:
             dst_vals = att1_t.dequantize()
         else:
-            return 0, 0.0, f"unsupported dtype for {dst_name!r}"
+            return 0, 0.0, 0.0, [], f"unsupported dtype for {dst_name!r}"
 
         if len(src_vals) != len(dst_vals):
-            return 0, 0.0, (
+            return 0, 0.0, 0.0, [], (
                 f"element count mismatch for {dst_name!r}: "
                 f"source={len(src_vals)}, att1={len(dst_vals)}"
             )
 
-        err = max(abs(a - b) for a, b in zip(src_vals, dst_vals))
-        max_abs_error = max(max_abs_error, err)
+        _eps = 1e-9
+        t_abs = max(abs(a - b) for a, b in zip(src_vals, dst_vals))
+        t_rel = max(
+            abs(a - b) / (max(abs(a), abs(b)) + _eps)
+            for a, b in zip(src_vals, dst_vals)
+        )
+        max_abs_error = max(max_abs_error, t_abs)
+        max_rel_error = max(max_rel_error, t_rel)
         n_checked += 1
+        per_tensor.append({
+            "name": dst_name,
+            "shape": list(att1_t.shape),
+            "max_abs_error": t_abs,
+            "max_rel_error": t_rel,
+        })
 
         if verbose:
-            print(f"  {dst_name}: max_abs_error={err:.3e}")
+            print(f"  {dst_name}: max_abs_error={t_abs:.3e} max_rel_error={t_rel:.3e}")
 
-    return n_checked, max_abs_error, None
+    return n_checked, max_abs_error, max_rel_error, per_tensor, None
 
 
 # ---------------------------------------------------------------------------
@@ -423,11 +450,10 @@ def _load_weights_numpy(att1_model):
     return weights
 
 
-def _call_att1_bench(att1_path, token_ids, n_generate=1):
-    """Call att1-bench and return last_token (int) or None on failure."""
+def _call_att1_bench_generic(att1_path, token_ids, backend, n_generate=1):
+    """Call att1-bench with the given backend; return (last_token, error)."""
     ids_str = ",".join(str(i) for i in token_ids)
-    # Search for att1-bench relative to repo root (cwd).
-    bench = os.path.join("build", "att1-bench")
+    bench   = os.path.join("build", "att1-bench")
     if not os.path.isfile(bench):
         return None, "att1-bench not found at build/att1-bench"
     cmd = [
@@ -437,12 +463,10 @@ def _call_att1_bench(att1_path, token_ids, n_generate=1):
         "--input-token-ids", ids_str,
         "--tokens", str(n_generate),
         "--mode", "single",
-        "--backend", "cpu-f32",
+        "--backend", backend,
     ]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, str(exc)
 
@@ -457,6 +481,93 @@ def _call_att1_bench(att1_path, token_ids, n_generate=1):
 
 
 # ---------------------------------------------------------------------------
+# Report formatter (M62)
+# ---------------------------------------------------------------------------
+
+def _format_report_text(rpt):
+    """Return a rich structured text report string from a result dict."""
+    lines = []
+
+    def emit(key, value):
+        lines.append(_kv(key, value))
+
+    lines.append("=== ATT-1 source-model comparison report ===")
+    emit("date",        rpt.get("date", ""))
+    emit("safetensors", rpt["safetensors"])
+    emit("config",      rpt["config_path"])
+    lines.append("")
+
+    cfg = rpt.get("config", {})
+    lines.append("# source config")
+    emit("vocab_size",   cfg.get("vocab_size", ""))
+    emit("n_layers",     cfg.get("n_layers",   ""))
+    emit("n_heads",      cfg.get("n_heads",    ""))
+    emit("d_model",      cfg.get("d_model",    ""))
+    emit("d_ff",         cfg.get("d_ff",       ""))
+    emit("rope_theta",   cfg.get("rope_theta",  ""))
+    lines.append("")
+
+    f32s = rpt.get("f32_static")
+    if f32s:
+        lines.append("# f32 static comparison")
+        emit("att1_f32",             f32s["att1_path"])
+        emit("att1_f32_version",     f32s["att1_version"])
+        emit("f32_dtype",            f32s["dtype"])
+        emit("f32_tensors_checked",  f32s["tensors_checked"])
+        emit("f32_max_abs_error",    f"{f32s['max_abs_error']:.3e}")
+        emit("f32_max_rel_error",    f"{f32s['max_rel_error']:.3e}")
+        emit("f32_tolerance",        f"{f32s['tolerance']:.3e}")
+        emit("f32_status",           f32s["status"])
+        emit("f32_note",             f32s["note"])
+        if f32s.get("error"):
+            emit("f32_error", f32s["error"])
+        lines.append("")
+
+    q8s = rpt.get("q8_static")
+    if q8s:
+        lines.append("# q8 static comparison")
+        emit("att1_q8",              q8s["att1_path"])
+        emit("att1_q8_version",      q8s["att1_version"])
+        emit("q8_dtype",             q8s["dtype"])
+        emit("q8_tensors_checked",   q8s["tensors_checked"])
+        emit("q8_max_abs_error",     f"{q8s['max_abs_error']:.3e}")
+        emit("q8_max_rel_error",     f"{q8s['max_rel_error']:.3e}")
+        emit("q8_tolerance",         f"{q8s['tolerance']:.3e}")
+        emit("q8_status",            q8s["status"])
+        emit("q8_note",              q8s["note"])
+        if q8s.get("error"):
+            emit("q8_error", q8s["error"])
+        lines.append("")
+
+    fwd = rpt.get("forward")
+    if fwd:
+        lines.append("# forward pass")
+        emit("prompt_ids",       str(fwd["prompt_ids"]))
+        emit("logits_shape",     str(fwd["logits_shape"]))
+        emit("ref_last_token",   fwd["ref_last_token"])
+        if fwd.get("f32_bench_last_token") is not None:
+            emit("bench_last_token",  fwd["f32_bench_last_token"])
+            emit("bench_backend",     fwd["f32_backend"])
+            emit("forward_match",     "yes" if fwd["f32_forward_match"] else "no")
+            emit("f32_status",        fwd["f32_status"])
+        lines.append("")
+        if fwd.get("q8_bench_last_token") is not None:
+            lines.append("# q8 forward pass")
+            emit("q8_bench_last_token", fwd["q8_bench_last_token"])
+            emit("q8_bench_backend",    fwd["q8_backend"])
+            emit("q8_forward_match",
+                 "yes" if fwd["q8_forward_match"] else "warn (quantisation rounding)")
+            emit("q8_forward_note",     fwd["q8_note"])
+            lines.append("")
+
+    lines.append("# result")
+    emit("result",  rpt["result"])
+    emit("report",  "ok")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Main harness
 # ---------------------------------------------------------------------------
 
@@ -464,6 +575,36 @@ _DEFAULT_ST   = os.path.join("compiler", "fixtures", "m61_llama_2l.safetensors")
 _DEFAULT_CFG  = os.path.join("compiler", "fixtures", "tiny_llama_config.json")
 _DEFAULT_F32  = os.path.join("models", "m61_f32", "model.att1")
 _DEFAULT_Q8   = os.path.join("models", "m61_q8",  "model.att1")
+
+# Column width used for all aligned output lines.
+_COL = 21
+
+
+def _kv(key, value, col=_COL):
+    """Return 'key: <value>' with key+colon left-justified to col chars."""
+    return f"{(key + ':').ljust(col)}{value}"
+
+
+def _read_ids_file(path):
+    """Read token IDs from a file (one per line; # comments skipped).
+
+    Returns list[int] or raises ValueError on parse failure.
+    """
+    ids = []
+    with open(path) as fh:
+        for lineno, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                ids.append(int(line))
+            except ValueError:
+                raise ValueError(
+                    f"{path!r} line {lineno}: not an integer: {line!r}"
+                ) from None
+    if not ids:
+        raise ValueError(f"{path!r}: no token IDs found")
+    return ids
 
 
 def _parse_ids(s):
@@ -474,18 +615,18 @@ def _parse_ids(s):
 
 
 def run_harness(args):
-    """Execute the full comparison harness.  Returns (result_dict, exit_code)."""
-
-    result = {
-        "safetensors": args.safetensors,
-        "att1_f32":    args.att1_f32,
-        "att1_q8":     args.att1_q8 if args.att1_q8 else "(skipped)",
-        "prompt_ids":  args.prompt_ids,
-        "numpy":       _HAVE_NUMPY,
-        "checks": [],
-    }
+    """Execute the full comparison harness.  Returns (rpt_dict, exit_code)."""
 
     fail_msgs = []
+
+    # -------- resolve prompt IDs --------
+    prompt_ids = args.prompt_ids
+    if getattr(args, "tokens_file", None):
+        try:
+            prompt_ids = _read_ids_file(args.tokens_file)
+        except (OSError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return {}, 1
 
     # -------- load source config --------
     try:
@@ -493,9 +634,8 @@ def run_harness(args):
             cfg_dict = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"error: cannot load config {args.config!r}: {exc}", file=sys.stderr)
-        return result, 1
+        return {}, 1
 
-    # Map HF config keys to ATT-1 internal names.
     try:
         att1_cfg = {
             "vocab_size": cfg_dict["vocab_size"],
@@ -504,214 +644,230 @@ def run_harness(args):
             "d_model":    cfg_dict["hidden_size"],
             "d_ff":       cfg_dict["intermediate_size"],
             "max_seq_len": cfg_dict.get("max_position_embeddings", 128),
-            "rope_dim":   cfg_dict.get("hidden_size", 8) // cfg_dict["num_attention_heads"] * 2,
+            "rope_dim":   (cfg_dict.get("hidden_size", 8)
+                           // cfg_dict["num_attention_heads"] * 2),
         }
         rope_theta = float(cfg_dict.get("rope_theta", 10000.0))
     except KeyError as exc:
         print(f"error: missing config key {exc}", file=sys.stderr)
-        return result, 1
+        return {}, 1
 
-    result["config"] = {
-        "vocab_size": att1_cfg["vocab_size"],
-        "n_layers":   att1_cfg["n_layers"],
-        "n_heads":    att1_cfg["n_heads"],
-        "d_model":    att1_cfg["d_model"],
-        "d_ff":       att1_cfg["d_ff"],
-        "rope_theta": rope_theta,
-    }
+    att1_cfg["rope_theta"] = rope_theta
 
     # -------- load ATT-1 f32 model --------
     try:
         att1_f32 = read_att1_model(args.att1_f32)
     except Att1ReadError as exc:
         print(f"error: cannot load ATT-1 f32 model: {exc}", file=sys.stderr)
-        return result, 1
+        return {}, 1
 
     # -------- static f32 comparison --------
-    print(f"config:      vocab_size={att1_cfg['vocab_size']} "
-          f"d_model={att1_cfg['d_model']} d_ff={att1_cfg['d_ff']} "
-          f"n_layers={att1_cfg['n_layers']} n_heads={att1_cfg['n_heads']}")
-    print(f"att1_f32:    {args.att1_f32}")
-    print(f"prompt_ids:  {args.prompt_ids}")
-
-    n_f32, max_f32, f32_err = _compare_static(
+    n_f32, max_f32, rel_f32, pt_f32, f32_err = _compare_static(
         args.safetensors, att1_f32, att1_cfg, args.verbose
     )
+
     if f32_err:
         fail_msgs.append(f"f32 static: {f32_err}")
-        result["checks"].append({"name": "f32_static", "status": "fail", "error": f32_err})
+        f32_tol_ok = False
     else:
-        tol_ok = max_f32 < args.f32_tol
-        status = "pass" if tol_ok else "fail"
-        result["checks"].append({
-            "name": "f32_static",
-            "status": status,
-            "tensors_checked": n_f32,
-            "max_abs_error": max_f32,
-        })
-        print(f"f32_tensors_checked: {n_f32}")
-        print(f"f32_max_abs_error:   {max_f32:.3e}")
-        if not tol_ok:
+        f32_tol_ok = max_f32 < args.f32_tol
+        if not f32_tol_ok:
             fail_msgs.append(
-                f"f32 static: max_abs_error {max_f32:.3e} exceeds tolerance {args.f32_tol:.3e}"
+                f"f32 static: max_abs_error {max_f32:.3e} exceeds "
+                f"tolerance {args.f32_tol:.3e}"
             )
 
+    rpt_f32 = {
+        "att1_path":       args.att1_f32,
+        "att1_version":    att1_f32.version,
+        "dtype":           "f32",
+        "tensors_checked": n_f32,
+        "max_abs_error":   max_f32,
+        "max_rel_error":   rel_f32,
+        "tolerance":       args.f32_tol,
+        "status":          "pass" if (not f32_err and f32_tol_ok) else "fail",
+        "note":            "f32 copy is exact; zero error expected",
+        "error":           f32_err,
+        "per_tensor":      pt_f32,
+    }
+
     # -------- static q8 comparison (optional) --------
+    rpt_q8 = None
     if args.att1_q8:
         try:
             att1_q8 = read_att1_model(args.att1_q8)
         except Att1ReadError as exc:
             print(f"error: cannot load ATT-1 q8 model: {exc}", file=sys.stderr)
-            return result, 1
+            return {}, 1
 
-        print(f"att1_q8:     {args.att1_q8}")
-        n_q8, max_q8, q8_err = _compare_static(
+        n_q8, max_q8, rel_q8, pt_q8, q8_err = _compare_static(
             args.safetensors, att1_q8, att1_cfg, args.verbose
         )
+
         if q8_err:
             fail_msgs.append(f"q8 static: {q8_err}")
-            result["checks"].append({"name": "q8_static", "status": "fail", "error": q8_err})
+            q8_tol_ok = False
         else:
-            tol_ok = max_q8 < args.q8_tol
-            status = "pass" if tol_ok else "fail"
-            result["checks"].append({
-                "name": "q8_static",
-                "status": status,
-                "tensors_checked": n_q8,
-                "max_abs_error": max_q8,
-            })
-            print(f"q8_tensors_checked:  {n_q8}")
-            print(f"q8_max_abs_error:    {max_q8:.3e}")
-            if not tol_ok:
+            q8_tol_ok = max_q8 < args.q8_tol
+            if not q8_tol_ok:
                 fail_msgs.append(
-                    f"q8 static: max_abs_error {max_q8:.3e} exceeds tolerance {args.q8_tol:.3e}"
+                    f"q8 static: max_abs_error {max_q8:.3e} exceeds "
+                    f"tolerance {args.q8_tol:.3e}"
                 )
+
+        rpt_q8 = {
+            "att1_path":       args.att1_q8,
+            "att1_version":    att1_q8.version,
+            "dtype":           "q8",
+            "tensors_checked": n_q8,
+            "max_abs_error":   max_q8,
+            "max_rel_error":   rel_q8,
+            "tolerance":       args.q8_tol,
+            "status":          "pass" if (not q8_err and q8_tol_ok) else "fail",
+            "note":            ("q8 per-row int8 quantisation; "
+                                "max_abs_error < tolerance expected"),
+            "error":           q8_err,
+            "per_tensor":      pt_q8,
+        }
 
     # -------- forward-pass comparison (numpy required) --------
+    rpt_fwd = None
     if _HAVE_NUMPY:
-        weights_np = _load_weights_numpy(att1_f32)
-        ref_logits = _python_forward_pass(
-            weights_np, att1_cfg, args.prompt_ids, rope_theta
-        )
-        ref_next = int(np.argmax(ref_logits))
-        ref_logits_list = ref_logits.tolist()
+        weights_np  = _load_weights_numpy(att1_f32)
+        ref_logits  = _python_forward_pass(weights_np, att1_cfg, prompt_ids, rope_theta)
+        ref_next    = int(np.argmax(ref_logits))
+        logits_shape = list(ref_logits.shape)
 
-        # Call att1-bench.
-        bench_next, bench_err = _call_att1_bench(
-            args.att1_f32, args.prompt_ids, n_generate=1
+        f32_bench_backend = getattr(args, "backend", None) or "cpu-f32"
+        bench_next, bench_err = _call_att1_bench_generic(
+            args.att1_f32, prompt_ids, f32_bench_backend
         )
 
-        print(f"ref_last_token:      {ref_next}")
         if bench_err:
-            print(f"bench_last_token:    (error: {bench_err})")
-            result["checks"].append({
-                "name": "f32_forward",
-                "status": "skip",
-                "error": bench_err,
-            })
+            bench_match  = None
+            f32_fwd_status = "skip"
         else:
-            print(f"bench_last_token:    {bench_next}")
-            match = (ref_next == bench_next)
-            status = "pass" if match else "fail"
-            result["checks"].append({
-                "name": "f32_forward",
-                "status": status,
-                "ref_last_token": ref_next,
-                "bench_last_token": bench_next,
-                "match": match,
-                "ref_logits_top3": sorted(
-                    enumerate(ref_logits_list), key=lambda x: -x[1]
-                )[:3],
-            })
-            print(f"forward_match:       {'yes' if match else 'no'}")
-            if not match:
-                fail_msgs.append(
-                    f"f32 forward: ref={ref_next}, bench={bench_next}"
-                )
+            bench_match  = (ref_next == bench_next)
+            f32_fwd_status = "pass" if bench_match else "fail"
+            if not bench_match:
+                fail_msgs.append(f"f32 forward: ref={ref_next}, bench={bench_next}")
 
-        # q8 forward pass: call att1-bench with cpu-q8 backend.
+        # q8 bench comparison
+        q8_bench_next = None
+        q8_bench_err  = None
+        q8_match      = None
+        q8_fwd_status = "skip"
         if args.att1_q8:
-            bench_q8_next, bench_q8_err = _call_att1_bench_q8(
-                args.att1_q8, args.prompt_ids
+            q8_bench_next, q8_bench_err = _call_att1_bench_generic(
+                args.att1_q8, prompt_ids, "cpu-q8"
             )
-            if bench_q8_err:
-                result["checks"].append({
-                    "name": "q8_forward",
-                    "status": "skip",
-                    "error": bench_q8_err,
-                })
-            else:
-                match_q8 = (ref_next == bench_q8_next)
-                status_q8 = "pass" if match_q8 else "warn"
-                result["checks"].append({
-                    "name": "q8_forward",
-                    "status": status_q8,
-                    "ref_last_token": ref_next,
-                    "bench_last_token": bench_q8_next,
-                    "match": match_q8,
-                })
-                print(f"q8_bench_last_token: {bench_q8_next}")
-                print(f"q8_forward_match:    {'yes' if match_q8 else 'warn (quantisation rounding)'}")
-                if not match_q8:
-                    # q8 mismatch is a warning not a hard fail — quantisation
-                    # can shift argmax by 1 for near-tied logits.
+            if not q8_bench_err:
+                q8_match = (ref_next == q8_bench_next)
+                q8_fwd_status = "pass" if q8_match else "warn"
+                if not q8_match:
+                    # q8 argmax mismatch is a warning, not a hard failure.
                     print(
                         "note: q8 argmax differs from f32 ref; "
                         "may be acceptable if top-2 logits are close",
-                        file=sys.stderr
+                        file=sys.stderr,
                     )
-    else:
-        print("numpy_forward:       skipped (numpy not available)")
-        result["checks"].append({"name": "f32_forward", "status": "skip",
-                                 "reason": "numpy not available"})
 
-    # -------- summary --------
+        rpt_fwd = {
+            "prompt_ids":          prompt_ids,
+            "logits_shape":        logits_shape,
+            "ref_last_token":      ref_next,
+            "f32_backend":         f32_bench_backend,
+            "f32_bench_last_token": bench_next,
+            "f32_bench_error":     bench_err,
+            "f32_forward_match":   bench_match,
+            "f32_status":          f32_fwd_status,
+            "q8_backend":          "cpu-q8",
+            "q8_bench_last_token": q8_bench_next,
+            "q8_bench_error":      q8_bench_err,
+            "q8_forward_match":    q8_match,
+            "q8_status":           q8_fwd_status,
+            "q8_note":             ("q8 argmax may differ from f32 ref "
+                                    "for near-tied logits"),
+        }
+
+    # -------- assemble structured result dict --------
     overall = "pass" if not fail_msgs else "fail"
-    result["result"] = overall
-    print(f"result:              {overall}")
+    rpt = {
+        "date":        datetime.date.today().isoformat(),
+        "safetensors": args.safetensors,
+        "config_path": args.config,
+        "config":      {
+            "vocab_size": att1_cfg["vocab_size"],
+            "n_layers":   att1_cfg["n_layers"],
+            "n_heads":    att1_cfg["n_heads"],
+            "d_model":    att1_cfg["d_model"],
+            "d_ff":       att1_cfg["d_ff"],
+            "rope_theta": rope_theta,
+        },
+        "f32_static":  rpt_f32,
+        "q8_static":   rpt_q8,
+        "forward":     rpt_fwd,
+        "result":      overall,
+    }
+
+    # -------- emit output --------
+    if getattr(args, "report", False):
+        # Rich structured text report.
+        print(_format_report_text(rpt))
+    else:
+        # Machine-readable key=value lines (backward-compatible with M61).
+        print(f"config:      vocab_size={att1_cfg['vocab_size']} "
+              f"d_model={att1_cfg['d_model']} d_ff={att1_cfg['d_ff']} "
+              f"n_layers={att1_cfg['n_layers']} n_heads={att1_cfg['n_heads']}")
+        print(f"att1_f32:    {args.att1_f32}")
+        print(f"prompt_ids:  {prompt_ids}")
+        if f32_err:
+            print(f"f32_error:   {f32_err}", file=sys.stderr)
+        else:
+            print(f"f32_tensors_checked: {n_f32}")
+            print(f"f32_max_abs_error:   {max_f32:.3e}")
+            print(f"f32_max_rel_error:   {rel_f32:.3e}")
+        if rpt_q8:
+            print(f"att1_q8:     {args.att1_q8}")
+            if q8_err:
+                print(f"q8_error:    {q8_err}", file=sys.stderr)
+            else:
+                print(f"q8_tensors_checked:  {n_q8}")
+                print(f"q8_max_abs_error:    {max_q8:.3e}")
+                print(f"q8_max_rel_error:    {rel_q8:.3e}")
+        if rpt_fwd:
+            print(f"ref_last_token:      {rpt_fwd['ref_last_token']}")
+            print(f"logits_shape:        {rpt_fwd['logits_shape']}")
+            if bench_err:
+                print(f"bench_last_token:    (error: {bench_err})")
+            else:
+                print(f"bench_last_token:    {bench_next}")
+                print(f"forward_match:       {'yes' if bench_match else 'no'}")
+            if rpt_fwd["q8_bench_last_token"] is not None:
+                print(f"q8_bench_last_token: {rpt_fwd['q8_bench_last_token']}")
+                print(f"q8_forward_match:    "
+                      f"{'yes' if rpt_fwd['q8_forward_match'] else 'warn (quantisation rounding)'}")
+        else:
+            print("numpy_forward:       skipped (numpy not available)")
+        print(f"result:              {overall}")
 
     if fail_msgs:
         for msg in fail_msgs:
             print(f"FAIL: {msg}", file=sys.stderr)
 
-    if args.report_json:
+    # -------- JSON report (hard fail on IO error) --------
+    if getattr(args, "report_json", None):
         try:
             with open(args.report_json, "w") as fh:
-                json.dump(result, fh, indent=2)
+                json.dump(rpt, fh, indent=2)
         except OSError as exc:
-            print(f"warning: cannot write report JSON: {exc}", file=sys.stderr)
+            print(
+                f"error: cannot write report JSON {args.report_json!r}: {exc}",
+                file=sys.stderr,
+            )
+            return rpt, 1
 
-    return result, (0 if overall == "pass" else 2)
-
-
-def _call_att1_bench_q8(att1_path, token_ids, n_generate=1):
-    """Call att1-bench with cpu-q8 backend, return (last_token, error)."""
-    ids_str = ",".join(str(i) for i in token_ids)
-    bench = os.path.join("build", "att1-bench")
-    if not os.path.isfile(bench):
-        return None, "att1-bench not found"
-    cmd = [
-        bench,
-        "--model", att1_path,
-        "--tokenizer", "external",
-        "--input-token-ids", ids_str,
-        "--tokens", str(n_generate),
-        "--mode", "single",
-        "--backend", "cpu-q8",
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, str(exc)
-
-    if result.returncode != 0:
-        return None, f"att1-bench exit {result.returncode}: {result.stderr.strip()}"
-
-    for line in result.stdout.splitlines():
-        if line.startswith("last_token="):
-            return int(line.split("=", 1)[1].strip()), None
-
-    return None, "last_token not found"
+    return rpt, (0 if overall == "pass" else 2)
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +876,7 @@ def _call_att1_bench_q8(att1_path, token_ids, n_generate=1):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ATT-1 source-model comparison harness (M61)"
+        description="ATT-1 source-model comparison harness (M61/M62)"
     )
     parser.add_argument(
         "--safetensors", default=_DEFAULT_ST,
@@ -746,6 +902,15 @@ def main():
         help="Comma-separated prompt token IDs (default: 5)"
     )
     parser.add_argument(
+        "--tokens-file", default=None, dest="tokens_file", metavar="PATH",
+        help="Load prompt token IDs from file (one per line; overrides --prompt-ids)"
+    )
+    parser.add_argument(
+        "--backend", default=None,
+        choices=["cpu-f32", "cpu-q8", "cuda", "cuda-q8"],
+        help="Backend for f32 bench forward comparison (default: cpu-f32)"
+    )
+    parser.add_argument(
         "--f32-tol", default=1e-4, type=float, dest="f32_tol",
         help="Max abs error tolerance for f32 static check (default: 1e-4)"
     )
@@ -754,8 +919,12 @@ def main():
         help="Max abs error tolerance for q8 static check (default: 0.6)"
     )
     parser.add_argument(
+        "--report", action="store_true",
+        help="Print rich structured text report instead of key=value lines"
+    )
+    parser.add_argument(
         "--report-json", default=None, dest="report_json", metavar="PATH",
-        help="Write JSON report to PATH"
+        help="Write JSON report to PATH (exit 1 on IO error)"
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",
