@@ -660,6 +660,35 @@ Each passing test validates: `tokenizer=external`, `mode=`, `backend=`,
 `make test` passes (41 tests).  No `.att1` format change.  No C source change.
 No backend change.  No new C test files.
 
+## M71 Public Tokenized End-to-End Validation
+
+M71 keeps tokenizer implementation in Python tooling and uses the existing
+M58 external token-ID mode for runtime execution.  `compiler/validate_public_tokenized.py`
+invokes `compiler/tokenize_hf.py` on a local tokenizer directory, writes a
+local one-ID-per-line token file and tokenizer JSON metadata, then runs the
+converted f32/q8 artifacts through backend smoke paths.
+
+Manual command:
+
+```sh
+python3 compiler/validate_public_tokenized.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --tokenizer-dir ~/Models/SmolLM2-135M \
+    --prompt-text "The answer is" \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokenizer-json ~/Models/att1/SmolLM2-135M/prompt_tokens.json \
+    --tokens 1 \
+    --tiles 2 \
+    --report-json ~/Models/att1/SmolLM2-135M/tokenized_e2e.json
+```
+
+The report includes prompt text, token IDs, token count, artifact path,
+backend, mode, generated-token count, last token, timing, and pass/fail status.
+CUDA unavailable/unsupported rows are reported as `unsupported`.  No
+BPE/SentencePiece parser is added to C, and no tokenizer assets are committed.
+
 ## M61 Source-Model Comparison Harness
 
 M61 adds a Python comparison harness that validates ATT-1 converted model

@@ -1830,6 +1830,86 @@ static int check_public_backend_smoke(void)
     return 0;
 }
 
+/*
+ * check_public_tokenized_validation() - M71
+ *
+ * Python-skippable.  When tokenizers or transformers is available, validates
+ * the full public-model manual path on tiny fixtures:
+ * tokenize_hf.py -> token IDs file -> pretokenized f32/q8 backend smoke.
+ */
+static int check_public_tokenized_validation(void)
+{
+    char output[16384];
+    int  has_tokenizers;
+    int  has_transformers;
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip - Python absent */
+    }
+
+    has_tokenizers   = (run_command(
+        "python3 -c 'import tokenizers' > /dev/null 2>&1") == 0);
+    has_transformers = (run_command(
+        "python3 -c 'import transformers' > /dev/null 2>&1") == 0);
+    if (!has_tokenizers && !has_transformers) {
+        return 0; /* skip - neither tokenizers nor transformers installed */
+    }
+
+    if (run_command(
+            "python3 compiler/validate_public_tokenized.py"
+            " --model-dir compiler/fixtures/tiny_llama"
+            " --tokenizer-dir compiler/fixtures/tiny_tokenizer"
+            " --prompt-text abc"
+            " --att1-f32 models/real_tiny_f32/model.att1"
+            " --att1-q8 models/real_tiny_q8/model.att1"
+            " --tokens-file build/m71_ids.txt"
+            " --tokenizer-json build/m71_tokenizer.json"
+            " --tokens 1 --tiles 2"
+            " --report-json build/m71_tokenized_report.json"
+            " > build/m71_tokenized_report.txt 2>&1") != 0) {
+        fputs("public_tokenized: validation script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m71_tokenized_report.txt", output, sizeof(output)) != 0) {
+        fputs("public_tokenized: cannot read report\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "prompt_text: abc") == NULL) ||
+        (strstr(output, "token_ids:") == NULL) ||
+        (strstr(output, "token_count:") == NULL) ||
+        (strstr(output, "backend=cpu-f32 mode=single") == NULL) ||
+        (strstr(output, "backend=cpu-f32 mode=cluster") == NULL) ||
+        (strstr(output, "backend=cpu-q8 mode=single") == NULL) ||
+        (strstr(output, "backend=cpu-q8 mode=cluster") == NULL) ||
+        (strstr(output, "generated_tokens=1") == NULL) ||
+        (strstr(output, "last_token=") == NULL) ||
+        (strstr(output, "token_time_us_total=") == NULL) ||
+        (strstr(output, "status=pass") == NULL) ||
+        (strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok") == NULL)) {
+        fputs("public_tokenized: report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m71_tokenized_report.json", output, sizeof(output)) != 0) {
+        fputs("public_tokenized: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"prompt_text\"") == NULL) ||
+        (strstr(output, "\"token_ids\"") == NULL) ||
+        (strstr(output, "\"token_count\"") == NULL) ||
+        (strstr(output, "\"runs\"") == NULL) ||
+        (strstr(output, "\"result\"") == NULL)) {
+        fputs("public_tokenized: JSON report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1848,7 +1928,8 @@ int main(void)
         (check_compat_scanner()           != 0) ||
         (check_bf16_coercion()            != 0) ||
         (check_q8_conversion()            != 0) ||
-        (check_public_backend_smoke()     != 0)) {
+        (check_public_backend_smoke()     != 0) ||
+        (check_public_tokenized_validation() != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

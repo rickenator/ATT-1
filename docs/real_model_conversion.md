@@ -554,6 +554,39 @@ generated-token count, last token, total token timing, and pass/fail status.
 CUDA rows that report unsupported or unavailable are marked `unsupported` and
 do not fail the validation; CPU rows must pass.
 
+## Public tokenized end-to-end validation (Milestone 71)
+
+M71 adds `compiler/validate_public_tokenized.py`, a manual end-to-end driver
+for the selected public model.  It first invokes the local HF tokenizer helper
+from M59 (`compiler/tokenize_hf.py`) to generate token IDs, then runs the
+pretokenized M58 `att1-bench --tokenizer external --tokens-file` path across
+the f32/q8 CPU and optional CUDA backend smoke matrix.
+
+All paths are local and external to Git:
+
+```sh
+python3 compiler/validate_public_tokenized.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --tokenizer-dir ~/Models/SmolLM2-135M \
+    --prompt-text "The answer is" \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokenizer-json ~/Models/att1/SmolLM2-135M/prompt_tokens.json \
+    --tokens 1 \
+    --tiles 2 \
+    --report-json ~/Models/att1/SmolLM2-135M/tokenized_e2e.json
+```
+
+The text report records prompt text, generated token IDs and token count,
+artifact path, backend, mode, generated-token count, last token, total token
+timing, and pass/fail status.  CUDA rows that report unsupported or
+unavailable are printed as `status=unsupported`; CPU rows must pass.
+
+No tokenizer assets, public weights, or generated public `.att1` artifacts
+are committed.  Runtime remains C11, the `.att1` format is unchanged, q4 is
+not implemented, and BPE/SentencePiece parsing remains out of C.
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -583,5 +616,6 @@ do not fail the validation; CPU rows must pass.
 | M68 | q8 conversion of BF16-source public model: `compare_att1_to_source.py` BF16 support; q8 smoke check (`check_q8_conversion`); manual validation workflow for public models; documented tolerance and token-divergence behaviour |
 | M69 | Public model source comparison report: `--model-dir`, external f32/q8 artifact paths, source-safetensors numpy reference, richer pass/fail report fields |
 | M70 | Public backend smoke validation: local f32/q8 artifacts across CPU single/cluster and optional CUDA single/cluster paths |
-| M71 | GQA support: `n_kv_heads` config field, converter, runtime attention |
-| M72 | SmolLM2-135M import and validation (first real public model) |
+| M71 | Public tokenized end-to-end validation: local HF tokenizer IDs plus f32/q8 CPU and optional CUDA backend smoke report |
+| M72 | GQA support: `n_kv_heads` config field, converter, runtime attention |
+| M73 | SmolLM2-135M import and validation (first real public model) |

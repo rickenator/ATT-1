@@ -2040,6 +2040,72 @@ CUDA rows to be either pass or unsupported.
 
 ---
 
+### M71 — public model end-to-end tokenized validation
+
+**Status:** complete.  This milestone adds a manual end-to-end validation
+driver for the selected public model using local tokenizer assets and local
+converted f32/q8 ATT-1 artifacts.  It does not add public weights, tokenizer
+assets, generated public `.att1` artifacts, online runtime dependencies, q4,
+BPE/SentencePiece parsing in C, or a binary format change.
+
+#### New tool
+
+| File | Purpose |
+|------|---------|
+| `compiler/validate_public_tokenized.py` | Invokes `compiler/tokenize_hf.py` to write a local token IDs file, then runs f32/q8 artifacts through pretokenized backend smoke paths |
+
+#### Manual validation command
+
+```sh
+python3 compiler/validate_public_tokenized.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --tokenizer-dir ~/Models/SmolLM2-135M \
+    --prompt-text "The answer is" \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokenizer-json ~/Models/att1/SmolLM2-135M/prompt_tokens.json \
+    --tokens 1 \
+    --tiles 2 \
+    --report-json ~/Models/att1/SmolLM2-135M/tokenized_e2e.json
+```
+
+The tool uses:
+
+- local source model directory (`--model-dir`) for provenance
+- local tokenizer assets (`--tokenizer-dir`) via `tokenize_hf.py`
+- generated local token IDs file (`--tokens-file`)
+- generated local tokenizer metadata JSON (`--tokenizer-json`)
+- local converted f32 and q8 `.att1` artifacts
+
+Validation paths:
+
+| Artifact | Backend | Mode | Required |
+|----------|---------|------|----------|
+| f32 | `cpu-f32` | single | yes |
+| f32 | `cpu-f32` | cluster | yes |
+| f32 | `cuda` | single | CUDA host only |
+| f32 | `cuda` | cluster | CUDA host only |
+| q8 | `cpu-q8` | single | yes |
+| q8 | `cpu-q8` | cluster | yes |
+| q8 | `cuda-q8` | single | CUDA host only |
+| q8 | `cuda-q8` | cluster | CUDA host only |
+
+Report fields include prompt text, token IDs, token count, artifact path,
+backend, mode, generated-token count, last token, `token_time_us_total`, and
+status.  CUDA rows that report unsupported or unavailable are printed clearly
+as `status=unsupported` and do not fail the validation; CPU rows must pass.
+
+#### Test coverage
+
+`tests/test_bench_smoke.c` adds `check_public_tokenized_validation()`, a
+Python-skippable check.  When `tokenizers` or `transformers` is installed, it
+runs the M71 flow against checked-in tiny tokenizer/model fixtures and checks
+text and JSON report shape.  When neither package is installed, it skips like
+the existing M59/M60 tokenizer smoke tests.
+
+---
+
 ## Related Documents
 
 - [real_model_conversion.md](real_model_conversion.md) — existing converter
