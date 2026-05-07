@@ -84,17 +84,19 @@ static int check_bench_tools(void)
     }
 
     if ((read_file("build/bench_single.txt", output, sizeof(output)) != 0) ||
-        (strstr(output, "mode=single") == NULL) ||
-        (strstr(output, "backend=cpu-f32") == NULL) ||
+        (strstr(output, "mode=single")       == NULL) ||
+        (strstr(output, "backend=cpu-f32")   == NULL) ||
         (strstr(output, "shard_plan=runtime") == NULL) ||
-        (strstr(output, "tokens_decoded=") == NULL)) {
+        (strstr(output, "tokenizer=byte")     == NULL) ||
+        (strstr(output, "tokens_decoded=")   == NULL)) {
         return -1;
     }
 
     if ((read_file("build/bench_cluster.txt", output, sizeof(output)) != 0) ||
-        (strstr(output, "mode=cluster") == NULL) ||
-        (strstr(output, "tiles=2") == NULL) ||
+        (strstr(output, "mode=cluster")       == NULL) ||
+        (strstr(output, "tiles=2")            == NULL) ||
         (strstr(output, "shard_plan=runtime") == NULL) ||
+        (strstr(output, "tokenizer=byte")     == NULL) ||
         (strstr(output, "fabric_packets_sent=") == NULL)) {
         return -1;
     }
@@ -612,6 +614,93 @@ static int check_tokenizer_import_report(void)
     return 0;
 }
 
+static int check_tokenizer_selection(void)
+{
+    char output[4096];
+
+    /* --- default mode is byte (no --tokenizer flag) --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode single "
+                    "> build/tok_sel_default.txt 2>&1") != 0) {
+        fputs("tok_sel: default run failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/tok_sel_default.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=byte") == NULL)) {
+        fputs("tok_sel: default tokenizer=byte missing from output\n", stderr);
+        return -1;
+    }
+
+    /* --- explicit --tokenizer byte works --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode single "
+                    "--tokenizer byte "
+                    "> build/tok_sel_byte.txt 2>&1") != 0) {
+        fputs("tok_sel: explicit byte run failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/tok_sel_byte.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=byte") == NULL)) {
+        fputs("tok_sel: explicit byte tokenizer=byte missing from output\n", stderr);
+        return -1;
+    }
+
+    /* --- --tokenizer metadata with tok_meta absent fails clearly --- */
+    /* models/dummy/model.att1 is a v1 model with no tok_meta section */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode single "
+                    "--tokenizer metadata "
+                    "> build/tok_sel_meta_absent.txt 2>&1") == 0) {
+        fputs("tok_sel: metadata absent should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/tok_sel_meta_absent.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer metadata absent") == NULL)) {
+        fputs("tok_sel: expected \"tokenizer metadata absent\" message\n", stderr);
+        return -1;
+    }
+
+    /* --- --tokenizer metadata with tok_meta present fails with not-impl --- */
+    /* models/tok_meta/model.att1 is a v2 model with bpe_json tok_meta */
+    if (run_command("./build/att1-bench --model models/tok_meta/model.att1 "
+                    "--prompt hello --tokens 4 --mode single "
+                    "--tokenizer metadata "
+                    "> build/tok_sel_meta_notimpl.txt 2>&1") == 0) {
+        fputs("tok_sel: metadata not-impl should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/tok_sel_meta_notimpl.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "not implemented yet") == NULL)) {
+        fputs("tok_sel: expected \"not implemented yet\" message\n", stderr);
+        return -1;
+    }
+
+    /* --- --tokenizer external fails clearly --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode single "
+                    "--tokenizer external "
+                    "> build/tok_sel_external.txt 2>&1") == 0) {
+        fputs("tok_sel: external should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/tok_sel_external.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "not implemented yet") == NULL)) {
+        fputs("tok_sel: expected \"not implemented yet\" for external\n", stderr);
+        return -1;
+    }
+
+    /* --- invalid tokenizer mode fails clearly (exit nonzero) --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 4 --mode single "
+                    "--tokenizer bogus "
+                    "> /dev/null 2>&1") == 0) {
+        fputs("tok_sel: invalid mode should have failed\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -620,7 +709,8 @@ int main(void)
         (check_scanner()                  != 0) ||
         (check_tensor_reader()            != 0) ||
         (check_tokenizer_scanner()        != 0) ||
-        (check_tokenizer_import_report()  != 0)) {
+        (check_tokenizer_import_report()  != 0) ||
+        (check_tokenizer_selection()      != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

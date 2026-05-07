@@ -207,7 +207,7 @@ real tokenizer is explicitly requested.
 | M53 | Deterministic tokenizer import report (`--report`, `--report-json PATH`, `--model-config PATH`); import readiness, unsupported-field listing, canonical composite asset hash. ✅ |
 | M54 | Optional `.att1` tokenizer metadata section; C parser, loader detection, inspect reporting, Python fixture generator. ✅ |
 | M55 | Runtime tokenizer selection plan: modes, CLI policy, compatibility checks, failure policy, and milestone split. ✅ |
-| M56 | Tokenizer selection CLI stub (`--tokenizer byte|metadata|external`); byte mode only wired; others stub-fail. |
+| M56 | Tokenizer selection CLI stub (`--tokenizer byte|metadata|external`); byte mode only wired; others stub-fail. ✅ |
 | M57 | Metadata tokenizer validation path: load, range-check, vocab cross-check; no BPE parser. |
 | M58 | External tokenizer preprocessing mode: pipe external process for prompt encoding. |
 | M59 | BPE tokenizer parser prototype (if chosen). |
@@ -378,11 +378,46 @@ hard error, not a fallback.
 
 | Milestone | Goal |
 |-----------|------|
-| M56 | Tokenizer selection CLI stub: `--tokenizer byte\|metadata\|external`; byte wired; others stub-fail clearly. |
+| M56 | Tokenizer selection CLI stub: `--tokenizer byte\|metadata\|external`; byte wired; others stub-fail clearly. ✅ |
 | M57 | Metadata tokenizer validation path: selection precondition checks, vocab/hash cross-check; no BPE parser yet. |
 | M58 | External tokenizer preprocessing mode: caller provides pre-encoded token IDs. |
 | M59 | BPE tokenizer parser prototype (if chosen). |
 | M60 | Tokenizer-aware converted model validation: golden prompt-to-ID fixtures, round-trip checks. |
+
+## M56 Tokenizer Selection CLI Stub
+
+M56 adds the `--tokenizer byte|metadata|external` flag to `att1-bench`.
+Byte tokenizer remains the only active runtime path.  `metadata` and
+`external` validate preconditions then fail with a clear "not implemented
+yet" message.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `tools/att1-bench.c` | Added `--tokenizer byte\|metadata\|external` flag; `check_tokenizer_mode()` helper; `tokenizer=<name>` printed in bench output |
+| `tests/test_bench_smoke.c` | Added `check_tokenizer_selection()` (6 cases); asserts `tokenizer=byte` in existing bench output |
+
+**`check_tokenizer_mode()` logic:**
+
+| Mode | Precondition | Result |
+|------|-------------|--------|
+| `byte` (default) | — | OK; inference runs normally |
+| `metadata` | tok_meta absent | Hard error: `tokenizer metadata absent` |
+| `metadata` | tok_meta present, type=unknown | Hard error: `tokenizer type unsupported: unknown` |
+| `metadata` | tok_meta present, type known | Hard error: `metadata tokenizer runtime not implemented yet` |
+| `external` | — | Hard error: `external tokenizer mode not implemented yet` |
+| other | — | Usage error; exit 1 |
+
+**Test cases in `check_tokenizer_selection()`:**
+1. Default mode prints `tokenizer=byte`.
+2. `--tokenizer byte` prints `tokenizer=byte`.
+3. `--tokenizer metadata` on v1 model (no tok_meta) → exit nonzero, `tokenizer metadata absent`.
+4. `--tokenizer metadata` on v2 tok_meta fixture (bpe_json) → exit nonzero, `not implemented yet`.
+5. `--tokenizer external` → exit nonzero, `not implemented yet`.
+6. `--tokenizer bogus` → exit nonzero.
+
+`make test` passes (40 tests).  No `.att1` format change.  No backend change.
 
 ## Canonical Asset Hash (M53)
 

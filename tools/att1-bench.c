@@ -12,8 +12,48 @@
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N] [--backend cpu-f32|cpu-q8|cuda|cuda-q8] [--shard-plan runtime|metadata]\n",
+    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster"
+           " [--tiles N] [--backend cpu-f32|cpu-q8|cuda|cuda-q8]"
+           " [--shard-plan runtime|metadata]"
+           " [--tokenizer byte|metadata|external]\n",
            argv0);
+}
+
+/*
+ * check_tokenizer_mode() validates the requested tokenizer mode against the
+ * loaded model.  "byte" (the default) always succeeds.  "metadata" and
+ * "external" are stub-only: they validate preconditions then fail with a
+ * clear "not implemented yet" message so callers can distinguish a bad flag
+ * from a missing feature.  Returns 0 on success (byte mode only), 1 on any
+ * error.
+ */
+static int check_tokenizer_mode(const att1_model *model, const char *mode)
+{
+    if ((mode == NULL) || (strcmp(mode, "byte") == 0)) {
+        return 0;
+    }
+
+    if (strcmp(mode, "metadata") == 0) {
+        if (!model->tok_meta.present) {
+            fputs("error: tokenizer metadata absent\n", stderr);
+            return 1;
+        }
+        if (model->tok_meta.tokenizer_type == ATT1_TOK_TYPE_UNKNOWN) {
+            fputs("error: tokenizer type unsupported: unknown\n", stderr);
+            return 1;
+        }
+        fputs("error: metadata tokenizer runtime not implemented yet\n", stderr);
+        return 1;
+    }
+
+    if (strcmp(mode, "external") == 0) {
+        fputs("error: external tokenizer mode not implemented yet\n", stderr);
+        return 1;
+    }
+
+    /* unreachable: invalid mode is caught at parse time */
+    fputs("error: unknown tokenizer mode\n", stderr);
+    return 1;
 }
 
 static int parse_size(const char *text, size_t *out)
@@ -159,7 +199,8 @@ static int run_single(const att1_model *model,
                       const unsigned char *prompt,
                       size_t prompt_bytes,
                       size_t max_tokens,
-                      const char *backend_name)
+                      const char *backend_name,
+                      const char *tokenizer_name)
 {
     att1_infer_t *infer = NULL;
     att1_trace_t *trace = NULL;
@@ -206,6 +247,7 @@ static int run_single(const att1_model *model,
     printf("mode=single\n");
     printf("shard_plan=runtime\n");
     printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
+    printf("tokenizer=%s\n", tokenizer_name != NULL ? tokenizer_name : "byte");
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);
     printf("generated_tokens=%zu\n", out_count);
@@ -229,7 +271,8 @@ static int run_cluster(const att1_model *model,
                        size_t max_tokens,
                        size_t tile_count,
                        const char *backend_name,
-                       att1_shard_plan_mode shard_plan_mode)
+                       att1_shard_plan_mode shard_plan_mode,
+                       const char *tokenizer_name)
 {
     att1_cluster_infer_config config;
     att1_cluster_infer_t *infer = NULL;
@@ -292,6 +335,7 @@ static int run_cluster(const att1_model *model,
     printf("shard_plan=%s\n",
            shard_plan_mode == ATT1_SHARD_PLAN_METADATA ? "metadata" : "runtime");
     printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
+    printf("tokenizer=%s\n", tokenizer_name != NULL ? tokenizer_name : "byte");
     printf("tiles=%zu\n", tile_count);
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);
@@ -317,6 +361,7 @@ int main(int argc, char **argv)
     const char *mode = NULL;
     const char *backend_name = NULL;
     const char *shard_plan_name = NULL;
+    const char *tokenizer_name = "byte";
     size_t max_tokens = 0u;
     size_t tile_count = 2u;
     att1_shard_plan_mode shard_plan_mode = ATT1_SHARD_PLAN_RUNTIME;
@@ -364,6 +409,14 @@ int main(int argc, char **argv)
                 usage(argv[0]);
                 return 1;
             }
+        } else if ((strcmp(argv[i], "--tokenizer") == 0) && ((i + 1) < argc)) {
+            tokenizer_name = argv[++i];
+            if ((strcmp(tokenizer_name, "byte")     != 0) &&
+                (strcmp(tokenizer_name, "metadata") != 0) &&
+                (strcmp(tokenizer_name, "external") != 0)) {
+                usage(argv[0]);
+                return 1;
+            }
         } else {
             usage(argv[0]);
             return 1;
@@ -381,6 +434,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (check_tokenizer_mode(&model, tokenizer_name) != 0) {
+        att1_model_free(&model);
+        return 1;
+    }
+
     print_shard_meta_summary(&model.shard_meta);
 
     if (strcmp(mode, "single") == 0) {
@@ -388,7 +446,8 @@ int main(int argc, char **argv)
                         (const unsigned char *)prompt,
                         strlen(prompt),
                         max_tokens,
-                        backend_name);
+                        backend_name,
+                        tokenizer_name);
     } else if (strcmp(mode, "cluster") == 0) {
         rc = run_cluster(&model,
                          (const unsigned char *)prompt,
@@ -396,7 +455,8 @@ int main(int argc, char **argv)
                          max_tokens,
                          tile_count,
                          backend_name,
-                         shard_plan_mode);
+                         shard_plan_mode,
+                         tokenizer_name);
     } else {
         usage(argv[0]);
         rc = 1;
