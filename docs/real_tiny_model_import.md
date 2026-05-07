@@ -225,26 +225,60 @@ not be written (or must be deleted) on any error.
 
 ## Exact future milestone split
 
-### M46 — safetensors metadata scanner
+### M46 — safetensors metadata scanner (complete)
 
 **Goal:** Parse the JSON metadata header of a `.safetensors` file and emit a
 human-readable tensor inventory, without loading any tensor data.
 
-**Scope:**
-- Python only under `compiler/`.
-- New function `scan_safetensors(path) -> list[dict]` returning per-tensor
-  name, dtype, shape, and byte range.
-- New CLI flag `--scan-safetensors PATH` added to the converter (or a separate
-  `compiler/scan_safetensors.py` script).
-- Output format: one line per tensor: `name  dtype  shape  offset  nbytes`.
-- Validate: magic bytes `{` (JSON starts at offset 0 after 8-byte length
-  prefix), length prefix fits in file, JSON is valid, each tensor entry has
-  `dtype`, `shape`, `data_offsets`.
-- Error on any file that is not a valid safetensors container.
-- No weight reading; no numpy array allocation.
-- No changes to C source or Makefile.
-- No new checked-in fixture (the `--dry-run` scan produces no artifact).
-- Test: Python `doctest` or a script smoke test in `compiler/`.
+**Implementation:**
+
+- **`compiler/scan_safetensors.py`** — standalone module + CLI.
+  Public API:
+  - `ScanError(Exception)` — raised for all fatal parse errors.
+  - `scan_safetensors(path) -> dict` — returns `file_size`, `header_len`,
+    `data_offset`, `data_size`, `metadata`, `tensors` (list of dicts with
+    `name`, `dtype`, `shape`, `data_offsets`, `nbytes`, `element_size`,
+    `expected_nbytes`), and `errors` (non-fatal issues).
+  - `llama_required_keys(n_layers) -> list` — full required key list.
+  - `check_llama_tensors(scan, n_layers, allow_tied_lm_head=True) -> list`
+    — returns list of missing required keys.
+  - `format_scan_report(scan, show_tensors=True) -> str` — human-readable
+    output with `key=value` header block followed by per-tensor lines.
+
+  CLI flags: `path`, `--check-llama`, `--n-layers N`, `--config PATH`,
+  `--json`, `--no-tensors`.
+  Exit codes: 0 = ok, 1 = fatal scan error, 2 = missing LLaMA tensors.
+
+  Fatal error conditions (exit 1):
+  - File not found.
+  - File < 8 bytes (cannot read header length prefix).
+  - `header_len` extends beyond file size (truncated/corrupt).
+  - JSON header is not valid UTF-8 or not valid JSON.
+  - Any tensor's `data_offsets[1]` exceeds `data_size`.
+
+  Non-fatal (logged in `errors`, exit 0 unless `--check-llama` fails):
+  - Missing `dtype`, `shape`, or `data_offsets` fields in a tensor entry.
+  - `data_offsets[0] > data_offsets[1]`.
+  - `nbytes` inconsistent with `shape × element_size`.
+  - Overlapping data regions between tensors.
+
+- **`compiler/fixtures/make_tiny_safetensors.py`** — generates a minimal
+  valid `.safetensors` fixture for testing:
+  - vocab=16, d\_model=8, d\_ff=16, n\_heads=2, n\_layers=2
+  - 21 tensors, all `F32`, ~6304 bytes data + ~2013 bytes JSON header
+    = 8325 bytes total
+
+- **`compiler/fixtures/tiny_llama_2l.safetensors`** — checked-in fixture
+  (8325 bytes, 21 tensors, all required LLaMA keys present).
+
+- **`tests/test_bench_smoke.c`** — `check_scanner()` added (Python-skippable):
+  - Runs basic scan, asserts `tensor_count=21`, `scan_errors=0`, `scan: ok`,
+    `model.embed_tokens.weight`, `lm_head.weight`, `F32`.
+  - Runs `--check-llama --n-layers 2`, asserts `llama_check: ok`,
+    `llama_missing: 0`.
+
+- No changes to C source, Makefile, or `.att1` format.
+- `make test` passes (39 tests).
 
 ### M47 — safetensors tensor reader
 

@@ -308,11 +308,65 @@ static int check_size_tools(void)
     return 0;
 }
 
+static int check_scanner(void)
+{
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* --- basic scan of checked-in tiny fixture --- */
+    if (run_command(
+            "python3 compiler/scan_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " > build/scan_output.txt 2>&1") != 0) {
+        return -1;
+    }
+
+    {
+        char rpt[8192];
+        if (read_file("build/scan_output.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "tensor_count=21")          == NULL) ||
+            (strstr(rpt, "scan_errors=0")            == NULL) ||
+            (strstr(rpt, "scan: ok")                 == NULL) ||
+            (strstr(rpt, "model.embed_tokens.weight") == NULL) ||
+            (strstr(rpt, "lm_head.weight")            == NULL) ||
+            (strstr(rpt, "F32")                       == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- LLaMA tensor presence check --- */
+    if (run_command(
+            "python3 compiler/scan_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " --check-llama --n-layers 2"
+            " > build/scan_check.txt 2>&1") != 0) {
+        return -1;
+    }
+
+    {
+        char rpt[8192];
+        if (read_file("build/scan_check.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "llama_check: ok") == NULL) ||
+            (strstr(rpt, "llama_missing: 0") == NULL)) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()       != 0) ||
         (check_size_tools()        != 0) ||
-        (check_converter_report()  != 0)) {
+        (check_converter_report()  != 0) ||
+        (check_scanner()           != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
