@@ -1,7 +1,38 @@
 #include "att1_model.h"
+#include "att1_shard_meta.h"
 
 #include <inttypes.h>
 #include <stdio.h>
+
+static const char *shard_dtype_name(uint32_t dtype)
+{
+    switch (dtype) {
+    case ATT1_SHARD_DTYPE_F32: return "f32";
+    case ATT1_SHARD_DTYPE_Q8:  return "q8";
+    default:                   return "unknown";
+    }
+}
+
+static const char *shard_repl_name(uint32_t repl)
+{
+    switch (repl) {
+    case ATT1_SHARD_REPL_NONE:        return "none";
+    case ATT1_SHARD_REPL_READ:        return "read";
+    case ATT1_SHARD_REPL_WRITE_BCAST: return "write-bcast";
+    default:                          return "unknown";
+    }
+}
+
+static const char *shard_reduce_name(uint32_t reduce)
+{
+    switch (reduce) {
+    case ATT1_SHARD_REDUCE_NONE:   return "none";
+    case ATT1_SHARD_REDUCE_SUM:    return "sum";
+    case ATT1_SHARD_REDUCE_MAX:    return "max";
+    case ATT1_SHARD_REDUCE_CONCAT: return "concat";
+    default:                       return "unknown";
+    }
+}
 
 static void print_shape(const att1_model_tensor *tensor)
 {
@@ -54,6 +85,27 @@ int main(int argc, char **argv)
                tensor->nbytes,
                tensor->shard_id,
                tensor->flags);
+    }
+
+    if (model.shard_meta.count > 0u) {
+        printf("shard_meta: %" PRIu64 " records\n", model.shard_meta.count);
+
+        for (i = 0u; i < model.shard_meta.count; i++) {
+            const att1_shard_meta_record *rec = &model.shard_meta.records[i];
+            const char *name = (rec->tensor_id < model.tensor_count)
+                               ? model.tensors[rec->tensor_id].name
+                               : "(out-of-range)";
+
+            printf("  shard[%" PRIu64 "] tile=%u aimu=%u"
+                   " dtype=%s repl=%s reduce=%s  %s\n",
+                   i,
+                   rec->tile_id,
+                   rec->owner_aimu,
+                   shard_dtype_name(rec->dtype),
+                   shard_repl_name(rec->replication_policy),
+                   shard_reduce_name(rec->reduction_behavior),
+                   name);
+        }
     }
 
     att1_model_free(&model);

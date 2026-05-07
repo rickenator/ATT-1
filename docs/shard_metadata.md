@@ -404,6 +404,49 @@ Test coverage added in `tests/test_shard_meta.c` (8 test cases):
 
 ---
 
+## 8. Fixture and Tooling (Milestone 36)
+
+**Offline fixture generator**: `compiler/make_shard_meta_fixture.py`
+
+Generates `models/shard_meta/model.att1` — a 14 876-byte deterministic `.att1`
+artifact with the same 21-tensor tiny model as `models/dummy/model.att1`, plus
+a 2 520-byte shard metadata section (21 × 120 bytes).
+
+Tile assignment scheme in the fixture:
+- `n_tiles=1`; all tensors: `tile_id=0`, `owner_aimu=0`
+- `replication_policy=none`, `reduction_behavior=none`
+- `dtype=f32`, `quantization=none`
+- `dependency_graph`: zero-filled (static scheduling not yet required)
+- `allowed_ops=0` (enforcement deferred), `checksum=0` (CRC-64 deferred)
+- `_reserved=0`
+
+Regenerate with:
+```
+python3 compiler/make_shard_meta_fixture.py
+```
+
+The fixture is **checked into the repository** so `make test` needs no Python.
+
+**`att1-inspect` shard summary** (`tools/att1-inspect.c`):
+When shard metadata is present, `att1-inspect` now prints after the tensor
+list:
+```
+shard_meta: 21 records
+  shard[0] tile=0 aimu=0 dtype=f32 repl=none reduce=none  tok_embeddings.weight
+  shard[1] tile=0 aimu=0 dtype=f32 repl=none reduce=none  layers.0.attention_norm.weight
+  ...
+```
+
+**C test coverage** (`tests/test_shard_meta_fixture.c`, 4 test cases):
+1. Fixture loads with `shard_meta.count == 21`; all records validated
+   (tensor_id in order, tile_id=0, dtype=f32, shape cross-checked)
+2. `att1-inspect` output contains `"shard_meta: 21 records"` and per-record
+   fields
+3. No-metadata dummy model still loads with `shard_meta.count == 0`
+4. `att1-inspect` on dummy model produces no `"shard_meta:"` line
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)

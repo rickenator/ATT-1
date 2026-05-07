@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 35: Optional shard metadata C parser skeleton.
+Milestone 36: Deterministic shard metadata fixture generation.
 
 ## Hard Rules
 
@@ -52,16 +52,16 @@ Milestone 35: Optional shard metadata C parser skeleton.
 - Milestone 32: Deterministic converter stub output — `compiler/convert_llama_to_att1.py` extended with binary `.att1` emitter; tensor names match `src/model_view.c`; `--out`/`--config` aliases added; stub validated with `att1-inspect` and `att1-bench`; determinism confirmed by SHA256.
 - Milestone 33: AIMU tiled tensor architecture document — `docs/aimu_architecture.md` added covering core concept, near-memory execution model, prototype mapping table, conceptual stack, future shard metadata fields, Phase 1/2/3 hardware roadmap, and non-goals; `README.md` updated with AIMU fabric paragraph.
 - Milestone 34: ATT-1 shard metadata design — `docs/shard_metadata.md` defining the future `.att1` shard metadata section for AIMU tensor-tile ownership: 13 fields, fixed 120-byte record layout, versioning rules, hostile-input validation requirements. No C source changes.
+- Milestone 35: Optional shard metadata C parser skeleton — `include/att1_shard_meta.h`, `src/shard_meta.c`, `att1_model.shard_meta` field, `model_loader.c` overlap check and parser call, `tests/test_shard_meta.c` (8 cases).
 
 ## Active Task
 
-Milestone 35: Optional shard metadata C parser skeleton.
-- Added `include/att1_shard_meta.h` — `att1_shard_meta_record`, `att1_shard_meta`, `att1_shard_meta_parse()`, `att1_shard_meta_free()`.
-- Added `src/shard_meta.c` — parser and validation (rules 1-3, 5-10, 13 of §5 in `docs/shard_metadata.md`); shape cross-validated against tensor descriptors; checksum/acyclic/capacity checks deferred.
-- Extended `att1_model` with `att1_shard_meta shard_meta` field (nullable).
-- Updated `src/model_loader.c` — section overlap check (shard vs descriptors vs data); parser call after tensor loop; `att1_shard_meta_free()` in `att1_model_free()`.
-- Added `tests/test_shard_meta.c` with 8 test cases: no metadata, valid metadata, bad bounds, truncated records, bad record count, invalid tensor_id, invalid dtype, nonzero _reserved.
-- `make test` passes; existing models with `shard_offset=0` load unchanged.
+Milestone 36: Deterministic shard metadata fixture generation.
+- Added `compiler/make_shard_meta_fixture.py` — offline generator for `models/shard_meta/model.att1`; same 21-tensor tiny model as dummy fixture plus 2 520-byte shard metadata section (21 × 120 bytes); all tile_id=0, dtype=f32, zero dependency graph and checksum.
+- Checked in `models/shard_meta/model.att1` (14 876 bytes, deterministic).
+- Updated `tools/att1-inspect.c` — prints `shard_meta: N records` and per-record tile/aimu/dtype/repl/reduce summary when shard metadata is present.
+- Added `tests/test_shard_meta_fixture.c` (4 cases): fixture loads with 21 records; inspect output content; dummy model unchanged; inspect of dummy model has no shard_meta line.
+- `make test` passes; no Python required at test time.
 
 ## Next Prompt for Codex
 
