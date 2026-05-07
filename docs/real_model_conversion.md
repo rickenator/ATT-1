@@ -621,7 +621,7 @@ not implemented, and BPE/SentencePiece parsing remains out of C.
 | M73 | q4 quantization planning: strategy document only; grouped int4 format spec, `.att1` format implications, converter and runtime plan, test plan, M74–M79 milestone split |
 | M74 | q4 format and schema: `ATT1_MODEL_DTYPE_Q4=3` enum; `flags[7:0]` group_size encoding (0=default 32, powers-of-two in [16,128]); nbytes formula `rows*cols/2 + rows*(cols/group_size)*4` with overflow-safe validation in loader; `ATT1_ERR_UNSUPPORTED` from `att1_model_view_validate_decoder()` for any q4 tensor (no silent fallback); `att1-inspect` q4 reporting (`dtype_name=q4`, `quant=grouped-q4-g%u`, `q4_groups`, `q4_packed_bytes`, `q4_scale_bytes`); `tests/test_quant_q4.c` (9 checks); no `.att1` version bump; no q4 inference |
 | M75 | CPU q4 packing/unpacking primitives: `att1_q4_group_scale()`, `att1_q4_pack_group()`, `att1_q4_unpack_group()`, `att1_q4_quantize_group()`, `att1_q4_dequantize_group()` in `src/quant.c`; 9 tests in `test_quant_q4_pack`; no q4 matmul, no q4 inference |
-| M76 | CPU q4 matmul prototype: `att1_matmul_q4xf32()` (dequantize-then-multiply), tests against f32 reference |
+| M76 | CPU q4 matmul prototype: `att1_q4_matrix` struct, `att1_quantize_q4_per_group()`, `att1_matmul_q4xf32()` (dequantize-then-multiply, activations stay float32); `test_matmul_q4` (8 checks); no q4 inference. 45 tests. |
 | M77 | q4 `.att1` fixture: `--weight-format q4` converter output, dtype-3 loader, `att1-inspect` q4 reporting, checked-in tiny q4 model |
 | M78 | CPU q4 single-tile inference: `--backend cpu-q4`, single-tile decode validated against cpu-f32 |
 | M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |

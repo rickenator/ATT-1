@@ -108,6 +108,76 @@ typedef struct att1_q8_matrix {
 } att1_q8_matrix;
 
 /*
+ * q4 weight matrix (M76).
+ *
+ * Row-major grouped int4 weights.  Each row is divided into groups of
+ * `group_size` elements; each group has one float32 scale.
+ *
+ *   packed : rows * cols / 2  bytes  (low-nibble-first, M74 wire format)
+ *   scales : rows * (cols / group_size)  float32 values
+ *
+ * `group_size` must be a valid q4 group size (power-of-two in
+ * [ATT1_Q4_GROUP_SIZE_MIN, ATT1_Q4_GROUP_SIZE_MAX]).
+ *
+ * Use att1_q4_matrix_alloc / att1_q4_matrix_free to manage storage.
+ * Use att1_quantize_q4_per_group to fill from a float32 weight array.
+ */
+typedef struct att1_q4_matrix {
+    size_t   rows;
+    size_t   cols;
+    uint32_t group_size;
+    uint8_t *packed;  /* rows * cols / 2 bytes */
+    float   *scales;  /* rows * (cols / group_size) float32 values */
+} att1_q4_matrix;
+
+/*
+ * Allocate storage for a q4 weight matrix.
+ * rows, cols must be non-zero; cols must be even and divisible by group_size.
+ * group_size must be a valid q4 group size.
+ * Returns 0 on success; -1 on invalid args or allocation failure.
+ * On success, release with att1_q4_matrix_free().
+ */
+int att1_q4_matrix_alloc(att1_q4_matrix *matrix,
+                         size_t          rows,
+                         size_t          cols,
+                         uint32_t        group_size);
+
+/*
+ * Release owned q4 matrix storage and zero all fields.
+ * Passing NULL is allowed.
+ */
+void att1_q4_matrix_free(att1_q4_matrix *matrix);
+
+/*
+ * Quantize row-major float32 weights into a q4 matrix using per-group
+ * symmetric scales.  Allocates `matrix` internally; caller must free with
+ * att1_q4_matrix_free().
+ * Returns 0 on success; -1 on invalid args, non-finite input, or alloc failure.
+ */
+int att1_quantize_q4_per_group(att1_q4_matrix *matrix,
+                               const float    *weights,
+                               size_t          rows,
+                               size_t          cols,
+                               uint32_t        group_size);
+
+/*
+ * Compute row-major q4xf32 matrix multiplication (dequantize-then-multiply):
+ *   dst[lhs_rows, weights->rows] = lhs[lhs_rows, weights->cols]
+ *                                  * dequant(weights)^T
+ *
+ * Activations (lhs) remain float32.  Weights are dequantized on the fly:
+ *   element = int4_nibble * group_scale.
+ *
+ * lhs_cols must equal weights->cols.
+ * Returns 0 on success; -1 on invalid args or dimension mismatch.
+ */
+int att1_matmul_q4xf32(float                *dst,
+                       const float          *lhs,
+                       size_t                lhs_rows,
+                       size_t                lhs_cols,
+                       const att1_q4_matrix *weights);
+
+/*
  * Allocate a row-major int8 weight matrix with one float32 scale per row.
  *
  * Passing zero rows or columns is invalid. On success, matrix must be released

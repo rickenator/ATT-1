@@ -458,7 +458,7 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 |-----------|------|
 | M74 | q4 format and schema: `ATT1_MODEL_DTYPE_Q4=3` enum, nbytes formula + group_size validation in loader, `ATT1_ERR_UNSUPPORTED` from validate_decoder, `att1-inspect` q4 reporting, `test_quant_q4` (9 checks) |
 | M75 | CPU q4 packing/unpacking primitives: `att1_q4_group_scale()`, `att1_q4_pack_group()`, `att1_q4_unpack_group()`, `att1_q4_quantize_group()`, `att1_q4_dequantize_group()`; `test_quant_q4_pack` (9 checks) |
-| M76 | CPU q4 matmul prototype: `att1_matmul_q4xf32()` (dequantize-then-multiply), tests against f32 reference |
+| M76 | CPU q4 matmul prototype: `att1_q4_matrix` struct, `att1_quantize_q4_per_group()`, `att1_matmul_q4xf32()` (dequantize-then-multiply, activations stay float32); `test_matmul_q4` (8 checks) |
 | M77 | q4 `.att1` fixture: `--weight-format q4` converter output, dtype-3 loader support, `att1-inspect` q4 reporting, checked-in tiny q4 model |
 | M78 | CPU q4 single-tile inference: `--backend cpu-q4` in `att1-bench`, single-tile decode validated against cpu-f32 |
 | M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |
@@ -626,3 +626,66 @@ Nine test cases in `tests/test_quant_q4_pack.c`:
 | 7 | `test_null_args` | Null pointers rejected by every function |
 | 8 | `test_nonfinite_input` | `inf`/`nan` in `src` rejected by `group_scale` and `quantize_group` |
 | 9 | `test_all_valid_group_sizes` | `{16,32,64,128}` all quantize/dequantize successfully |
+
+---
+
+## q4 matmul prototype (M76)
+
+`att1_q4_matrix` struct and four associated functions added to `src/quant.c`
+and declared in `include/att1_quant.h`.  No q4 inference path; activations
+stay float32 throughout.
+
+### `att1_q4_matrix` struct
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `rows` | `size_t` | Number of weight matrix rows |
+| `cols` | `size_t` | Number of weight matrix columns |
+| `group_size` | `uint32_t` | Per-row group size used during quantization |
+| `packed` | `uint8_t *` | `rows * cols / 2` bytes of packed nibbles |
+| `scales` | `float *` | `rows * (cols / group_size)` float32 scale values |
+
+### API
+
+| Function | Purpose |
+|----------|---------|
+| `att1_q4_matrix_alloc(matrix, rows, cols, group_size)` | Allocate and zero `packed` and `scales` buffers; validates all args including `cols` even, `cols % group_size == 0`, valid group_size |
+| `att1_q4_matrix_free(matrix)` | Free both buffers, zero all fields |
+| `att1_quantize_q4_per_group(matrix, weights, rows, cols, group_size)` | Allocate matrix then quantize row by row, group by group using `att1_q4_quantize_group()` |
+| `att1_matmul_q4xf32(dst, lhs, lhs_rows, lhs_cols, weights)` | Matrix multiply: for each group, unpack int4 values, multiply by group scale and float32 activation, accumulate into `dst` |
+
+All functions return `0` on success, `-1` on invalid arguments.
+`att1_q4_matrix_free()` is null-safe and always returns cleanly.
+
+### Algorithm
+
+`att1_matmul_q4xf32` uses a dequantize-then-multiply inner loop:
+for each `(lhs_row, weight_row, group)` triple it calls
+`att1_q4_unpack_group()` into a temporary `int8_t` buffer of at most
+`ATT1_Q4_GROUP_SIZE_MAX` elements, then accumulates
+`lhs[...] * (int4_val * scale)` into the output element.
+
+Output layout: `dst[lhs_row * weights->rows + weight_row]`.
+Requires `lhs_cols == weights->cols`.
+
+### Tolerance
+
+`Q4_TOLERANCE = 0.35f`.  Derived from one signed-int4 quantization step
+(`scale/7`) per element accumulated over a full group (32 elements default,
+scale ≤ 0.8/7 ≈ 0.114), rounded up conservatively to accommodate two groups
+per row in the medium test.
+
+### Test coverage (`test_matmul_q4`)
+
+Eight test cases in `tests/test_matmul_q4.c`:
+
+| # | Name | What it checks |
+|---|------|---------------|
+| 1 | `test_alloc_free` | Alloc/free lifecycle; field values after alloc and after free |
+| 2 | `test_alloc_invalid` | Null matrix, zero rows/cols, odd cols, cols not divisible by group_size, invalid group_size all rejected |
+| 3 | `test_tiny_hand_computed` | 2×16 all-0.5 and alternating-±1 weight matrix; lhs=all-1; q4 output within Q4_TOLERANCE of f32 reference |
+| 4 | `test_zero_matrix` | All-zero weights → all-zero output |
+| 5 | `test_medium_vs_f32` | 8×64 sin-based weights, 2×64 cos-based lhs, group_size=32; max_abs_error ≤ Q4_TOLERANCE vs f32 reference |
+| 6 | `test_q4_vs_q8` | 4×32 sin-based weights quantized both ways; q4 vs q8 output within Q4_TOLERANCE |
+| 7 | `test_dimension_mismatch` | `lhs_cols ≠ weights->cols` and zero `lhs_rows` both rejected |
+| 8 | `test_null_args` | Null dst/lhs/weights in matmul; null src/matrix in quantize all rejected |

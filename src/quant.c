@@ -247,3 +247,147 @@ int att1_q4_dequantize_group(const uint8_t *src_packed,
     }
     return 0;
 }
+
+/* ── q4 matrix alloc/free/quantize/matmul (M76) ──────────────────────────── */
+
+int att1_q4_matrix_alloc(att1_q4_matrix *matrix,
+                         size_t          rows,
+                         size_t          cols,
+                         uint32_t        group_size)
+{
+    size_t n_groups = 0u;
+    size_t packed_bytes = 0u;
+
+    if ((matrix == NULL) || (rows == 0u) || (cols == 0u) ||
+        !q4_group_size_valid(group_size) ||
+        ((cols & 1u) != 0u) ||
+        ((cols % (size_t)group_size) != 0u)) {
+        return -1;
+    }
+
+    memset(matrix, 0, sizeof(*matrix));
+
+    /* packed = rows * cols / 2 bytes */
+    if (att1_mul_size(rows, cols / 2u, &packed_bytes) != 0) { return -1; }
+
+    /* scales = rows * (cols / group_size) float32 values */
+    if (att1_mul_size(cols / (size_t)group_size, rows, &n_groups) != 0) { return -1; }
+
+    matrix->packed = calloc(packed_bytes, sizeof(*matrix->packed));
+    matrix->scales = calloc(n_groups, sizeof(*matrix->scales));
+    if ((matrix->packed == NULL) || (matrix->scales == NULL)) {
+        att1_q4_matrix_free(matrix);
+        return -1;
+    }
+
+    matrix->rows       = rows;
+    matrix->cols       = cols;
+    matrix->group_size = group_size;
+    return 0;
+}
+
+void att1_q4_matrix_free(att1_q4_matrix *matrix)
+{
+    if (matrix == NULL) { return; }
+    free(matrix->packed);
+    free(matrix->scales);
+    memset(matrix, 0, sizeof(*matrix));
+}
+
+int att1_quantize_q4_per_group(att1_q4_matrix *matrix,
+                               const float    *weights,
+                               size_t          rows,
+                               size_t          cols,
+                               uint32_t        group_size)
+{
+    size_t row = 0u;
+    size_t g   = 0u;
+    size_t n_groups_per_row = 0u;
+
+    if ((matrix == NULL) || (weights == NULL) ||
+        (rows == 0u) || (cols == 0u) ||
+        !q4_group_size_valid(group_size) ||
+        ((cols & 1u) != 0u) ||
+        ((cols % (size_t)group_size) != 0u)) {
+        return -1;
+    }
+
+    if (att1_q4_matrix_alloc(matrix, rows, cols, group_size) != 0) {
+        return -1;
+    }
+
+    n_groups_per_row = cols / (size_t)group_size;
+
+    for (row = 0u; row < rows; row++) {
+        for (g = 0u; g < n_groups_per_row; g++) {
+            const size_t src_off    = row * cols + g * (size_t)group_size;
+            const size_t packed_off = row * (cols / 2u) + g * ((size_t)group_size / 2u);
+            const size_t scale_idx  = row * n_groups_per_row + g;
+            float scale = 1.0f;
+
+            if (att1_q4_quantize_group(&weights[src_off], group_size,
+                                      &matrix->packed[packed_off],
+                                      &scale) != 0) {
+                att1_q4_matrix_free(matrix);
+                return -1;
+            }
+            matrix->scales[scale_idx] = scale;
+        }
+    }
+    return 0;
+}
+
+int att1_matmul_q4xf32(float                *dst,
+                       const float          *lhs,
+                       size_t                lhs_rows,
+                       size_t                lhs_cols,
+                       const att1_q4_matrix *weights)
+{
+    size_t   lhs_row     = 0u;
+    size_t   weight_row  = 0u;
+    size_t   g           = 0u;
+    size_t   j           = 0u;
+    size_t   n_groups_per_row = 0u;
+    int8_t   int4_buf[ATT1_Q4_GROUP_SIZE_MAX];
+
+    if ((dst == NULL) || (lhs == NULL) || (weights == NULL) ||
+        (weights->packed == NULL) || (weights->scales == NULL)) {
+        return -1;
+    }
+
+    if ((lhs_rows == 0u) || (lhs_cols == 0u) ||
+        (weights->rows == 0u) || (weights->cols == 0u) ||
+        (lhs_cols != weights->cols)) {
+        return -1;
+    }
+
+    n_groups_per_row = weights->cols / (size_t)weights->group_size;
+
+    for (lhs_row = 0u; lhs_row < lhs_rows; lhs_row++) {
+        for (weight_row = 0u; weight_row < weights->rows; weight_row++) {
+            float sum = 0.0f;
+
+            for (g = 0u; g < n_groups_per_row; g++) {
+                const size_t packed_off = weight_row * (weights->cols / 2u)
+                                        + g * ((size_t)weights->group_size / 2u);
+                const size_t act_off    = lhs_row * lhs_cols
+                                        + g * (size_t)weights->group_size;
+                const size_t scale_idx  = weight_row * n_groups_per_row + g;
+                const float  scale      = weights->scales[scale_idx];
+
+                if (att1_q4_unpack_group(&weights->packed[packed_off],
+                                         weights->group_size,
+                                         int4_buf) != 0) {
+                    return -1;
+                }
+
+                for (j = 0u; j < (size_t)weights->group_size; j++) {
+                    sum += lhs[act_off + j] * ((float)int4_buf[j] * scale);
+                }
+            }
+
+            dst[lhs_row * weights->rows + weight_row] = sum;
+        }
+    }
+    return 0;
+}
