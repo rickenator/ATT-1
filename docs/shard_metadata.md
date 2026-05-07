@@ -755,6 +755,116 @@ Group 2 cross-validates that runtime and metadata shard plans produce identical
 
 ---
 
+## §14  Converter Stub with Shard Metadata (Milestone 42)
+
+### Goal
+
+Extend the converter stub path to optionally emit a deterministic `.att1`
+artifact with a valid shard metadata section, then validate the artifact
+through the full C toolchain and backend matrix.
+
+### Converter Changes
+
+`compiler/convert_llama_to_att1.py` gains two new flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tiles N` | 1 | Set `n_tiles` in the model config and control layer→tile assignment |
+| `--shard-meta` | off | Emit a shard metadata section |
+
+When `--shard-meta` is specified, `build_att1_bytes()` appends a shard metadata
+section and sets `shard_metadata_offset` / `shard_metadata_size` in the header.
+
+Layer assignment algorithm (`--tiles N`):
+- Uses the same ceiling-division as `att1_shard_plan_build()` in `src/shard.c`,
+  ensuring the metadata plan produces the same layer→tile mapping as the
+  runtime plan.
+- Non-layer tensors (`tok_embeddings.weight`, `output_norm.weight`,
+  `output.weight`) map to tile 0; they appear as `extra` in
+  `att1_meta_plan_build()` and do not affect shard plan validation.
+
+### New Fixture
+
+`models/converted_stub_meta/model.att1` — generated from
+`compiler/fixtures/tiny_llama_config.json` with `--tiles 2 --shard-meta`:
+
+| Property | Value |
+|----------|-------|
+| vocab_size | 256 |
+| n_layers | 2 |
+| n_heads | 2 |
+| d_model | 32 |
+| d_ff | 64 |
+| max_seq_len | 128 |
+| n_tiles | 2 |
+| tensor_count | 21 |
+| shard_meta records | 21 |
+| layer 0 tensors | tile 0 |
+| layer 1 tensors | tile 1 |
+
+Regenerate with:
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --tiles 2 --shard-meta \
+    --out models/converted_stub_meta/model.att1
+```
+
+The fixture is **checked into the repository** so `make test` needs no Python.
+
+### Validation
+
+```bash
+# Inspect: shows config, 21 tensors, shard_meta: 21 records, plan_entries=2
+./build/att1-inspect models/converted_stub_meta/model.att1
+
+# Cluster inference — runtime plan (layer assignment computed from config)
+./build/att1-bench \
+    --model models/converted_stub_meta/model.att1 \
+    --prompt hello --tokens 8 \
+    --mode cluster --tiles 2 --shard-plan runtime --backend cpu-f32
+
+# Cluster inference — metadata plan (layer assignment read from shard_meta)
+./build/att1-bench \
+    --model models/converted_stub_meta/model.att1 \
+    --prompt hello --tokens 8 \
+    --mode cluster --tiles 2 --shard-plan metadata --backend cpu-f32
+```
+
+Both bench invocations must exit 0 and produce the same `last_token`.
+
+### Backend Matrix Extension (Group 3)
+
+`tests/test_backend_matrix.c` gains 8 new entries (24 total) in consistency
+group 3:
+
+| backend  | mode    | model                | tiles | shard_plan | CUDA required |
+|----------|---------|----------------------|-------|------------|---------------|
+| cpu-f32  | cluster | converted_stub_meta  | 2     | runtime    | no |
+| cpu-q8   | cluster | converted_stub_meta  | 2     | runtime    | no |
+| cuda     | cluster | converted_stub_meta  | 2     | runtime    | yes |
+| cuda-q8  | cluster | converted_stub_meta  | 2     | runtime    | yes |
+| cpu-f32  | cluster | converted_stub_meta  | 2     | metadata   | no |
+| cpu-q8   | cluster | converted_stub_meta  | 2     | metadata   | no |
+| cuda     | cluster | converted_stub_meta  | 2     | metadata   | yes |
+| cuda-q8  | cluster | converted_stub_meta  | 2     | metadata   | yes |
+
+Group 3 cross-validates that runtime and metadata plans produce identical
+`last_token` on the 2-tile converted stub.  On a CPU-only build: 12/24 passed,
+12 skipped.
+
+### Invariants
+
+- Existing `models/dummy/model.att1` and `models/shard_meta/model.att1`
+  fixtures are unchanged.
+- Existing `models/converted_stub/model.att1` (no metadata) is unchanged.
+- No `.att1` binary format change.
+- No backend behavior change.
+- `--shard-plan metadata` on the new fixture does not silently fall back to
+  runtime.
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)

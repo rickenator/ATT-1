@@ -22,10 +22,12 @@
 
 #define MATRIX_MODEL      "models/dummy/model.att1"
 #define MATRIX_META_MODEL "models/shard_meta/model.att1"
+#define MATRIX_STUB_MODEL "models/converted_stub_meta/model.att1"
 #define MATRIX_PROMPT     "hello"
 #define MATRIX_TOKENS     "8"
 #define MATRIX_TILES      "2"
 #define MATRIX_META_TILES "1"
+#define MATRIX_STUB_TILES "2"
 
 typedef struct {
     const char *backend;
@@ -35,7 +37,7 @@ typedef struct {
     const char *shard_plan;        /* NULL=single, "runtime", "metadata" */
     int         is_cluster;
     int         requires_cuda;
-    int         consistency_group; /* 0=single, 1=cluster-dummy, 2=cluster-meta */
+    int         consistency_group; /* 0=single, 1=cluster-dummy, 2=cluster-meta, 3=cluster-stub */
 } matrix_entry_t;
 
 typedef struct {
@@ -68,6 +70,16 @@ static const matrix_entry_t k_matrix[] = {
     { "cpu-q8",  "cluster", MATRIX_META_MODEL, MATRIX_META_TILES, "metadata", 1, 0, 2 },
     { "cuda",    "cluster", MATRIX_META_MODEL, MATRIX_META_TILES, "metadata", 1, 1, 2 },
     { "cuda-q8", "cluster", MATRIX_META_MODEL, MATRIX_META_TILES, "metadata", 1, 1, 2 },
+    /* cluster mode — converted stub with shard metadata, runtime plan, 2 tiles */
+    { "cpu-f32", "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "runtime",  1, 0, 3 },
+    { "cpu-q8",  "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "runtime",  1, 0, 3 },
+    { "cuda",    "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "runtime",  1, 1, 3 },
+    { "cuda-q8", "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "runtime",  1, 1, 3 },
+    /* cluster mode — converted stub with shard metadata, metadata plan, 2 tiles */
+    { "cpu-f32", "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 0, 3 },
+    { "cpu-q8",  "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 0, 3 },
+    { "cuda",    "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 1, 3 },
+    { "cuda-q8", "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 1, 3 },
 };
 
 #define MATRIX_COUNT (sizeof(k_matrix) / sizeof(k_matrix[0]))
@@ -307,10 +319,11 @@ int main(void)
     size_t   skipped = 0u;
     size_t   failed = 0u;
     /* One reference last_token per consistency group (0=single, 1=cluster-dummy,
-     * 2=cluster-shard_meta).  Group 2 spans both runtime and metadata plans:
-     * they must produce identical last_token (same model, same 1-tile config). */
-    uint32_t refs[3]     = {0u, 0u, 0u};
-    int      refs_set[3] = {0, 0, 0};
+     * 2=cluster-shard_meta, 3=cluster-converted_stub_meta).
+     * Group 2 spans both runtime and metadata plans on the 1-tile shard_meta fixture.
+     * Group 3 spans both runtime and metadata plans on the 2-tile converted stub. */
+    uint32_t refs[4]     = {0u, 0u, 0u, 0u};
+    int      refs_set[4] = {0, 0, 0, 0};
     int      token_mismatch = 0;
 
     for (i = 0u; i < MATRIX_COUNT; i++) {

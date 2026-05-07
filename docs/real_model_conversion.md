@@ -231,3 +231,46 @@ All three commands must exit 0.  The bench output should report
 - Tokenizer vocabulary import
 - Real weight transposition and shape alignment
 - q8 pre-quantized `.att1` file emission (dtype `2`)
+
+---
+
+## Shard metadata emission (Milestone 42)
+
+`compiler/convert_llama_to_att1.py` gains two new flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tiles N` | 1 | Set `n_tiles` in the model config and control layer→tile assignment |
+| `--shard-meta` | off | Emit a shard metadata section |
+
+When `--shard-meta` is specified, the emitted artifact includes a shard
+metadata section with one 120-byte record per tensor.  Layer tensors
+(`layers.L.*`) are assigned to tiles using the same ceiling-division algorithm
+as `att1_shard_plan_build()` in `src/shard.c`.
+
+### Example: 2-tile stub with shard metadata
+
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --tiles 2 --shard-meta \
+    --out models/converted_stub_meta/model.att1
+
+# Inspect (shows shard_meta: 21 records, plan_entries=2)
+./build/att1-inspect models/converted_stub_meta/model.att1
+
+# Cluster bench — runtime plan
+./build/att1-bench \
+    --model models/converted_stub_meta/model.att1 \
+    --prompt hello --tokens 8 \
+    --mode cluster --tiles 2 --shard-plan runtime --backend cpu-f32
+
+# Cluster bench — metadata plan (no silent fallback)
+./build/att1-bench \
+    --model models/converted_stub_meta/model.att1 \
+    --prompt hello --tokens 8 \
+    --mode cluster --tiles 2 --shard-plan metadata --backend cpu-f32
+```
+
+The fixture `models/converted_stub_meta/model.att1` is checked into the
+repository; no Python is required for `make test`.

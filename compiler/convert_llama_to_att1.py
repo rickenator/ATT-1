@@ -41,12 +41,13 @@ import sys
 # .att1 binary format constants (must match C header att1_model.h)
 # ---------------------------------------------------------------------------
 
-_MAGIC       = b"ATT1MODL"
-_VERSION     = 1
-_HEADER_SIZE = 80
-_CONFIG_SIZE = 36   # 9 × uint32 LE
-_DESC_SIZE   = 128
-_DTYPE_F32   = 1
+_MAGIC        = b"ATT1MODL"
+_VERSION      = 1
+_HEADER_SIZE  = 80
+_CONFIG_SIZE  = 36   # 9 × uint32 LE
+_DESC_SIZE    = 128
+_DTYPE_F32    = 1
+_SHARD_REC_SZ = 120  # ATT1_SHARD_META_RECORD_SIZE
 
 # ---------------------------------------------------------------------------
 # Supported architectures
@@ -145,7 +146,7 @@ def resolve_att1_config(cfg: dict, rope_theta_override: float | None) -> dict:
         att1["rope_dim"] = int(rope_dim_raw)
 
     # --- derived fields ---
-    att1["n_tiles"]      = 1   # default single-tile; cluster sharding is runtime
+    att1["n_tiles"]      = 1   # default single-tile; may be overridden by --tiles
     att1["shard_count"]  = 0
 
     return att1
@@ -176,7 +177,8 @@ def validate_att1_config(att1: dict) -> list[str]:
     return errors
 
 
-def print_plan(arch: str, att1: dict, output_path: str | None) -> None:
+def print_plan(arch: str, att1: dict, output_path: str | None,
+               emit_shard_meta: bool = False) -> None:
     print("ATT-1 conversion plan")
     print(f"  source arch   : {arch}")
     print(f"  vocab_size    : {att1['vocab_size']}")
@@ -188,6 +190,8 @@ def print_plan(arch: str, att1: dict, output_path: str | None) -> None:
     print(f"  rope_dim      : {att1['rope_dim']}")
     print(f"  rope_theta    : {att1['rope_theta']}")
     print(f"  head_dim      : {att1['d_model'] // att1['n_heads']}")
+    print(f"  n_tiles       : {att1['n_tiles']}")
+    print(f"  shard_meta    : {'yes' if emit_shard_meta else 'no'}")
     n_tensors = 3 + att1["n_layers"] * 9  # tok_embed + 9/layer + output_norm + output_weight
     print(f"  planned tensors: {n_tensors}")
     if output_path:
@@ -238,12 +242,100 @@ def _descriptor(tensor: dict, offset: int) -> bytes:
     )
 
 
-def build_att1_bytes(att1: dict) -> bytes:
+# ---------------------------------------------------------------------------
+# Shard metadata emission helpers (opt-in via --shard-meta)
+# ---------------------------------------------------------------------------
+
+def _layer_tile_assignment(n_layers: int, n_tiles: int) -> list[int]:
+    """
+    Return a list of tile_id[layer] using the same ceiling-division as
+    att1_shard_plan_build() in src/shard.c, so the metadata plan produces
+    the same layer→tile mapping as the runtime plan.
+    """
+    assignment: list[int] = []
+    next_layer = 0
+    for tile in range(n_tiles):
+        remaining_layers = n_layers - next_layer
+        remaining_tiles  = n_tiles  - tile
+        count = (remaining_layers + remaining_tiles - 1) // remaining_tiles
+        assignment.extend([tile] * count)
+        next_layer += count
+    return assignment
+
+
+def _shard_record_bytes(
+    tensor_index: int,
+    shape:        list[int],
+    tile_id:      int,
+    byte_offset:  int,
+) -> bytes:
+    """Build one 120-byte shard metadata record."""
+    ps = list(shape) + [1] * (4 - len(shape))
+    return struct.pack(
+        "<IIQ4QIIII8IIIIIQ",
+        tensor_index,                    # tensor_id
+        tile_id,
+        byte_offset,
+        ps[0], ps[1], ps[2], ps[3],      # shape[4]
+        _DTYPE_F32,                       # dtype
+        0,                                # quantization (none)
+        tile_id,                          # owner_aimu
+        0,                                # replication_policy (none)
+        0, 0, 0, 0, 0, 0, 0, 0,          # dependency_graph[8]
+        0,                                # allowed_ops
+        0,                                # routing_requirements
+        0,                                # reduction_behavior (none)
+        0,                                # _reserved
+        0,                                # checksum
+    )
+
+
+def _build_shard_meta_blob(att1: dict, tensors: list[dict]) -> bytes:
+    """
+    Build the raw shard metadata section bytes.
+
+    Layer tensors ("layers.L.*") are assigned via ceiling-division identical
+    to att1_shard_plan_build().  Non-layer tensors map to tile 0.
+    """
+    n_layers = att1["n_layers"]
+    n_tiles  = att1.get("n_tiles", 1)
+    layer_assignment = _layer_tile_assignment(n_layers, n_tiles)
+
+    blob        = bytearray()
+    byte_offset = 0
+    for i, t in enumerate(tensors):
+        name   = t["name"]
+        shape  = t["shape"]
+        nbytes = len(t["data"])
+        tile_id = 0
+        if name.startswith("layers."):
+            rest = name[len("layers."):]
+            dot  = rest.find(".")
+            if dot > 0:
+                try:
+                    layer_id = int(rest[:dot])
+                    if layer_id < n_layers:
+                        tile_id = layer_assignment[layer_id]
+                except ValueError:
+                    pass
+        blob += _shard_record_bytes(i, shape, tile_id, byte_offset)
+        byte_offset += nbytes
+    return bytes(blob)
+
+
+# ---------------------------------------------------------------------------
+# .att1 binary builder
+# ---------------------------------------------------------------------------
+
+def build_att1_bytes(att1: dict, emit_shard_meta: bool = False) -> bytes:
     """
     Build a complete deterministic .att1 binary from a resolved ATT-1 config.
 
     Tensor names match exactly what the C model_view.c layer_name() and
     att1_model_view_* functions expect.
+
+    When emit_shard_meta is True, a shard metadata section is appended and
+    the header shard_metadata_offset/size fields are set accordingly.
     """
     d  = att1["d_model"]
     v  = att1["vocab_size"]
@@ -282,6 +374,10 @@ def build_att1_bytes(att1: dict) -> bytes:
         data_blob += tensor["data"]
         byte_offset += len(tensor["data"])
 
+    shard_blob    = _build_shard_meta_blob(att1, tensors) if emit_shard_meta else b""
+    shard_offset  = (data_offset + len(data_blob)) if emit_shard_meta else 0
+    shard_size    = len(shard_blob)
+
     header = struct.pack(
         "<8sIIQQQQQQQQ",
         _MAGIC,
@@ -293,8 +389,8 @@ def build_att1_bytes(att1: dict) -> bytes:
         len(tensors),
         data_offset,
         len(data_blob),
-        0,
-        0,
+        shard_offset,
+        shard_size,
     )
     config_blob = struct.pack(
         "<IIIIIIIII",
@@ -308,14 +404,14 @@ def build_att1_bytes(att1: dict) -> bytes:
         att1["n_tiles"],
         att1["shard_count"],
     )
-    return header + config_blob + bytes(desc_blob) + bytes(data_blob)
+    return header + config_blob + bytes(desc_blob) + bytes(data_blob) + shard_blob
 
 
-def emit_att1(att1: dict, output_path: str) -> None:
+def emit_att1(att1: dict, output_path: str, emit_shard_meta: bool = False) -> None:
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    payload = build_att1_bytes(att1)
+    payload = build_att1_bytes(att1, emit_shard_meta=emit_shard_meta)
     with open(output_path, "wb") as f:
         f.write(payload)
     print(f"wrote {len(payload)} bytes → {output_path}")
@@ -375,6 +471,10 @@ def main() -> None:
 
     parser.add_argument("--rope-theta", type=float, default=None,
                         help="Override rope_theta (default: from config or 10000.0)")
+    parser.add_argument("--tiles", type=int, default=None, metavar="N",
+                        help="Number of tiles for shard metadata (default: 1)")
+    parser.add_argument("--shard-meta", action="store_true",
+                        help="Emit optional shard metadata section")
     parser.add_argument("--show-tensors", action="store_true",
                         help="Print planned tensor names and shapes")
     args = parser.parse_args()
@@ -408,6 +508,16 @@ def main() -> None:
     arch = check_arch(cfg)
     att1 = resolve_att1_config(cfg, args.rope_theta)
 
+    if args.tiles is not None:
+        if args.tiles < 1:
+            print("error: --tiles must be >= 1", file=sys.stderr)
+            sys.exit(1)
+        att1["n_tiles"] = args.tiles
+
+    if args.shard_meta and args.tiles is None:
+        # --shard-meta without --tiles defaults to 1 tile (still valid)
+        pass
+
     errors = validate_att1_config(att1)
     if errors:
         print("error: ATT-1 config validation failed:", file=sys.stderr)
@@ -415,7 +525,7 @@ def main() -> None:
             print(f"  {e}", file=sys.stderr)
         sys.exit(1)
 
-    print_plan(arch, att1, output_path)
+    print_plan(arch, att1, output_path, emit_shard_meta=args.shard_meta)
 
     if args.show_tensors:
         print()
@@ -426,8 +536,11 @@ def main() -> None:
 
     if output_path:
         print()
-        emit_att1(att1, output_path)
+        emit_att1(att1, output_path, emit_shard_meta=args.shard_meta)
         print("note: tensor data is deterministic synthetic values — not real weights")
+        if args.shard_meta:
+            n_tensors = 3 + att1["n_layers"] * 9
+            print(f"note: shard metadata section: {n_tensors} records × {_SHARD_REC_SZ} bytes")
     else:
         print()
         print("note: dry run — pass --output PATH to emit a .att1 artifact")
