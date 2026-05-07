@@ -1,4 +1,5 @@
 #include "att1_model.h"
+#include "att1_shard.h"
 #include "att1_shard_meta.h"
 
 #include <inttypes.h>
@@ -134,6 +135,43 @@ int main(int argc, char **argv)
                    shard_repl_name(rec->replication_policy),
                    shard_reduce_name(rec->reduction_behavior),
                    name);
+        }
+
+        /* Proposed plan derived from metadata vs runtime plan */
+        {
+            att1_meta_plan      proposed;
+            att1_shard_plan     runtime;
+            size_t              tile_count;
+
+            tile_count = (model.config.n_tiles > 0u)
+                         ? (size_t)model.config.n_tiles
+                         : 1u;
+
+            if (att1_meta_plan_build(&model, &proposed) == ATT1_OK) {
+                printf("shard_meta_plan_entries=%" PRIu32 "\n",
+                       proposed.count);
+                printf("shard_meta_plan_extra=%" PRIu32 "\n",
+                       proposed.extra);
+                printf("shard_meta_plan_conflict=%" PRIu32 "\n",
+                       proposed.conflict);
+
+                if (att1_shard_plan_build(&runtime, &model,
+                                         tile_count) == ATT1_OK) {
+                    att1_meta_plan_diff diff;
+
+                    if (att1_meta_plan_compare(&proposed, &runtime,
+                                              &diff) == ATT1_OK) {
+                        printf("shard_meta_plan_matching=%" PRIu32 "\n",
+                               diff.matching);
+                        printf("shard_meta_plan_mismatch=%" PRIu32 "\n",
+                               diff.mismatch);
+                        printf("shard_meta_plan_missing=%" PRIu32 "\n",
+                               diff.missing);
+                    }
+                    att1_shard_plan_free(&runtime);
+                }
+                att1_meta_plan_free(&proposed);
+            }
         }
     }
 

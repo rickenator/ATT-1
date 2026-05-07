@@ -55,18 +55,19 @@ Milestone 36: Deterministic shard metadata fixture generation.
 - Milestone 35: Optional shard metadata C parser skeleton — `include/att1_shard_meta.h`, `src/shard_meta.c`, `att1_model.shard_meta` field, `model_loader.c` overlap check and parser call, `tests/test_shard_meta.c` (8 cases).
 - Milestone 36: Deterministic shard metadata fixture generation — `compiler/make_shard_meta_fixture.py`, checked-in `models/shard_meta/model.att1` (14 876 bytes), `att1-inspect` per-record shard output, `tests/test_shard_meta_fixture.c` (4 cases).
 - Milestone 37: Shard metadata reporting and trace integration — `att1_shard_meta_summarize()`, `att1-inspect` summary header, `att1-bench` `shard_meta=present/absent`, `tests/test_shard_meta_report.c` (4 cases).
+- Milestone 38: Shard metadata consistency validation — `att1_shard_meta_validate()`, `att1-inspect` violations block, `tests/test_shard_meta_consistency.c` (8 cases).
 
 ## Active Task
 
-Milestone 38: Shard metadata consistency validation.
-- Added `att1_shard_meta_violation`, `att1_shard_meta_validation` structs to `include/att1_shard_meta.h`.
-- Added `att1_shard_meta_validate()` and `att1_shard_meta_validation_free()` to `include/att1_shard_meta.h` and `src/shard_meta.c`.
-  - Validates per record: tile_id within [0, n_tiles), owner_aimu within [0, n_tiles), dtype vs tensor descriptor, byte_offset <= tensor nbytes.
-  - Returns ATT1_OK with populated violations list; never rejects load.
-- Updated `tools/att1-inspect.c` — calls validate after summary; prints `shard_meta_violations: N` block with per-violation tensor_id, field, description when N > 0.
-- Added `tests/test_shard_meta_consistency.c` (8 cases): consistent, tile_id oob, aimu oob, dtype mismatch, byte_offset exceeds, absent, inspect violation output, inspect no-violation output.
-- No inference or backend behavior changed.
-- `make test` passes (35 tests).
+Milestone 39: Metadata-driven shard plan proposal.
+- Added `att1_meta_plan_entry`, `att1_meta_plan`, `att1_meta_plan_diff` types to `include/att1_shard.h`.
+- Added `att1_meta_plan_build()`, `att1_meta_plan_free()`, `att1_meta_plan_compare()` to `include/att1_shard.h` and `src/shard.c`.
+  - `att1_meta_plan_build()`: derives proposed layer→tile plan from shard metadata tensor names; counts extra (non-layer) records and conflicting tile assignments per layer.
+  - `att1_meta_plan_compare()`: compares proposed against runtime `att1_shard_plan`; reports matching, mismatch, missing, extra, conflict.
+- Updated `tools/att1-inspect.c` — builds proposed plan + runtime plan, prints `shard_meta_plan_entries/extra/conflict/matching/mismatch/missing` when metadata is present.
+- Added `tests/test_shard_meta_plan.c` (5 cases): absent, consistent, missing layer, tile conflict, inspect output.
+- No inference or backend behavior changed. No placement enforcement added.
+- `make test` passes (36 tests).
 
 ## Next Prompt for Codex
 

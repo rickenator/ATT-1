@@ -556,6 +556,63 @@ No inference or backend behavior changed.  No placement enforcement added.
 
 ---
 
+## 11. Metadata-Driven Shard Plan Proposal (Milestone 39)
+
+**New API**: `att1_meta_plan_build()`, `att1_meta_plan_compare()` (`include/att1_shard.h`, `src/shard.c`)
+
+Derives a *proposed* layer-to-tile shard plan from optional shard metadata and
+compares it against the runtime-generated `att1_shard_plan`.  The proposed
+plan is **advisory only** — inference always uses the runtime plan.
+
+### `att1_meta_plan` (proposed plan)
+
+| Field | Description |
+|-------|-------------|
+| `entries` | One `att1_meta_plan_entry` per covered layer, sorted by `layer_id` |
+| `count` | Number of layers with at least one assigned metadata record |
+| `extra` | Metadata records whose tensor name does not map to any layer (e.g. embeddings) |
+| `conflict` | Layers where two or more metadata records disagree on `tile_id` |
+
+Layer identification: a tensor name of the form `"layers.N.anything"` maps to
+layer N.  Tensors with `tile_id == ATT1_SHARD_TILE_UNASSIGNED` are skipped.
+Absent metadata produces `count=0` with no allocation.
+
+### `att1_meta_plan_diff` (comparison result)
+
+| Field | Description |
+|-------|-------------|
+| `matching` | Layers where proposed tile == runtime tile |
+| `mismatch` | Layers where proposed tile != runtime tile |
+| `missing` | Layers present in runtime plan but absent from proposed |
+| `extra` | Pass-through from `att1_meta_plan.extra` |
+| `conflict` | Pass-through from `att1_meta_plan.conflict` |
+
+### `att1-inspect` output (metadata present)
+
+```
+shard_meta_plan_entries=2
+shard_meta_plan_extra=3
+shard_meta_plan_conflict=0
+shard_meta_plan_matching=2
+shard_meta_plan_mismatch=0
+shard_meta_plan_missing=0
+```
+
+Printed after the per-record shard list.  When no metadata is present the
+block is omitted entirely.  The runtime plan comparison is skipped if
+`att1_shard_plan_build` fails (e.g. unsupported `shard_count` value).
+
+**C test coverage** (`tests/test_shard_meta_plan.c`, 5 test cases):
+1. Absent metadata (dummy model) — `count=0`, `extra=0`, `conflict=0`
+2. Consistent fixture (21 tensors, 2 layers, tile 0) — `matching=2`, all zeros elsewhere
+3. Missing layer (layer 1 tensor is `UNASSIGNED`) — proposed `count=1`, `missing=1`
+4. Conflicting tile ownership (two layer-0 tensors with different `tile_id`) — `conflict=1`
+5. `att1-inspect` on fixture — output contains `shard_meta_plan_entries=2` and `shard_meta_plan_matching=2`
+
+No inference or backend behavior changed.  No placement enforcement added.
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)
