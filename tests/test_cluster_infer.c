@@ -27,7 +27,7 @@ static int logits_close(const float *lhs,
 static int check_single_cluster_equivalence(const att1_model *model)
 {
     const unsigned char prompt[2] = {'A', 'T'};
-    const att1_cluster_infer_config config = {3u, 4u, 0u};
+    const att1_cluster_infer_config config = {3u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
     att1_infer_t *single = NULL;
     att1_cluster_infer_t *cluster = NULL;
     const float *single_logits = NULL;
@@ -186,8 +186,8 @@ static int check_activation_packet_copy(void)
 
 static int check_error_paths(const att1_model *model)
 {
-    const att1_cluster_infer_config invalid_config = {0u, 4u, 0u};
-    const att1_cluster_infer_config small_payload_config = {2u, 4u, 4u};
+    const att1_cluster_infer_config invalid_config = {0u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
+    const att1_cluster_infer_config small_payload_config = {2u, 4u, 4u, ATT1_SHARD_PLAN_RUNTIME};
     att1_cluster_infer_t *cluster = NULL;
 
     if (att1_cluster_infer_create(model,
@@ -211,7 +211,7 @@ static int check_error_paths(const att1_model *model)
 
 static int check_determinism(const att1_model *model)
 {
-    const att1_cluster_infer_config config = {2u, 4u, 0u};
+    const att1_cluster_infer_config config = {2u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
     att1_cluster_infer_t *lhs = NULL;
     att1_cluster_infer_t *rhs = NULL;
     const float *lhs_logits = NULL;

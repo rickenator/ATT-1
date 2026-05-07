@@ -18,7 +18,7 @@ static int create_cluster_pair(const att1_model *model,
                                att1_cluster_infer_t **out_cpuq8,
                                att1_cluster_infer_t **out_cudaq8)
 {
-    const att1_cluster_infer_config config = {2u, 4u, 0u};
+    const att1_cluster_infer_config config = {2u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
     att1_cluster_infer_t *cpuq8 = NULL;
     att1_cluster_infer_t *cudaq8 = NULL;
     att1_backend *cpuq8_backend = NULL;
@@ -305,7 +305,7 @@ static int test_trace_and_counter_equivalence(const att1_model *model)
  */
 static int test_no_silent_fallback(const att1_model *model)
 {
-    const att1_cluster_infer_config config = {2u, 4u, 0u};
+    const att1_cluster_infer_config config = {2u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
     att1_cluster_infer_t *infer = NULL;
     att1_backend *backend = NULL;
     uint32_t next = 0u;

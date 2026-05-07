@@ -12,7 +12,7 @@
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N] [--backend cpu-f32|cpu-q8|cuda|cuda-q8]\n",
+    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster [--tiles N] [--backend cpu-f32|cpu-q8|cuda|cuda-q8] [--shard-plan runtime|metadata]\n",
            argv0);
 }
 
@@ -227,7 +227,8 @@ static int run_cluster(const att1_model *model,
                        size_t prompt_bytes,
                        size_t max_tokens,
                        size_t tile_count,
-                       const char *backend_name)
+                       const char *backend_name,
+                       att1_shard_plan_mode shard_plan_mode)
 {
     att1_cluster_infer_config config;
     att1_cluster_infer_t *infer = NULL;
@@ -254,9 +255,17 @@ static int run_cluster(const att1_model *model,
     config.tile_count = tile_count;
     config.fabric_queue_capacity = 4u;
     config.fabric_max_payload_bytes = 0u;
+    config.shard_plan_mode = shard_plan_mode;
 
-    if ((att1_trace_create(model->config.n_layers, tile_count, &trace) != ATT1_OK) ||
-        (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK)) {
+    if (att1_trace_create(model->config.n_layers, tile_count, &trace) != ATT1_OK) {
+        goto cleanup;
+    }
+
+    if (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK) {
+        if (shard_plan_mode == ATT1_SHARD_PLAN_METADATA) {
+            fputs("error: metadata shard plan invalid, incomplete, or absent\n",
+                  stderr);
+        }
         goto cleanup;
     }
 
@@ -279,6 +288,8 @@ static int run_cluster(const att1_model *model,
     }
 
     printf("mode=cluster\n");
+    printf("shard_plan=%s\n",
+           shard_plan_mode == ATT1_SHARD_PLAN_METADATA ? "metadata" : "runtime");
     printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
     printf("tiles=%zu\n", tile_count);
     printf("requested_tokens=%zu\n", max_tokens);
@@ -304,8 +315,10 @@ int main(int argc, char **argv)
     const char *prompt = NULL;
     const char *mode = NULL;
     const char *backend_name = NULL;
+    const char *shard_plan_name = NULL;
     size_t max_tokens = 0u;
     size_t tile_count = 2u;
+    att1_shard_plan_mode shard_plan_mode = ATT1_SHARD_PLAN_RUNTIME;
     att1_model model;
     int i = 0;
     int rc = 1;
@@ -340,6 +353,16 @@ int main(int argc, char **argv)
                 usage(argv[0]);
                 return 1;
             }
+        } else if ((strcmp(argv[i], "--shard-plan") == 0) && ((i + 1) < argc)) {
+            shard_plan_name = argv[++i];
+            if (strcmp(shard_plan_name, "runtime") == 0) {
+                shard_plan_mode = ATT1_SHARD_PLAN_RUNTIME;
+            } else if (strcmp(shard_plan_name, "metadata") == 0) {
+                shard_plan_mode = ATT1_SHARD_PLAN_METADATA;
+            } else {
+                usage(argv[0]);
+                return 1;
+            }
         } else {
             usage(argv[0]);
             return 1;
@@ -371,7 +394,8 @@ int main(int argc, char **argv)
                          strlen(prompt),
                          max_tokens,
                          tile_count,
-                         backend_name);
+                         backend_name,
+                         shard_plan_mode);
     } else {
         usage(argv[0]);
         rc = 1;

@@ -182,11 +182,42 @@ att1_status_t att1_cluster_infer_create(
     infer->model = model;
     infer->host_tile_id = (uint32_t)tile_count;
 
-    status = att1_shard_plan_build(&infer->shard_plan, model, tile_count);
-    if (status != ATT1_OK) {
-        cluster_release_members(infer);
-        free(infer);
-        return status;
+    if (config->shard_plan_mode == ATT1_SHARD_PLAN_METADATA) {
+        att1_meta_plan proposed;
+        att1_status_t meta_status;
+
+        if (model->shard_meta.count == 0u) {
+            /* Metadata explicitly requested but absent. */
+            cluster_release_members(infer);
+            free(infer);
+            return ATT1_ERR_INVALID_ARG;
+        }
+
+        meta_status = att1_meta_plan_build(model, &proposed);
+        if (meta_status != ATT1_OK) {
+            cluster_release_members(infer);
+            free(infer);
+            return meta_status;
+        }
+
+        meta_status = att1_shard_plan_from_meta(&proposed,
+                                                model->config.n_layers,
+                                                tile_count,
+                                                &infer->shard_plan);
+        att1_meta_plan_free(&proposed);
+
+        if (meta_status != ATT1_OK) {
+            cluster_release_members(infer);
+            free(infer);
+            return meta_status;
+        }
+    } else {
+        status = att1_shard_plan_build(&infer->shard_plan, model, tile_count);
+        if (status != ATT1_OK) {
+            cluster_release_members(infer);
+            free(infer);
+            return status;
+        }
     }
 
     fabric_config.tile_count = tile_count + 1u;

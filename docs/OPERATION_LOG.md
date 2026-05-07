@@ -56,18 +56,18 @@ Milestone 36: Deterministic shard metadata fixture generation.
 - Milestone 36: Deterministic shard metadata fixture generation — `compiler/make_shard_meta_fixture.py`, checked-in `models/shard_meta/model.att1` (14 876 bytes), `att1-inspect` per-record shard output, `tests/test_shard_meta_fixture.c` (4 cases).
 - Milestone 37: Shard metadata reporting and trace integration — `att1_shard_meta_summarize()`, `att1-inspect` summary header, `att1-bench` `shard_meta=present/absent`, `tests/test_shard_meta_report.c` (4 cases).
 - Milestone 38: Shard metadata consistency validation — `att1_shard_meta_validate()`, `att1-inspect` violations block, `tests/test_shard_meta_consistency.c` (8 cases).
+- Milestone 39: Metadata-driven shard plan proposal — `att1_meta_plan_build()`, `att1_meta_plan_compare()`, `att1-inspect` plan block, `tests/test_shard_meta_plan.c` (5 cases). Advisory only; no inference or backend change. 36 tests pass.
 
 ## Active Task
 
-Milestone 39: Metadata-driven shard plan proposal.
-- Added `att1_meta_plan_entry`, `att1_meta_plan`, `att1_meta_plan_diff` types to `include/att1_shard.h`.
-- Added `att1_meta_plan_build()`, `att1_meta_plan_free()`, `att1_meta_plan_compare()` to `include/att1_shard.h` and `src/shard.c`.
-  - `att1_meta_plan_build()`: derives proposed layer→tile plan from shard metadata tensor names; counts extra (non-layer) records and conflicting tile assignments per layer.
-  - `att1_meta_plan_compare()`: compares proposed against runtime `att1_shard_plan`; reports matching, mismatch, missing, extra, conflict.
-- Updated `tools/att1-inspect.c` — builds proposed plan + runtime plan, prints `shard_meta_plan_entries/extra/conflict/matching/mismatch/missing` when metadata is present.
-- Added `tests/test_shard_meta_plan.c` (5 cases): absent, consistent, missing layer, tile conflict, inspect output.
-- No inference or backend behavior changed. No placement enforcement added.
-- `make test` passes (36 tests).
+Milestone 40: Opt-in metadata shard plan execution.
+- Added `att1_shard_plan_mode` enum and `att1_shard_plan_from_meta()` to `include/att1_shard.h` and `src/shard.c`.
+- Extended `att1_cluster_infer_config` with `shard_plan_mode` field (zero = runtime = default, backward-compatible).
+- `att1_cluster_infer_create()` branches on `shard_plan_mode`: METADATA path calls `att1_meta_plan_build()` + `att1_shard_plan_from_meta()`; RUNTIME path is unchanged. No silent fallback.
+- Added `--shard-plan runtime|metadata` CLI flag to `att1-bench`; prints `shard_plan=runtime|metadata` in key=value output.
+- Added `tests/test_shard_meta_exec.c` (8 cases).
+- Updated `docs/shard_metadata.md` §12.
+- `make test` passes (37 tests).
 
 ## Next Prompt for Codex
 

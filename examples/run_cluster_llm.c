@@ -7,7 +7,7 @@
 int main(void)
 {
     const unsigned char prompt[] = "ATT1";
-    const att1_cluster_infer_config config = {2u, 4u, 0u};
+    const att1_cluster_infer_config config = {2u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
     uint32_t tokens[4];
     size_t token_count = 0u;
     size_t i = 0u;

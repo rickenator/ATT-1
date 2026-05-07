@@ -104,6 +104,101 @@ att1_status_t att1_shard_plan_layer_tile(const att1_shard_plan *plan,
 }
 
 /* -------------------------------------------------------------------------
+ * att1_shard_plan_from_meta — convert a validated meta plan to shard plan
+ * ---------------------------------------------------------------------- */
+
+att1_status_t att1_shard_plan_from_meta(const att1_meta_plan *proposed,
+                                        uint32_t              n_layers,
+                                        size_t                tile_count,
+                                        att1_shard_plan      *out)
+{
+    uint32_t i;
+
+    if ((proposed == NULL) || (out == NULL) ||
+        (tile_count == 0u) || (n_layers == 0u)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    /* Every layer must be covered. */
+    if (proposed->count != n_layers) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    /* No conflicting tile assignments within any layer. */
+    if (proposed->conflict > 0u) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    if (n_layers > (uint32_t)(SIZE_MAX / sizeof(*out->layer_to_tile))) {
+        return ATT1_ERR_OOM;
+    }
+
+    out->layer_to_tile = calloc(n_layers, sizeof(*out->layer_to_tile));
+    out->tiles         = calloc(tile_count, sizeof(*out->tiles));
+    if ((out->layer_to_tile == NULL) || (out->tiles == NULL)) {
+        att1_shard_plan_free(out);
+        return ATT1_ERR_OOM;
+    }
+
+    out->layer_count = n_layers;
+    out->tile_count  = tile_count;
+
+    /* Pre-populate tiles with their tile_id and sentinel layer_start. */
+    for (i = 0u; i < (uint32_t)tile_count; i++) {
+        out->tiles[i].tile_id     = i;
+        out->tiles[i].layer_start = n_layers; /* sentinel: no layers yet */
+        out->tiles[i].layer_end   = 0u;
+    }
+
+    /* Fill layer_to_tile from proposed entries (already sorted by layer_id). */
+    for (i = 0u; i < proposed->count; i++) {
+        const uint32_t layer_id = proposed->entries[i].layer_id;
+        const uint32_t tile_id  = proposed->entries[i].tile_id;
+        att1_layer_shard *shard;
+
+        /* Entries must cover layers 0..n_layers-1 with no gaps. */
+        if (layer_id != i) {
+            att1_shard_plan_free(out);
+            return ATT1_ERR_INVALID_ARG;
+        }
+
+        if ((size_t)tile_id >= tile_count) {
+            att1_shard_plan_free(out);
+            return ATT1_ERR_INVALID_ARG;
+        }
+
+        out->layer_to_tile[layer_id] = tile_id;
+
+        shard = &out->tiles[tile_id];
+        if (shard->layer_start == n_layers) {
+            /* First layer for this tile. */
+            shard->layer_start = layer_id;
+            shard->layer_end   = layer_id + 1u;
+        } else if (shard->layer_end == layer_id) {
+            /* Contiguous extension. */
+            shard->layer_end = layer_id + 1u;
+        } else {
+            /* Non-contiguous: this tile already has a range that doesn't
+               extend naturally to layer_id. */
+            att1_shard_plan_free(out);
+            return ATT1_ERR_INVALID_ARG;
+        }
+    }
+
+    /* Fix up tiles with no assigned layers: layer_start = layer_end = 0. */
+    for (i = 0u; i < (uint32_t)tile_count; i++) {
+        if (out->tiles[i].layer_start == n_layers) {
+            out->tiles[i].layer_start = 0u;
+            out->tiles[i].layer_end   = 0u;
+        }
+    }
+
+    return ATT1_OK;
+}
+
+/* -------------------------------------------------------------------------
  * Metadata-driven proposed shard plan (Milestone 39)
  * ---------------------------------------------------------------------- */
 

@@ -16,6 +16,7 @@ typedef struct att1_cluster_infer_config {
     size_t tile_count;
     size_t fabric_queue_capacity;
     size_t fabric_max_payload_bytes;
+    att1_shard_plan_mode shard_plan_mode; /* 0 = runtime (default) */
 } att1_cluster_infer_config;
 
 typedef struct att1_cluster_tile_counters {

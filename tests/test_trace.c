@@ -74,7 +74,7 @@ static int check_single_trace(const att1_model *model)
 
 static int check_cluster_trace(const att1_model *model)
 {
-    const att1_cluster_infer_config config = {2u, 4u, 0u};
+    const att1_cluster_infer_config config = {2u, 4u, 0u, ATT1_SHARD_PLAN_RUNTIME};
     att1_cluster_infer_t *infer = NULL;
     att1_trace_t *trace = NULL;
     att1_trace_counters counters;

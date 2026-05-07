@@ -613,6 +613,95 @@ No inference or backend behavior changed.  No placement enforcement added.
 
 ---
 
+## §12  Opt-in Metadata Shard Plan Execution (Milestone 40)
+
+### Goal
+
+Allow cluster inference to use the metadata-derived shard plan when explicitly
+requested, while keeping the runtime-generated plan as the default.
+
+### New API
+
+```c
+/* include/att1_shard.h */
+typedef enum att1_shard_plan_mode {
+    ATT1_SHARD_PLAN_RUNTIME  = 0,  /* default: runtime-generated (existing) */
+    ATT1_SHARD_PLAN_METADATA = 1   /* opt-in: metadata-derived plan         */
+} att1_shard_plan_mode;
+
+att1_status_t att1_shard_plan_from_meta(const att1_meta_plan *proposed,
+                                        uint32_t              n_layers,
+                                        size_t                tile_count,
+                                        att1_shard_plan      *out);
+```
+
+`att1_shard_plan_from_meta()` validates that:
+- `proposed->count == n_layers` (every layer is covered).
+- `proposed->conflict == 0` (no competing tile assignments within a layer).
+- All `tile_id` values are `< tile_count`.
+- The entries are sorted and contiguous (`layer_id` == entry index).
+- Each tile's assigned layers form a single contiguous range.
+
+On success it populates `out` (caller responsible for
+`att1_shard_plan_free(out)` when done).
+
+### Config Extension
+
+```c
+/* include/att1_cluster_infer.h */
+typedef struct att1_cluster_infer_config {
+    size_t tile_count;
+    size_t fabric_queue_capacity;
+    size_t fabric_max_payload_bytes;
+    att1_shard_plan_mode shard_plan_mode; /* 0 = runtime (default) */
+} att1_cluster_infer_config;
+```
+
+Existing struct literals `{N, 4, 0}` remain correct — the new zero field maps
+to `ATT1_SHARD_PLAN_RUNTIME`.
+
+### Cluster Inference Behaviour
+
+`att1_cluster_infer_create()` branches on `config->shard_plan_mode`:
+
+| `shard_plan_mode`          | Behaviour |
+|----------------------------|-----------|
+| `ATT1_SHARD_PLAN_RUNTIME`  | Existing `att1_shard_plan_build()` path (default). |
+| `ATT1_SHARD_PLAN_METADATA` | Calls `att1_meta_plan_build()` then `att1_shard_plan_from_meta()`. Returns `ATT1_ERR_INVALID_ARG` if metadata absent, conflicting, incomplete, or assignment non-contiguous. **No silent fallback.** |
+
+### CLI Flag (att1-bench)
+
+```
+--shard-plan runtime|metadata   (default: runtime)
+```
+
+`att1-bench` prints `shard_plan=runtime` or `shard_plan=metadata` in its
+key=value output block (both `--mode single` and `--mode cluster`).
+
+### Invariants
+
+- Models without shard metadata remain valid; `--shard-plan runtime` is always
+  available.
+- `.att1` binary format is unchanged.
+- Backend behaviour is unchanged.
+- Fabric packet counters, trace counters, activation bytes, and logits bytes
+  are preserved.
+
+### Tests (8)
+
+1. Default cluster create on dummy model succeeds (runtime plan).
+2. Metadata plan on shard fixture (n_tiles=1, n_layers=2) succeeds; logits
+   match single inference within 1e-6.
+3. Metadata absent + `ATT1_SHARD_PLAN_METADATA` → `!= ATT1_OK`.
+4. Conflicting tile assignment + `ATT1_SHARD_PLAN_METADATA` → `!= ATT1_OK`.
+5. Missing layer in metadata + `ATT1_SHARD_PLAN_METADATA` → `!= ATT1_OK`.
+6. No silent fallback: status `!= ATT1_OK` and `infer == NULL` on failure.
+7. `att1-bench --mode cluster` output contains `shard_plan=runtime`.
+8. `att1-bench --mode cluster --shard-plan metadata` output contains
+   `shard_plan=metadata`.
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)

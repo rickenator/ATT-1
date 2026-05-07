@@ -42,6 +42,19 @@ att1_status_t att1_shard_plan_layer_tile(const att1_shard_plan *plan,
                                          uint32_t *out_tile_id);
 
 /* -------------------------------------------------------------------------
+ * Shard plan execution mode (Milestone 40)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Selects which source is used to build the shard plan at cluster-infer
+ * creation time.  The default (zero value) is ATT1_SHARD_PLAN_RUNTIME.
+ */
+typedef enum att1_shard_plan_mode {
+    ATT1_SHARD_PLAN_RUNTIME  = 0,   /* contiguous-range runtime assignment */
+    ATT1_SHARD_PLAN_METADATA = 1    /* derived from optional shard metadata */
+} att1_shard_plan_mode;
+
+/* -------------------------------------------------------------------------
  * Metadata-driven proposed shard plan (Milestone 39)
  *
  * Advisory only.  Never used for scheduling.  Derived from shard metadata
@@ -108,5 +121,25 @@ void att1_meta_plan_free(att1_meta_plan *plan);
 att1_status_t att1_meta_plan_compare(const att1_meta_plan  *proposed,
                                      const att1_shard_plan *runtime,
                                      att1_meta_plan_diff   *out);
+
+/* -------------------------------------------------------------------------
+ * Build an att1_shard_plan from a fully-valid metadata-derived proposed plan.
+ * (Milestone 40)
+ *
+ * Validation requirements (all must hold; otherwise ATT1_ERR_INVALID_ARG):
+ *   - proposed->count == n_layers  (every layer is covered)
+ *   - proposed->conflict == 0       (no tile disagreements within a layer)
+ *   - all tile_id values < tile_count
+ *   - each tile's layers form a single contiguous range
+ *
+ * Returns ATT1_OK on success.
+ * Returns ATT1_ERR_INVALID_ARG on validation failure.
+ * Returns ATT1_ERR_OOM on allocation failure.
+ * Caller must call att1_shard_plan_free() when done.
+ * ---------------------------------------------------------------------- */
+att1_status_t att1_shard_plan_from_meta(const att1_meta_plan *proposed,
+                                        uint32_t              n_layers,
+                                        size_t                tile_count,
+                                        att1_shard_plan      *out);
 
 #endif
