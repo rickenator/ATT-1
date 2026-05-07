@@ -53,15 +53,20 @@ Milestone 36: Deterministic shard metadata fixture generation.
 - Milestone 33: AIMU tiled tensor architecture document — `docs/aimu_architecture.md` added covering core concept, near-memory execution model, prototype mapping table, conceptual stack, future shard metadata fields, Phase 1/2/3 hardware roadmap, and non-goals; `README.md` updated with AIMU fabric paragraph.
 - Milestone 34: ATT-1 shard metadata design — `docs/shard_metadata.md` defining the future `.att1` shard metadata section for AIMU tensor-tile ownership: 13 fields, fixed 120-byte record layout, versioning rules, hostile-input validation requirements. No C source changes.
 - Milestone 35: Optional shard metadata C parser skeleton — `include/att1_shard_meta.h`, `src/shard_meta.c`, `att1_model.shard_meta` field, `model_loader.c` overlap check and parser call, `tests/test_shard_meta.c` (8 cases).
+- Milestone 36: Deterministic shard metadata fixture generation — `compiler/make_shard_meta_fixture.py`, checked-in `models/shard_meta/model.att1` (14 876 bytes), `att1-inspect` per-record shard output, `tests/test_shard_meta_fixture.c` (4 cases).
+- Milestone 37: Shard metadata reporting and trace integration — `att1_shard_meta_summarize()`, `att1-inspect` summary header, `att1-bench` `shard_meta=present/absent`, `tests/test_shard_meta_report.c` (4 cases).
 
 ## Active Task
 
-Milestone 36: Deterministic shard metadata fixture generation.
-- Added `compiler/make_shard_meta_fixture.py` — offline generator for `models/shard_meta/model.att1`; same 21-tensor tiny model as dummy fixture plus 2 520-byte shard metadata section (21 × 120 bytes); all tile_id=0, dtype=f32, zero dependency graph and checksum.
-- Checked in `models/shard_meta/model.att1` (14 876 bytes, deterministic).
-- Updated `tools/att1-inspect.c` — prints `shard_meta: N records` and per-record tile/aimu/dtype/repl/reduce summary when shard metadata is present.
-- Added `tests/test_shard_meta_fixture.c` (4 cases): fixture loads with 21 records; inspect output content; dummy model unchanged; inspect of dummy model has no shard_meta line.
-- `make test` passes; no Python required at test time.
+Milestone 38: Shard metadata consistency validation.
+- Added `att1_shard_meta_violation`, `att1_shard_meta_validation` structs to `include/att1_shard_meta.h`.
+- Added `att1_shard_meta_validate()` and `att1_shard_meta_validation_free()` to `include/att1_shard_meta.h` and `src/shard_meta.c`.
+  - Validates per record: tile_id within [0, n_tiles), owner_aimu within [0, n_tiles), dtype vs tensor descriptor, byte_offset <= tensor nbytes.
+  - Returns ATT1_OK with populated violations list; never rejects load.
+- Updated `tools/att1-inspect.c` — calls validate after summary; prints `shard_meta_violations: N` block with per-violation tensor_id, field, description when N > 0.
+- Added `tests/test_shard_meta_consistency.c` (8 cases): consistent, tile_id oob, aimu oob, dtype mismatch, byte_offset exceeds, absent, inspect violation output, inspect no-violation output.
+- No inference or backend behavior changed.
+- `make test` passes (35 tests).
 
 ## Next Prompt for Codex
 

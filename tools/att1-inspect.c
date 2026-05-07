@@ -88,7 +88,36 @@ int main(int argc, char **argv)
     }
 
     if (model.shard_meta.count > 0u) {
+        att1_shard_meta_summary    summary;
+        att1_shard_meta_validation validation;
+
+        att1_shard_meta_summarize(&model.shard_meta, &summary);
+
         printf("shard_meta: %" PRIu64 " records\n", model.shard_meta.count);
+        printf("shard_meta_tiles=%" PRIu32 "\n", summary.unique_tiles);
+        printf("shard_meta_aimus=%" PRIu32 "\n", summary.unique_aimus);
+        printf("shard_meta_assigned=%" PRIu64 "\n", summary.assigned);
+        printf("shard_meta_unassigned=%" PRIu64 "\n", summary.unassigned);
+        printf("shard_meta_dtype_f32=%" PRIu64 "\n", summary.dtype_f32);
+        printf("shard_meta_dtype_q8=%" PRIu64 "\n", summary.dtype_q8);
+
+        if (att1_shard_meta_validate(&model.shard_meta,
+                                     &model.config,
+                                     model.tensors,
+                                     model.tensor_count,
+                                     &validation) == ATT1_OK) {
+            if (validation.count > 0u) {
+                printf("shard_meta_violations: %" PRIu64 "\n", validation.count);
+                for (i = 0u; i < validation.count; i++) {
+                    printf("  violation[%" PRIu64 "] tensor_id=%u field=%s: %s\n",
+                           i,
+                           validation.violations[i].tensor_id,
+                           validation.violations[i].field,
+                           validation.violations[i].description);
+                }
+            }
+            att1_shard_meta_validation_free(&validation);
+        }
 
         for (i = 0u; i < model.shard_meta.count; i++) {
             const att1_shard_meta_record *rec = &model.shard_meta.records[i];

@@ -447,6 +447,115 @@ shard_meta: 21 records
 
 ---
 
+## 9. Reporting and Trace Integration (Milestone 37)
+
+**New API**: `att1_shard_meta_summarize()` (`include/att1_shard_meta.h`, `src/shard_meta.c`)
+
+Populates `att1_shard_meta_summary`:
+
+| Field | Description |
+|-------|-------------|
+| `count` | Total records (equals tensor count) |
+| `assigned` | Records with `tile_id != ATT1_SHARD_TILE_UNASSIGNED` |
+| `unassigned` | Records with `tile_id == ATT1_SHARD_TILE_UNASSIGNED` |
+| `unique_tiles` | Distinct assigned `tile_id` values |
+| `unique_aimus` | Distinct `owner_aimu` values |
+| `dtype_f32` | Records with `dtype == ATT1_SHARD_DTYPE_F32` |
+| `dtype_q8` | Records with `dtype == ATT1_SHARD_DTYPE_Q8` |
+
+All fields are zero when `meta->count == 0` (no metadata section present).
+
+**`att1-inspect` output** (extended):
+When shard metadata is present the summary header now precedes the per-record list:
+```
+shard_meta: 21 records
+shard_meta_tiles=1
+shard_meta_aimus=1
+shard_meta_assigned=21
+shard_meta_unassigned=0
+shard_meta_dtype_f32=21
+shard_meta_dtype_q8=0
+  shard[0] tile=0 aimu=0 dtype=f32 repl=none reduce=none  tok_embeddings.weight
+  ...
+```
+
+**`att1-bench` output** (extended):
+Printed once per run, before mode/backend/tokens lines:
+```
+shard_meta=present          ← or shard_meta=absent
+shard_meta_count=21
+shard_meta_assigned=21
+shard_meta_unassigned=0
+shard_meta_tiles=1
+shard_meta_aimus=1
+shard_meta_dtype_f32=21
+shard_meta_dtype_q8=0
+mode=single
+...
+```
+
+No runtime placement enforcement is added. Inference behavior is unchanged.
+
+**C test coverage** (`tests/test_shard_meta_report.c`, 4 test cases):
+1. `att1-bench` on dummy model — output contains `shard_meta=absent`; existing counters still present
+2. `att1-bench` on shard fixture — output contains full summary with correct values
+3. `att1-inspect` on shard fixture — summary header and per-record detail both present
+4. `att1-inspect` on dummy model — no `shard_meta` line in output
+
+---
+
+## 10. Consistency Validation (Milestone 38)
+
+**New API**: `att1_shard_meta_validate()` (`include/att1_shard_meta.h`, `src/shard_meta.c`)
+
+Validates parsed shard metadata against the model configuration and tensor
+descriptors.  Returns `ATT1_OK` always (violations are reported, not fatal).
+Callers must call `att1_shard_meta_validation_free()` when done.
+
+Populates `att1_shard_meta_validation` with zero or more `att1_shard_meta_violation` records:
+
+| Field | Description |
+|-------|-------------|
+| `tensor_id` | Index of the offending record |
+| `field` | Name of the offending field (e.g. `"tile_id"`, `"dtype"`) |
+| `description` | Human-readable detail string |
+
+**Checks performed** (per record):
+
+| Check | Field | Condition |
+|-------|-------|-----------|
+| tile_id in range | `tile_id` | assigned tile_id >= n_tiles |
+| AIMU in range | `owner_aimu` | owner_aimu >= n_tiles |
+| dtype consistent | `dtype` | shard dtype doesn't match tensor descriptor dtype |
+| byte_offset matches descriptor | `byte_offset` | shard byte_offset != tensor descriptor offset |
+
+Checks already enforced at parse time (`ATT1_ERR_BAD_FORMAT`) are not repeated:
+tensor_id sequence, shape cross-validation, enum range validation, `_reserved == 0`.
+
+**`att1-inspect` output** (when violations exist):
+```
+shard_meta: 1 records
+shard_meta_tiles=0
+...
+shard_meta_violations: 1
+  violation[0] tensor_id=0 field=tile_id: tile_id 5 out of range (n_tiles=1)
+```
+When no violations are found, the `shard_meta_violations:` line is omitted.
+
+**C test coverage** (`tests/test_shard_meta_consistency.c`, 8 test cases):
+1. Consistent fixture (21-tensor shard_meta fixture) — 0 violations
+2. tile_id >= n_tiles — 1 violation on `tile_id`
+3. owner_aimu >= n_tiles — 1 violation on `owner_aimu`
+4. shard dtype=Q8 vs tensor dtype=F32 — 1 violation on `dtype`
+5. byte_offset != tensor descriptor offset — 1 violation on `byte_offset`
+6. Absent metadata (dummy model) — 0 violations
+7. `att1-inspect` on violation model — output contains `shard_meta_violations: 1` and `field=tile_id`
+8. `att1-inspect` on consistent fixture — no `shard_meta_violations` line
+
+No inference or backend behavior changed.  No placement enforcement added.
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)

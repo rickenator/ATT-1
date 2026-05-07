@@ -2,8 +2,10 @@
 #include "att1_cluster_infer.h"
 #include "att1_infer.h"
 #include "att1_model.h"
+#include "att1_shard_meta.h"
 #include "att1_trace.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +70,28 @@ static att1_status_t create_backend(const char *name, att1_backend **out_backend
     }
 
     return ATT1_ERR_INVALID_ARG;
+}
+
+static void print_shard_meta_summary(const att1_shard_meta *meta)
+{
+    if (meta->count == 0u) {
+        printf("shard_meta=absent\n");
+        return;
+    }
+
+    {
+        att1_shard_meta_summary summary;
+
+        att1_shard_meta_summarize(meta, &summary);
+        printf("shard_meta=present\n");
+        printf("shard_meta_count=%" PRIu64 "\n", summary.count);
+        printf("shard_meta_assigned=%" PRIu64 "\n", summary.assigned);
+        printf("shard_meta_unassigned=%" PRIu64 "\n", summary.unassigned);
+        printf("shard_meta_tiles=%" PRIu32 "\n", summary.unique_tiles);
+        printf("shard_meta_aimus=%" PRIu32 "\n", summary.unique_aimus);
+        printf("shard_meta_dtype_f32=%" PRIu64 "\n", summary.dtype_f32);
+        printf("shard_meta_dtype_q8=%" PRIu64 "\n", summary.dtype_q8);
+    }
 }
 
 static void print_counters(const att1_trace_t *trace)
@@ -332,6 +356,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "failed to load model: %s\n", model_path);
         return 1;
     }
+
+    print_shard_meta_summary(&model.shard_meta);
 
     if (strcmp(mode, "single") == 0) {
         rc = run_single(&model,
