@@ -1910,11 +1910,70 @@ on the ratio of eligible projection tensors to f32-only norm/embedding tensors.
 #### Remaining blocker
 
 SmolLM2-135M still fails the compat scanner due to GQA (`n_kv_heads=3 ≠
-n_heads=9`). Once M69 adds GQA support, both the f32 and q8 conversion
-workflows above will work end-to-end.
+n_heads=9`). Once a later GQA milestone adds runtime and converter support,
+both the f32 and q8 conversion workflows above will work end-to-end.
 
 `make test` passes (43 tests) after M68.  No C runtime changes, no
 Makefile changes, no `.att1` format changes.
+
+---
+
+### M69 — public model source comparison report
+
+**Status:** complete.  This milestone extends the M61/M62 comparison harness
+for manual validation of local public-model conversions.  It does not add
+public weights, generated public `.att1` artifacts, online runtime
+dependencies, q4, tokenizer parsing in C, or a binary format change.
+
+#### What changed
+
+| File | Change |
+|------|--------|
+| `compiler/compare_att1_to_source.py` | Added `--model-dir` for local source model directories, explicit external f32/q8 artifact paths, source-safetensors numpy reference loading, `--q8-backend`, `source_model_path`, dtype/backend, next-token result, and richer report fields |
+| `tests/test_bench_smoke.c` | Existing Python/numpy-skippable source comparison smoke now covers the local `--model-dir` workflow using checked-in tiny fixtures |
+
+#### Manual validation command
+
+Use paths outside the ATT-1 Git tree for the public source model and generated
+artifacts:
+
+```sh
+python3 compiler/compare_att1_to_source.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --prompt-ids 1,2,3 \
+    --report \
+    --report-json ~/Models/att1/SmolLM2-135M/source_comparison.json
+```
+
+If the safetensors file has a nonstandard name, keep the local directory as
+the model source and override only that file:
+
+```sh
+python3 compiler/compare_att1_to_source.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --prompt-ids 1,2,3 \
+    --report
+```
+
+Expected report fields:
+
+- `source_model_path`, `safetensors`, `config`
+- `att1_f32` / `att1_q8`
+- `f32_dtype`, `q8_dtype`, `f32_backend`, `q8_backend`
+- `prompt_ids`, `logits_shape`, `ref_last_token`, `next_token_result`
+- `f32_max_abs_error`, `f32_max_rel_error`, `f32_tolerance`, `f32_status`
+- `q8_max_abs_error`, `q8_max_rel_error`, `q8_tolerance`, `q8_status`
+- `result` and `report: ok`
+
+The forward reference now loads weights from the source safetensors directly
+when numpy is available.  f32 next-token mismatch is a failure.  q8 next-token
+divergence is reported as a warning when static q8 error remains within the
+documented tolerance.
 
 ---
 

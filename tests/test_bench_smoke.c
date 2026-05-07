@@ -1230,7 +1230,35 @@ static int check_source_comparison(void)
         return -1;
     }
 
-    /* 4. Bad --report-json path: harness must exit non-zero. */
+    /* 4. M69 local model-dir path: public-model workflow uses local source
+     *    directories and explicitly supplied external artifacts. */
+    if (run_command("python3 compiler/compare_att1_to_source.py "
+                    "--model-dir compiler/fixtures/tiny_llama "
+                    "--safetensors compiler/fixtures/tiny_llama_2l.safetensors "
+                    "--att1-f32 models/real_tiny_f32/model.att1 "
+                    "--att1-q8 models/real_tiny_q8/model.att1 "
+                    "--prompt-ids 1,2,3 "
+                    "--report "
+                    "> build/m69_public_model_report.txt 2>&1") != 0) {
+        fputs("m69_report: local model-dir report run failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m69_public_model_report.txt", output, sizeof(output)) != 0) {
+        fputs("m69_report: cannot read local model-dir report\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "source_model_path:") == NULL) ||
+        (strstr(output, "reference:           source_safetensors") == NULL) ||
+        (strstr(output, "next_token_result:   pass") == NULL) ||
+        (strstr(output, "q8_backend:          cpu-q8") == NULL) ||
+        (strstr(output, "result:              pass") == NULL)) {
+        fputs("m69_report: report missing public-model fields\n", stderr);
+        return -1;
+    }
+
+    /* 5. Bad --report-json path: harness must exit non-zero. */
     if (command_fails(
             "python3 compiler/compare_att1_to_source.py "
             "--report-json /nonexistent/path/m62.json "

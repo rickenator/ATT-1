@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-ATT-1 source-model comparison harness (M61 core, M62 report extension).
+ATT-1 source-model comparison harness (M61 core, M62 report extension,
+M69 public local-model report extension).
 
 Validates that an ATT-1 converted model artifact (f32 or q8) faithfully
 represents the source LLaMA-style safetensors weights, and that its forward
@@ -43,6 +44,12 @@ Usage:
         --config      compiler/fixtures/tiny_llama_config.json \\
         --att1-f32    models/m61_f32/model.att1 \\
         --att1-q8     models/m61_q8/model.att1
+    python3 compiler/compare_att1_to_source.py \\
+        --model-dir   ~/Models/SmolLM2-135M \\
+        --att1-f32    ~/Models/att1/SmolLM2-135M/model_f32.att1 \\
+        --att1-q8     ~/Models/att1/SmolLM2-135M/model_q8.att1 \\
+        --prompt-ids  1,2,3 \\
+        --report --report-json ~/Models/att1/SmolLM2-135M/comparison.json
 
 Exit codes:
     0  all enabled checks pass
@@ -125,6 +132,13 @@ def _load_st_tensor(path, hdr, data_offset, name):
     raise ValueError(f"tensor {name!r} has dtype {dtype!r}, expected F32/BF16/F16")
 
 
+def _is_url_like(path):
+    if path is None:
+        return False
+    lowered = str(path).lower()
+    return "://" in lowered or lowered.startswith(("hf:", "hf://"))
+
+
 # ---------------------------------------------------------------------------
 # Tensor mapping plan  (mirrors llama_source_tensor_plan in the converter)
 # ---------------------------------------------------------------------------
@@ -134,6 +148,10 @@ def _build_plan(cfg):
     d  = cfg["d_model"]
     v  = cfg["vocab_size"]
     ff = cfg["d_ff"]
+    n_heads = cfg["n_heads"]
+    n_kv_heads = cfg.get("n_kv_heads", n_heads)
+    d_head = d // n_heads
+    kv_dim = n_kv_heads * d_head
 
     plan = [{
         "source": "model.embed_tokens.weight",
@@ -164,15 +182,15 @@ def _build_plan(cfg):
             {
                 "source": f"{src}.self_attn.k_proj.weight",
                 "target": f"{dst}.attention.wk.weight",
-                "source_shape": [d, d],
-                "target_shape": [d, d],
+                "source_shape": [kv_dim, d],
+                "target_shape": [d, kv_dim],
                 "transpose": True,
             },
             {
                 "source": f"{src}.self_attn.v_proj.weight",
                 "target": f"{dst}.attention.wv.weight",
-                "source_shape": [d, d],
-                "target_shape": [d, d],
+                "source_shape": [kv_dim, d],
+                "target_shape": [d, kv_dim],
                 "transpose": True,
             },
             {
@@ -362,7 +380,8 @@ def _python_forward_pass(weights_np, cfg_dict, token_ids, rope_theta=10000.0):
 
     Parameters:
         weights_np  dict  name -> numpy array (all weights in ATT-1 layout)
-        cfg_dict    dict  vocab_size, n_layers, n_heads, d_model, d_ff, rope_dim
+        cfg_dict    dict  vocab_size, n_layers, n_heads, n_kv_heads, d_model,
+                    d_ff, rope_dim
         token_ids   list[int]  prompt token IDs
         rope_theta  float  RoPE theta (default 10000.0)
 
@@ -371,13 +390,21 @@ def _python_forward_pass(weights_np, cfg_dict, token_ids, rope_theta=10000.0):
     """
     n_layers = cfg_dict["n_layers"]
     n_heads  = cfg_dict["n_heads"]
+    n_kv_heads = cfg_dict.get("n_kv_heads", n_heads)
     d_model  = cfg_dict["d_model"]
     d_ff     = cfg_dict["d_ff"]
     d_head   = d_model // n_heads
+    kv_dim   = n_kv_heads * d_head
+
+    if n_kv_heads <= 0 or (n_heads % n_kv_heads) != 0:
+        raise ValueError(
+            f"unsupported GQA shape: n_heads={n_heads}, n_kv_heads={n_kv_heads}"
+        )
+    kv_group = n_heads // n_kv_heads
 
     embed = weights_np["tok_embeddings.weight"]  # [V, D]
 
-    # KV cache: list of (K[D], V[D]) per layer, one entry per past position.
+    # KV cache: list of (K[KV], V[KV]) per layer, one entry per past position.
     kv_cache = [[] for _ in range(n_layers)]
 
     logits = None
@@ -392,18 +419,25 @@ def _python_forward_pass(weights_np, cfg_dict, token_ids, rope_theta=10000.0):
             x_norm = _rmsnorm(x, weights_np[f"{prefix}.attention_norm.weight"])
 
             wq = weights_np[f"{prefix}.attention.wq.weight"]  # [D, D]
-            wk = weights_np[f"{prefix}.attention.wk.weight"]
+            wk = weights_np[f"{prefix}.attention.wk.weight"]  # [D, KV]
             wv = weights_np[f"{prefix}.attention.wv.weight"]
             wo = weights_np[f"{prefix}.attention.wo.weight"]
 
             Q = x_norm @ wq  # [D]
             K = x_norm @ wk
             V = x_norm @ wv
+            if K.shape[0] != kv_dim or V.shape[0] != kv_dim:
+                raise ValueError(
+                    f"{prefix}: expected K/V dim {kv_dim}, "
+                    f"got {K.shape[0]}/{V.shape[0]}"
+                )
 
-            # Apply RoPE per head.
+            # Apply RoPE per query head and per key/value head.
             for h in range(n_heads):
                 sl = slice(h * d_head, (h + 1) * d_head)
                 Q[sl] = _rope(Q[sl], pos, rope_theta)
+            for h in range(n_kv_heads):
+                sl = slice(h * d_head, (h + 1) * d_head)
                 K[sl] = _rope(K[sl], pos, rope_theta)
 
             # Append to KV cache.
@@ -412,17 +446,19 @@ def _python_forward_pass(weights_np, cfg_dict, token_ids, rope_theta=10000.0):
             # Attention: per-head dot-product.
             context = np.zeros(d_model)
             for h in range(n_heads):
-                sl    = slice(h * d_head, (h + 1) * d_head)
-                q_h   = Q[sl]
+                q_sl  = slice(h * d_head, (h + 1) * d_head)
+                kv_h  = h // kv_group
+                kv_sl = slice(kv_h * d_head, (kv_h + 1) * d_head)
+                q_h   = Q[q_sl]
                 scale = 1.0 / math.sqrt(d_head)
                 n_past = len(kv_cache[layer])
                 scores = np.array([
-                    np.dot(q_h, kv_cache[layer][t][0][sl]) * scale
+                    np.dot(q_h, kv_cache[layer][t][0][kv_sl]) * scale
                     for t in range(n_past)
                 ])
                 probs = _softmax(scores)
                 for t in range(n_past):
-                    context[sl] += probs[t] * kv_cache[layer][t][1][sl]
+                    context[q_sl] += probs[t] * kv_cache[layer][t][1][kv_sl]
 
             attn_out = context @ wo  # [D]
             x = x + attn_out
@@ -461,12 +497,40 @@ def _load_weights_numpy(att1_model):
     return weights
 
 
+def _load_source_weights_numpy(safetensors_path, cfg_dict):
+    """Extract source safetensors tensors into ATT-1 layout numpy arrays."""
+    hdr, data_offset = _load_safetensors_header(safetensors_path)
+    weights = {}
+
+    for item in _build_plan(cfg_dict):
+        src_name = item["source"]
+        dst_name = item["target"]
+        try:
+            vals = _load_st_tensor(safetensors_path, hdr, data_offset, src_name)
+        except KeyError:
+            if src_name != "lm_head.weight":
+                raise
+            vals = _load_st_tensor(
+                safetensors_path, hdr, data_offset, "model.embed_tokens.weight"
+            )
+
+        if item["transpose"]:
+            rows, cols = item["source_shape"]
+            vals = tuple(_transpose_2d(list(vals), rows, cols))
+
+        weights[dst_name] = np.array(vals, dtype=np.float32).reshape(
+            item["target_shape"]
+        )
+
+    return weights
+
+
 def _call_att1_bench_generic(att1_path, token_ids, backend, n_generate=1):
-    """Call att1-bench with the given backend; return (last_token, error)."""
+    """Call att1-bench with the given backend; return (last_token, stdout, error)."""
     ids_str = ",".join(str(i) for i in token_ids)
     bench   = os.path.join("build", "att1-bench")
     if not os.path.isfile(bench):
-        return None, "att1-bench not found at build/att1-bench"
+        return None, "", "att1-bench not found at build/att1-bench"
     cmd = [
         bench,
         "--model", att1_path,
@@ -479,16 +543,18 @@ def _call_att1_bench_generic(att1_path, token_ids, backend, n_generate=1):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, str(exc)
+        return None, "", str(exc)
 
     if result.returncode != 0:
-        return None, f"att1-bench exit {result.returncode}: {result.stderr.strip()}"
+        return None, result.stdout, (
+            f"att1-bench exit {result.returncode}: {result.stderr.strip()}"
+        )
 
     for line in result.stdout.splitlines():
         if line.startswith("last_token="):
-            return int(line.split("=", 1)[1].strip()), None
+            return int(line.split("=", 1)[1].strip()), result.stdout, None
 
-    return None, "last_token not found in att1-bench output"
+    return None, result.stdout, "last_token not found in att1-bench output"
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +570,7 @@ def _format_report_text(rpt):
 
     lines.append("=== ATT-1 source-model comparison report ===")
     emit("date",        rpt.get("date", ""))
+    emit("source_model_path", rpt.get("source_model_path", ""))
     emit("safetensors", rpt["safetensors"])
     emit("config",      rpt["config_path"])
     lines.append("")
@@ -513,6 +580,7 @@ def _format_report_text(rpt):
     emit("vocab_size",   cfg.get("vocab_size", ""))
     emit("n_layers",     cfg.get("n_layers",   ""))
     emit("n_heads",      cfg.get("n_heads",    ""))
+    emit("n_kv_heads",   cfg.get("n_kv_heads", ""))
     emit("d_model",      cfg.get("d_model",    ""))
     emit("d_ff",         cfg.get("d_ff",       ""))
     emit("rope_theta",   cfg.get("rope_theta",  ""))
@@ -524,6 +592,7 @@ def _format_report_text(rpt):
         emit("att1_f32",             f32s["att1_path"])
         emit("att1_f32_version",     f32s["att1_version"])
         emit("f32_dtype",            f32s["dtype"])
+        emit("f32_backend",          f32s["backend"])
         emit("f32_tensors_checked",  f32s["tensors_checked"])
         emit("f32_max_abs_error",    f"{f32s['max_abs_error']:.3e}")
         emit("f32_max_rel_error",    f"{f32s['max_rel_error']:.3e}")
@@ -540,6 +609,7 @@ def _format_report_text(rpt):
         emit("att1_q8",              q8s["att1_path"])
         emit("att1_q8_version",      q8s["att1_version"])
         emit("q8_dtype",             q8s["dtype"])
+        emit("q8_backend",           q8s["backend"])
         emit("q8_tensors_checked",   q8s["tensors_checked"])
         emit("q8_max_abs_error",     f"{q8s['max_abs_error']:.3e}")
         emit("q8_max_rel_error",     f"{q8s['max_rel_error']:.3e}")
@@ -553,14 +623,18 @@ def _format_report_text(rpt):
     fwd = rpt.get("forward")
     if fwd:
         lines.append("# forward pass")
+        emit("reference",        fwd["reference"])
         emit("prompt_ids",       str(fwd["prompt_ids"]))
         emit("logits_shape",     str(fwd["logits_shape"]))
         emit("ref_last_token",   fwd["ref_last_token"])
+        emit("next_token_result", fwd["next_token_result"])
         if fwd.get("f32_bench_last_token") is not None:
             emit("bench_last_token",  fwd["f32_bench_last_token"])
             emit("bench_backend",     fwd["f32_backend"])
             emit("forward_match",     "yes" if fwd["f32_forward_match"] else "no")
             emit("f32_status",        fwd["f32_status"])
+        if fwd.get("f32_bench_error"):
+            emit("f32_bench_error",   fwd["f32_bench_error"])
         lines.append("")
         if fwd.get("q8_bench_last_token") is not None:
             lines.append("# q8 forward pass")
@@ -569,6 +643,15 @@ def _format_report_text(rpt):
             emit("q8_forward_match",
                  "yes" if fwd["q8_forward_match"] else "warn (quantisation rounding)")
             emit("q8_forward_note",     fwd["q8_note"])
+            lines.append("")
+        elif fwd.get("q8_bench_error"):
+            lines.append("# q8 forward pass")
+            emit("q8_bench_backend",    fwd["q8_backend"])
+            emit("q8_bench_error",      fwd["q8_bench_error"])
+            emit("q8_status",           fwd["q8_status"])
+            lines.append("")
+        if fwd.get("error"):
+            emit("forward_error",        fwd["error"])
             lines.append("")
 
     lines.append("# result")
@@ -625,10 +708,77 @@ def _parse_ids(s):
         return None
 
 
+def _resolve_paths(args):
+    """Resolve local source/config/artifact paths from CLI arguments."""
+    model_dir = getattr(args, "model_dir", None)
+
+    if model_dir and _is_url_like(model_dir):
+        raise ValueError("model_dir must be a local filesystem path")
+
+    if model_dir:
+        if not os.path.isdir(model_dir):
+            raise ValueError(f"model directory not found: {model_dir!r}")
+        source_model_path = model_dir
+        config_path = args.config or os.path.join(model_dir, "config.json")
+        safetensors_path = args.safetensors or os.path.join(model_dir, "model.safetensors")
+        att1_f32_path = args.att1_f32
+        att1_q8_path = args.att1_q8
+    else:
+        source_model_path = ""
+        config_path = args.config or _DEFAULT_CFG
+        safetensors_path = args.safetensors or _DEFAULT_ST
+        use_fixture_artifacts = (args.config is None and args.safetensors is None)
+        att1_f32_path = args.att1_f32 or (_DEFAULT_F32 if use_fixture_artifacts else None)
+        att1_q8_path = args.att1_q8 if args.att1_q8 is not None else (
+            _DEFAULT_Q8 if use_fixture_artifacts else None
+        )
+
+    path_items = [
+        ("config", config_path),
+        ("safetensors", safetensors_path),
+        ("att1-f32", att1_f32_path),
+    ]
+    if att1_q8_path:
+        path_items.append(("att1-q8", att1_q8_path))
+
+    for label, path in path_items:
+        if not path:
+            raise ValueError(f"{label} path is required")
+        if _is_url_like(path):
+            raise ValueError(f"{label} must be a local filesystem path: {path!r}")
+
+    if not os.path.isfile(config_path):
+        raise ValueError(f"config file not found: {config_path!r}")
+    if not os.path.isfile(safetensors_path):
+        raise ValueError(f"safetensors file not found: {safetensors_path!r}")
+    if not os.path.isfile(att1_f32_path):
+        raise ValueError(f"ATT-1 f32 artifact not found: {att1_f32_path!r}")
+    if att1_q8_path and not os.path.isfile(att1_q8_path):
+        raise ValueError(f"ATT-1 q8 artifact not found: {att1_q8_path!r}")
+
+    if not source_model_path:
+        source_model_path = os.path.dirname(os.path.abspath(config_path))
+
+    return {
+        "source_model_path": source_model_path,
+        "config": config_path,
+        "safetensors": safetensors_path,
+        "att1_f32": att1_f32_path,
+        "att1_q8": att1_q8_path,
+    }
+
+
 def run_harness(args):
     """Execute the full comparison harness.  Returns (rpt_dict, exit_code)."""
 
     fail_msgs = []
+
+    # -------- resolve local paths --------
+    try:
+        paths = _resolve_paths(args)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return {}, 1
 
     # -------- resolve prompt IDs --------
     prompt_ids = args.prompt_ids
@@ -641,40 +791,49 @@ def run_harness(args):
 
     # -------- load source config --------
     try:
-        with open(args.config) as fh:
+        with open(paths["config"]) as fh:
             cfg_dict = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"error: cannot load config {args.config!r}: {exc}", file=sys.stderr)
+        print(f"error: cannot load config {paths['config']!r}: {exc}", file=sys.stderr)
         return {}, 1
 
     try:
+        n_heads = cfg_dict["num_attention_heads"]
+        n_kv_heads = int(cfg_dict.get("num_key_value_heads", n_heads))
         att1_cfg = {
             "vocab_size": cfg_dict["vocab_size"],
             "n_layers":   cfg_dict["num_hidden_layers"],
-            "n_heads":    cfg_dict["num_attention_heads"],
+            "n_heads":    n_heads,
+            "n_kv_heads": n_kv_heads,
             "d_model":    cfg_dict["hidden_size"],
             "d_ff":       cfg_dict["intermediate_size"],
             "max_seq_len": cfg_dict.get("max_position_embeddings", 128),
             "rope_dim":   (cfg_dict.get("hidden_size", 8)
-                           // cfg_dict["num_attention_heads"] * 2),
+                           // n_heads * 2),
         }
         rope_theta = float(cfg_dict.get("rope_theta", 10000.0))
     except KeyError as exc:
         print(f"error: missing config key {exc}", file=sys.stderr)
+        return {}, 1
+    if att1_cfg["d_model"] % att1_cfg["n_heads"] != 0:
+        print("error: hidden_size must be divisible by num_attention_heads", file=sys.stderr)
+        return {}, 1
+    if att1_cfg["n_heads"] % att1_cfg["n_kv_heads"] != 0:
+        print("error: num_attention_heads must be divisible by num_key_value_heads", file=sys.stderr)
         return {}, 1
 
     att1_cfg["rope_theta"] = rope_theta
 
     # -------- load ATT-1 f32 model --------
     try:
-        att1_f32 = read_att1_model(args.att1_f32)
+        att1_f32 = read_att1_model(paths["att1_f32"])
     except Att1ReadError as exc:
         print(f"error: cannot load ATT-1 f32 model: {exc}", file=sys.stderr)
         return {}, 1
 
     # -------- static f32 comparison --------
     n_f32, max_f32, rel_f32, pt_f32, f32_err = _compare_static(
-        args.safetensors, att1_f32, att1_cfg, args.verbose
+        paths["safetensors"], att1_f32, att1_cfg, args.verbose
     )
 
     if f32_err:
@@ -689,9 +848,10 @@ def run_harness(args):
             )
 
     rpt_f32 = {
-        "att1_path":       args.att1_f32,
+        "att1_path":       paths["att1_f32"],
         "att1_version":    att1_f32.version,
         "dtype":           "f32",
+        "backend":         getattr(args, "backend", None) or "cpu-f32",
         "tensors_checked": n_f32,
         "max_abs_error":   max_f32,
         "max_rel_error":   rel_f32,
@@ -704,15 +864,15 @@ def run_harness(args):
 
     # -------- static q8 comparison (optional) --------
     rpt_q8 = None
-    if args.att1_q8:
+    if paths["att1_q8"]:
         try:
-            att1_q8 = read_att1_model(args.att1_q8)
+            att1_q8 = read_att1_model(paths["att1_q8"])
         except Att1ReadError as exc:
             print(f"error: cannot load ATT-1 q8 model: {exc}", file=sys.stderr)
             return {}, 1
 
         n_q8, max_q8, rel_q8, pt_q8, q8_err = _compare_static(
-            args.safetensors, att1_q8, att1_cfg, args.verbose
+            paths["safetensors"], att1_q8, att1_cfg, args.verbose
         )
 
         if q8_err:
@@ -727,9 +887,10 @@ def run_harness(args):
                 )
 
         rpt_q8 = {
-            "att1_path":       args.att1_q8,
+            "att1_path":       paths["att1_q8"],
             "att1_version":    att1_q8.version,
             "dtype":           "q8",
+            "backend":         args.q8_backend,
             "tensors_checked": n_q8,
             "max_abs_error":   max_q8,
             "max_rel_error":   rel_q8,
@@ -744,17 +905,34 @@ def run_harness(args):
     # -------- forward-pass comparison (numpy required) --------
     rpt_fwd = None
     if _HAVE_NUMPY:
-        weights_np  = _load_weights_numpy(att1_f32)
-        ref_logits  = _python_forward_pass(weights_np, att1_cfg, prompt_ids, rope_theta)
-        ref_next    = int(np.argmax(ref_logits))
-        logits_shape = list(ref_logits.shape)
+        ref_error = None
+        try:
+            weights_np  = _load_source_weights_numpy(paths["safetensors"], att1_cfg)
+            reference = "source_safetensors"
+            ref_logits  = _python_forward_pass(weights_np, att1_cfg, prompt_ids, rope_theta)
+            ref_next    = int(np.argmax(ref_logits))
+            logits_shape = list(ref_logits.shape)
+        except (KeyError, ValueError, OSError) as exc:
+            ref_error = str(exc)
+            reference = "source_safetensors"
+            ref_next = None
+            logits_shape = []
 
         f32_bench_backend = getattr(args, "backend", None) or "cpu-f32"
-        bench_next, bench_err = _call_att1_bench_generic(
-            args.att1_f32, prompt_ids, f32_bench_backend
-        )
+        bench_next = None
+        bench_err = None
+        bench_match  = None
+        f32_fwd_status = "skip"
+        if ref_error is None:
+            bench_next, _, bench_err = _call_att1_bench_generic(
+                paths["att1_f32"], prompt_ids, f32_bench_backend
+            )
 
-        if bench_err:
+        if ref_error is not None:
+            bench_err = None
+            bench_match = None
+            f32_fwd_status = "skip"
+        elif bench_err:
             bench_match  = None
             f32_fwd_status = "skip"
         else:
@@ -768,9 +946,9 @@ def run_harness(args):
         q8_bench_err  = None
         q8_match      = None
         q8_fwd_status = "skip"
-        if args.att1_q8:
-            q8_bench_next, q8_bench_err = _call_att1_bench_generic(
-                args.att1_q8, prompt_ids, "cpu-q8"
+        if paths["att1_q8"] and ref_error is None:
+            q8_bench_next, _, q8_bench_err = _call_att1_bench_generic(
+                paths["att1_q8"], prompt_ids, args.q8_backend
             )
             if not q8_bench_err:
                 q8_match = (ref_next == q8_bench_next)
@@ -784,6 +962,7 @@ def run_harness(args):
                     )
 
         rpt_fwd = {
+            "reference":           reference,
             "prompt_ids":          prompt_ids,
             "logits_shape":        logits_shape,
             "ref_last_token":      ref_next,
@@ -792,25 +971,29 @@ def run_harness(args):
             "f32_bench_error":     bench_err,
             "f32_forward_match":   bench_match,
             "f32_status":          f32_fwd_status,
-            "q8_backend":          "cpu-q8",
+            "q8_backend":          args.q8_backend,
             "q8_bench_last_token": q8_bench_next,
             "q8_bench_error":      q8_bench_err,
             "q8_forward_match":    q8_match,
             "q8_status":           q8_fwd_status,
             "q8_note":             ("q8 argmax may differ from f32 ref "
                                     "for near-tied logits"),
+            "next_token_result":   f32_fwd_status,
+            "error":               ref_error,
         }
 
     # -------- assemble structured result dict --------
     overall = "pass" if not fail_msgs else "fail"
     rpt = {
         "date":        datetime.date.today().isoformat(),
-        "safetensors": args.safetensors,
-        "config_path": args.config,
+        "source_model_path": paths["source_model_path"],
+        "safetensors": paths["safetensors"],
+        "config_path": paths["config"],
         "config":      {
             "vocab_size": att1_cfg["vocab_size"],
             "n_layers":   att1_cfg["n_layers"],
             "n_heads":    att1_cfg["n_heads"],
+            "n_kv_heads": att1_cfg["n_kv_heads"],
             "d_model":    att1_cfg["d_model"],
             "d_ff":       att1_cfg["d_ff"],
             "rope_theta": rope_theta,
@@ -829,8 +1012,10 @@ def run_harness(args):
         # Machine-readable key=value lines (backward-compatible with M61).
         print(f"config:      vocab_size={att1_cfg['vocab_size']} "
               f"d_model={att1_cfg['d_model']} d_ff={att1_cfg['d_ff']} "
-              f"n_layers={att1_cfg['n_layers']} n_heads={att1_cfg['n_heads']}")
-        print(f"att1_f32:    {args.att1_f32}")
+              f"n_layers={att1_cfg['n_layers']} n_heads={att1_cfg['n_heads']} "
+              f"n_kv_heads={att1_cfg['n_kv_heads']}")
+        print(f"source_model_path:   {paths['source_model_path']}")
+        print(f"att1_f32:    {paths['att1_f32']}")
         print(f"prompt_ids:  {prompt_ids}")
         if f32_err:
             print(f"f32_error:   {f32_err}", file=sys.stderr)
@@ -839,7 +1024,7 @@ def run_harness(args):
             print(f"f32_max_abs_error:   {max_f32:.3e}")
             print(f"f32_max_rel_error:   {rel_f32:.3e}")
         if rpt_q8:
-            print(f"att1_q8:     {args.att1_q8}")
+            print(f"att1_q8:     {paths['att1_q8']}")
             if q8_err:
                 print(f"q8_error:    {q8_err}", file=sys.stderr)
             else:
@@ -847,6 +1032,9 @@ def run_harness(args):
                 print(f"q8_max_abs_error:    {max_q8:.3e}")
                 print(f"q8_max_rel_error:    {rel_q8:.3e}")
         if rpt_fwd:
+            print(f"reference:           {rpt_fwd['reference']}")
+            if rpt_fwd["error"]:
+                print(f"forward_error:       {rpt_fwd['error']}")
             print(f"ref_last_token:      {rpt_fwd['ref_last_token']}")
             print(f"logits_shape:        {rpt_fwd['logits_shape']}")
             if bench_err:
@@ -887,25 +1075,34 @@ def run_harness(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ATT-1 source-model comparison harness (M61/M62)"
+        description="ATT-1 source-model comparison harness (M61/M62/M69)"
     )
     parser.add_argument(
-        "--safetensors", default=_DEFAULT_ST,
-        help="Source .safetensors file (default: M61 fixture)"
+        "--model-dir", default=None, dest="model_dir", metavar="DIR",
+        help=("Local source model directory containing config.json and "
+              "model.safetensors; no network access is attempted")
     )
     parser.add_argument(
-        "--config", default=_DEFAULT_CFG,
-        help="Source config.json (default: tiny_llama_config.json)"
+        "--safetensors", default=None,
+        help=("Source .safetensors file (default: model-dir/model.safetensors "
+              "or M61 fixture)")
     )
     parser.add_argument(
-        "--att1-f32", default=_DEFAULT_F32,
+        "--config", default=None,
+        help=("Source config.json (default: model-dir/config.json or "
+              "tiny_llama_config.json)")
+    )
+    parser.add_argument(
+        "--att1-f32", default=None,
         dest="att1_f32",
-        help="Converted f32 ATT-1 model (default: models/m61_f32/model.att1)"
+        help=("Converted f32 ATT-1 model (default: models/m61_f32/model.att1 "
+              "only for fixture source)")
     )
     parser.add_argument(
-        "--att1-q8", default=_DEFAULT_Q8,
+        "--att1-q8", default=None,
         dest="att1_q8",
-        help="Converted q8 ATT-1 model (default: models/m61_q8/model.att1)"
+        help=("Converted q8 ATT-1 model (default: models/m61_q8/model.att1 "
+              "only for fixture source; omit to run f32-only)")
     )
     parser.add_argument(
         "--prompt-ids", default=[5], dest="prompt_ids",
@@ -920,6 +1117,11 @@ def main():
         "--backend", default=None,
         choices=["cpu-f32", "cpu-q8", "cuda", "cuda-q8"],
         help="Backend for f32 bench forward comparison (default: cpu-f32)"
+    )
+    parser.add_argument(
+        "--q8-backend", default="cpu-q8",
+        choices=["cpu-q8", "cuda-q8"],
+        help="Backend for q8 bench forward comparison (default: cpu-q8)"
     )
     parser.add_argument(
         "--f32-tol", default=1e-4, type=float, dest="f32_tol",

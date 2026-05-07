@@ -477,6 +477,42 @@ hashing, reserved future embedded asset offset/size fields, compatibility
 checks against model vocabulary dimensions, hostile-input validation, and
 runtime fallback rules.
 
+## Public source comparison report (Milestone 69)
+
+M69 extends `compiler/compare_att1_to_source.py` for public-model validation
+using only local files.  The comparison harness now accepts a local
+`--model-dir` containing `config.json` and `model.safetensors`, plus explicit
+converted f32/q8 `.att1` artifact paths that may live outside the Git tree.
+
+No model weights and no generated public `.att1` artifacts are checked in.
+The runtime remains C11, the `.att1` binary format is unchanged, q4 remains
+unimplemented, and tokenizer parsing stays outside C.
+
+Manual validation after local conversion:
+
+```sh
+python3 compiler/compare_att1_to_source.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --prompt-ids 1,2,3 \
+    --report \
+    --report-json ~/Models/att1/SmolLM2-135M/source_comparison.json
+```
+
+The report includes:
+
+- source model path, `config.json`, and `model.safetensors`
+- ATT-1 artifact path, dtype, and selected backend
+- prompt token IDs
+- logits shape and source-reference next-token result
+- f32/q8 `max_abs_error`, `max_rel_error`, tolerance, and pass/fail status
+
+The numpy reference path loads the source safetensors directly and compares
+f32/q8 artifacts against that local source reference.  q8 next-token
+divergence remains a warning when static tensor error is within tolerance,
+because near-tied logits can flip greedy argmax under quantisation.
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -504,5 +540,6 @@ runtime fallback rules.
 | M66 | Public model compatibility scanner (`compiler/check_llama_compat.py`) |
 | M67 | BF16/F16 source dtype coercion in `load_safetensors.py`; `_coerce_bf16`/`_coerce_f16` helpers; `TensorData.coerced` field; compat scanner promotes BF16/F16 to warning; BF16 fixture + smoke check |
 | M68 | q8 conversion of BF16-source public model: `compare_att1_to_source.py` BF16 support; q8 smoke check (`check_q8_conversion`); manual validation workflow for public models; documented tolerance and token-divergence behaviour |
-| M69 | GQA support: `n_kv_heads` config field, converter, runtime attention |
-| M70 | SmolLM2-135M import and validation (first real public model) |
+| M69 | Public model source comparison report: `--model-dir`, external f32/q8 artifact paths, source-safetensors numpy reference, richer pass/fail report fields |
+| M70 | GQA support: `n_kv_heads` config field, converter, runtime attention |
+| M71 | SmolLM2-135M import and validation (first real public model) |

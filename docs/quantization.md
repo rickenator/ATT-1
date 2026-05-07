@@ -306,6 +306,27 @@ deterministic tiny fixtures.
 4. `att1-bench --backend cpu-q8 --mode cluster --tiles 2`
 5. `compare_att1_to_source.py`: `q8_status: pass`, `result: pass` (numpy-skippable)
 
+## Public q8 source comparison report (M69)
+
+`compiler/compare_att1_to_source.py` accepts local public-model source
+directories and external q8 artifacts:
+
+```sh
+python3 compiler/compare_att1_to_source.py \
+    --model-dir ~/Models/<model> \
+    --att1-f32 ~/Models/att1/<model>/model_f32.att1 \
+    --att1-q8  ~/Models/att1/<model>/model_q8.att1 \
+    --prompt-ids 1,2,3 \
+    --q8-backend cpu-q8 \
+    --report
+```
+
+The q8 report records the artifact path, dtype, backend, prompt token IDs,
+logits shape from the source reference, max absolute/relative static tensor
+error, q8 tolerance, next-token comparison, and pass/fail status.  Generated
+public `.att1` files should remain outside Git, alongside the local source
+model files.
+
 ## Ownership
 
 `att1_q8_matrix_alloc` allocates owned `values` and `scales` buffers.
