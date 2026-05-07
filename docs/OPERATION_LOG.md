@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 79: CPU q4 cluster inference integration.
+Milestone 80: q4 benchmark and trace integration.
 
 ## Hard Rules
 
@@ -164,3 +164,11 @@ Milestone 23 complete:
 - Default CPU-only build remains CUDA-free.
 - CUDA=1 tests pass on RTX 3090 host.
 - Full CUDA q8 inference is still not implemented.
+
+Milestone 80 complete:
+- `att1-bench --backend cpu-q4 --mode single` exits zero on q4 fixture; output includes `backend=cpu-q4`.
+- `att1-bench --backend cpu-q4 --mode cluster --tiles 2` exits zero; `fabric_packets_sent > 0`.
+- `--backend cuda-q4` rejected at argument-parse time with a clear error message on stderr, non-zero exit.
+- `test_backend_matrix` extended with cpu-q4 single and cluster entries (consistency group 4 on q4_tiny fixture).
+- `test_q4_bench` added (4 checks): single exits zero, cluster exits zero, cuda-q4 unsupported, f32 regression guard.
+- `make test` passes (47 tests on CPU-only build).

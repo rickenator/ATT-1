@@ -462,6 +462,7 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 | M77 | q4 `.att1` fixture: `compiler/make_q4_fixture.py` deterministic generator, `models/q4_tiny/model.att1` (54 132 bytes, 21 tensors, d_model=32, d_ff=64), `att1-inspect` `inference_status=q4_unsupported` note, `test_quant_q4_fixture` (8 checks) |
 | M78 | CPU q4 single-tile inference: `att1_infer_create_q4()`, `cpu-q4` backend, q4 attention + transformer block + output projection; `test_infer_q4` (7 checks); no CUDA q4, no q4 cluster |
 | M79 | CPU q4 cluster inference: `att1_cluster_infer_create_q4()`, zero-copy q4 layer views, q4 transformer-block decode path, q4 output projection via `att1_matmul_q4xf32()` directly; `test_cluster_infer_q4` (8 checks); no CUDA q4, `ATT1_SHARD_PLAN_METADATA` unsupported for q4 |
+| M80 | q4 benchmark and trace integration: `att1-bench --backend cpu-q4` for single and cluster modes; `cuda-q4` rejected at arg-parse time; `test_q4_bench` (4 checks); `test_backend_matrix` extended with cpu-q4 entries (consistency group 4) |
 
 ---
 
@@ -882,3 +883,58 @@ Internally:
 | 7 | `q4_cluster_fabric_packets_nonzero` | Tile 0 `activations_received > 0` after decode |
 | 8 | `q4_cluster_metadata_plan_rejected` | `ATT1_SHARD_PLAN_METADATA` config returns error |
 
+
+---
+
+## q4 benchmark and trace integration (M80)
+
+M80 exposes the CPU q4 inference paths through `att1-bench` and adds them to the
+backend consistency matrix so q4 throughput can be measured alongside f32 and q8.
+
+### `att1-bench --backend cpu-q4`
+
+Both `--mode single` and `--mode cluster` accept `--backend cpu-q4`.  The bench
+bypasses `create_backend()` / `att1_infer_set_backend()` and instead directly calls
+`att1_infer_create_q4()` or `att1_cluster_infer_create_q4()`, which set up the
+cpu-q4 backend internally.
+
+```sh
+# Single-tile q4 inference
+./build/att1-bench --model models/q4_tiny/model.att1 \
+    --prompt A --tokens 4 --mode single --backend cpu-q4
+
+# Cluster q4 inference (2 tiles)
+./build/att1-bench --model models/q4_tiny/model.att1 \
+    --prompt A --tokens 4 --mode cluster --tiles 2 --backend cpu-q4
+```
+
+Both commands print `backend=cpu-q4` in their output and exit zero on the q4 fixture.
+Cluster mode reports `fabric_packets_sent > 0`.
+
+### `cuda-q4` rejected at argument parse
+
+`--backend cuda-q4` is rejected immediately at argument-parse time with an error
+message on stderr and a non-zero exit — no model loading or inference is attempted.
+This satisfies the "fails clearly as unsupported" requirement.
+
+### Backend consistency matrix (group 4)
+
+`test_backend_matrix` gained two new entries for consistency group 4 (the q4_tiny
+fixture, `max_seq_len=8`, `vocab_size=256`):
+
+| Backend | Mode    | Shard plan | Group |
+|---------|---------|------------|-------|
+| cpu-q4  | single  | runtime    | 4     |
+| cpu-q4  | cluster | runtime    | 4     |
+
+Both entries must produce the same `last_token` value — confirming that single-tile
+and cluster q4 inference agree on the output.
+
+### Test coverage
+
+| # | Test | Verifies |
+|---|------|----------|
+| 1 | `q4_bench_single_exits_zero` | `--backend cpu-q4 --mode single` exits 0; output contains `backend=cpu-q4`, `mode=single`, `tokens_decoded=`, `logits_bytes_produced=`, `kv_appends=` |
+| 2 | `q4_bench_cluster_exits_zero` | `--backend cpu-q4 --mode cluster --tiles 2` exits 0; `fabric_packets_sent > 0` |
+| 3 | `q4_bench_cuda_q4_unsupported` | `--backend cuda-q4` exits non-zero with error message |
+| 4 | `q4_bench_f32_path_unchanged` | cpu-f32 on dummy model still exits 0 (regression guard) |

@@ -23,6 +23,7 @@
 #define MATRIX_MODEL      "models/dummy/model.att1"
 #define MATRIX_META_MODEL "models/shard_meta/model.att1"
 #define MATRIX_STUB_MODEL "models/converted_stub_meta/model.att1"
+#define MATRIX_Q4_MODEL   "models/q4_tiny/model.att1"
 #define MATRIX_PROMPT     "hello"
 #define MATRIX_TOKENS     "8"
 #define MATRIX_TILES      "2"
@@ -80,6 +81,9 @@ static const matrix_entry_t k_matrix[] = {
     { "cpu-q8",  "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 0, 3 },
     { "cuda",    "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 1, 3 },
     { "cuda-q8", "cluster", MATRIX_STUB_MODEL, MATRIX_STUB_TILES, "metadata", 1, 1, 3 },
+    /* cpu-q4 single and cluster — q4_tiny fixture (group 4) */
+    { "cpu-q4",  "single",  MATRIX_Q4_MODEL,   NULL,              NULL,       0, 0, 4 },
+    { "cpu-q4",  "cluster", MATRIX_Q4_MODEL,   MATRIX_TILES,      "runtime",  1, 0, 4 },
 };
 
 #define MATRIX_COUNT (sizeof(k_matrix) / sizeof(k_matrix[0]))
@@ -319,11 +323,12 @@ int main(void)
     size_t   skipped = 0u;
     size_t   failed = 0u;
     /* One reference last_token per consistency group (0=single, 1=cluster-dummy,
-     * 2=cluster-shard_meta, 3=cluster-converted_stub_meta).
+     * 2=cluster-shard_meta, 3=cluster-converted_stub_meta, 4=q4-q4_tiny).
      * Group 2 spans both runtime and metadata plans on the 1-tile shard_meta fixture.
-     * Group 3 spans both runtime and metadata plans on the 2-tile converted stub. */
-    uint32_t refs[4]     = {0u, 0u, 0u, 0u};
-    int      refs_set[4] = {0, 0, 0, 0};
+     * Group 3 spans both runtime and metadata plans on the 2-tile converted stub.
+     * Group 4 spans cpu-q4 single and cpu-q4 cluster on the q4_tiny fixture. */
+    uint32_t refs[5]     = {0u, 0u, 0u, 0u, 0u};
+    int      refs_set[5] = {0, 0, 0, 0, 0};
     int      token_mismatch = 0;
 
     for (i = 0u; i < MATRIX_COUNT; i++) {
