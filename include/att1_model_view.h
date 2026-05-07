@@ -15,6 +15,8 @@
  */
 att1_status_t att1_model_view_validate_decoder(const att1_model *model);
 
+att1_status_t att1_model_view_validate_decoder_q4(const att1_model *model);
+
 att1_status_t att1_model_view_tensor_f32(const att1_model *model,
                                          const char *name,
                                          uint32_t ndims,
@@ -27,6 +29,12 @@ att1_status_t att1_model_view_tensor_q8(const att1_model *model,
                                         uint64_t rows,
                                         uint64_t cols,
                                         att1_q8_matrix *out_matrix);
+
+att1_status_t att1_model_view_tensor_q4(const att1_model *model,
+                                        const char *name,
+                                        uint64_t rows,
+                                        uint64_t cols,
+                                        att1_q4_matrix *out_matrix);
 
 att1_status_t att1_model_view_token_embedding(const att1_model *model,
                                               const float **out_data);

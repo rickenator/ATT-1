@@ -61,6 +61,7 @@ struct att1_backend {
 
 att1_status_t att1_backend_cpu_f32_create(att1_backend **out_backend);
 att1_status_t att1_backend_cpu_q8_create(att1_backend **out_backend);
+att1_status_t att1_backend_cpu_q4_create(att1_backend **out_backend);
 int att1_backend_cuda_available(void);
 att1_status_t att1_backend_cuda_create(att1_backend **out_backend);
 att1_status_t att1_backend_cuda_q8_create(att1_backend **out_backend);

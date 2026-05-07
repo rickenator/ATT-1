@@ -28,11 +28,11 @@ Tensor shapes
   layers.N.attention.wv.weight    [32, 32]   q4  g32
   layers.N.attention.wo.weight    [32, 32]   q4  g32
   layers.N.ffn_norm.weight        [32]       f32
-  layers.N.ffn.w_gate.weight      [32, 64]   q4  g32
-  layers.N.ffn.w_up.weight        [32, 64]   q4  g32
-  layers.N.ffn.w_down.weight      [64, 32]   q4  g32
+  layers.N.ffn.w_gate.weight      [64, 32]   q4  g32   (rows=d_ff, cols=d_model)
+  layers.N.ffn.w_up.weight        [64, 32]   q4  g32   (rows=d_ff, cols=d_model)
+  layers.N.ffn.w_down.weight      [32, 64]   q4  g32   (rows=d_model, cols=d_ff)
   output_norm.weight              [32]       f32
-  output.weight                   [32, 256]  q4  g32
+  output.weight                   [256, 32]  q4  g32   (rows=vocab_size, cols=d_model)
 
 Usage:
     python3 compiler/make_q4_fixture.py [output_path]
@@ -218,12 +218,12 @@ def build_model():
         tensors.append(make_q4_tensor(f"{p}.attention.wv.weight",    [d, d],  idx)); idx += 1
         tensors.append(make_q4_tensor(f"{p}.attention.wo.weight",    [d, d],  idx)); idx += 1
         tensors.append(make_f32_tensor(f"{p}.ffn_norm.weight",       [d],     idx)); idx += 1
-        tensors.append(make_q4_tensor(f"{p}.ffn.w_gate.weight",      [d, ff], idx)); idx += 1
-        tensors.append(make_q4_tensor(f"{p}.ffn.w_up.weight",        [d, ff], idx)); idx += 1
-        tensors.append(make_q4_tensor(f"{p}.ffn.w_down.weight",      [ff, d], idx)); idx += 1
+        tensors.append(make_q4_tensor(f"{p}.ffn.w_gate.weight",      [ff, d], idx)); idx += 1
+        tensors.append(make_q4_tensor(f"{p}.ffn.w_up.weight",        [ff, d], idx)); idx += 1
+        tensors.append(make_q4_tensor(f"{p}.ffn.w_down.weight",      [d, ff], idx)); idx += 1
 
     tensors.append(make_f32_tensor("output_norm.weight", [d], idx)); idx += 1
-    tensors.append(make_q4_tensor("output.weight",       [d, v], idx));  idx += 1
+    tensors.append(make_q4_tensor("output.weight",       [v, d], idx));  idx += 1
 
     config_offset = HEADER_SIZE
     desc_offset   = config_offset + CONFIG_SIZE

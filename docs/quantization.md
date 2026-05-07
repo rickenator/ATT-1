@@ -460,7 +460,7 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 | M75 | CPU q4 packing/unpacking primitives: `att1_q4_group_scale()`, `att1_q4_pack_group()`, `att1_q4_unpack_group()`, `att1_q4_quantize_group()`, `att1_q4_dequantize_group()`; `test_quant_q4_pack` (9 checks) |
 | M76 | CPU q4 matmul prototype: `att1_q4_matrix` struct, `att1_quantize_q4_per_group()`, `att1_matmul_q4xf32()` (dequantize-then-multiply, activations stay float32); `test_matmul_q4` (8 checks) |
 | M77 | q4 `.att1` fixture: `compiler/make_q4_fixture.py` deterministic generator, `models/q4_tiny/model.att1` (54 132 bytes, 21 tensors, d_model=32, d_ff=64), `att1-inspect` `inference_status=q4_unsupported` note, `test_quant_q4_fixture` (8 checks) |
-| M78 | CPU q4 single-tile inference: `--backend cpu-q4` in `att1-bench`, single-tile decode validated against cpu-f32 |
+| M78 | CPU q4 single-tile inference: `att1_infer_create_q4()`, `cpu-q4` backend, q4 attention + transformer block + output projection; `test_infer_q4` (7 checks); no CUDA q4, no q4 cluster |
 | M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |
 
 ---
@@ -773,3 +773,65 @@ Eight test cases in `tests/test_quant_q4_fixture.c`:
 | 6 | `test_fixture_packed_nonzero` | At least one of the 512 packed bytes for the same tensor is nonzero |
 | 7 | `test_fixture_inference_rejected` | `att1_model_view_validate_decoder()` returns `ATT1_ERR_UNSUPPORTED` |
 | 8 | `test_fixture_inspect_output` | `att1-inspect` output contains `dtype_name=q4`, `quant=grouped-q4-g32`, `q4_groups=32`, `q4_packed_bytes=512`, `q4_scale_bytes=128`, `inference_status=q4_unsupported` |
+
+---
+
+## CPU q4 single-tile inference (M78)
+
+M78 wires q4-quantized weights into the single-tile decode path via a new
+`att1_infer_create_q4()` entry point and a dedicated `cpu-q4` backend.
+
+### Design constraints
+
+- Q4 inference must **not** silently fall back to f32 or q8. The `cpu-q4`
+  backend sets `ops->matmul_q8xf32 = NULL` and does not call `ops->matmul_f32`.
+- Activations and KV cache remain float32; only weight tensors are q4.
+- All q4 matmuls go through `att1_matmul_q4xf32()` directly — there is no
+  new backend vtable entry for q4 matmul, avoiding `Wmissing-field-initializers`
+  regressions in existing positional ops-table initializers.
+- `att1_infer_create()` (the f32/q8 path) continues to reject q4 models with
+  `ATT1_ERR_UNSUPPORTED` (unchanged from M74).
+
+### New API surface
+
+```c
+/* Creates a q4 inference context with a cpu-q4 backend.
+ * The model must pass att1_model_view_validate_decoder_q4(). */
+att1_status_t att1_infer_create_q4(const att1_model *model,
+                                   att1_infer_t **out_infer);
+```
+
+Weight views are zero-copy (pointers into mapped model memory via
+`att1_model_view_tensor_q4()`). The view array (`att1_infer_q4_layer *q4_layers`)
+is heap-allocated and freed by `att1_infer_destroy()`.
+
+### Fixture shape convention (corrected in M78)
+
+Non-square weight matrices must be stored as `[output_features, input_features]`
+to match `att1_matmul_q4xf32()` convention (`weights->rows = output`, `weights->cols = input`):
+
+| Tensor | Shape |
+|--------|-------|
+| `layers.N.ffn.w_gate.weight` | `[d_ff, d_model]` = `[64, 32]` |
+| `layers.N.ffn.w_up.weight`   | `[d_ff, d_model]` = `[64, 32]` |
+| `layers.N.ffn.w_down.weight` | `[d_model, d_ff]` = `[32, 64]` |
+| `output.weight`              | `[vocab_size, d_model]` = `[256, 32]` |
+
+The M77 fixture had these shapes transposed; `compiler/make_q4_fixture.py`
+was corrected and `models/q4_tiny/model.att1` regenerated. File size is
+unchanged (54 132 bytes) because dimension products are equal either way.
+
+### Test coverage (`test_infer_q4`)
+
+Seven test cases in `tests/test_infer_q4.c`:
+
+| # | Name | What it checks |
+|---|------|---------------|
+| 1 | `q4_create_and_decode` | Load q4 fixture, `att1_infer_create_q4()`, decode 1 token returns `ATT1_OK` |
+| 2 | `q4_backend_is_cpu_q4` | `att1_backend_cpu_q4_create()` produces backend named `"cpu-q4"` |
+| 3 | `q4_logit_count` | After decode, `att1_infer_logits()` count == 256 (vocab_size) |
+| 4 | `q4_create_on_f32_model_fails` | `att1_infer_create_q4()` on f32 dummy model returns error, `out_infer=NULL` |
+| 5 | `q4_fixture_rejected_by_create` | `att1_infer_create()` (f32/q8 path) on q4 fixture returns error |
+| 6 | `q4_position_advances` | After 4 decode steps, `att1_infer_position()` == 4 |
+| 7 | `f32_path_unchanged` | Dummy model + `att1_infer_create()` still decodes OK |
+

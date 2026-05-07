@@ -16,17 +16,17 @@
  *   layers.N.attention.wv.weight   [32, 32]   q4 g32
  *   layers.N.attention.wo.weight   [32, 32]   q4 g32
  *   layers.N.ffn_norm.weight       [32]       f32
- *   layers.N.ffn.w_gate.weight     [32, 64]   q4 g32
- *   layers.N.ffn.w_up.weight       [32, 64]   q4 g32
- *   layers.N.ffn.w_down.weight     [64, 32]   q4 g32
+ *   layers.N.ffn.w_gate.weight     [64, 32]   q4 g32   (rows=d_ff, cols=d_model)
+ *   layers.N.ffn.w_up.weight       [64, 32]   q4 g32   (rows=d_ff, cols=d_model)
+ *   layers.N.ffn.w_down.weight     [32, 64]   q4 g32   (rows=d_model, cols=d_ff)
  *   output_norm.weight             [32]       f32
- *   output.weight                  [32, 256]  q4 g32
+ *   output.weight                  [256, 32]  q4 g32   (rows=vocab_size, cols=d_model)
  *
- * Expected q4 nbytes:
- *   [32,  32] g32 → packed=512,  scales=128,  total=640
- *   [32,  64] g32 → packed=1024, scales=256,  total=1280
- *   [64,  32] g32 → packed=1024, scales=256,  total=1280
- *   [32, 256] g32 → packed=4096, scales=1024, total=5120
+ * Expected q4 nbytes (nbytes are shape-product-invariant — same either orientation):
+ *   [32, 32] g32 → packed=512,  scales=128,  total=640
+ *   [64, 32] g32 → packed=1024, scales=256,  total=1280
+ *   [32, 64] g32 → packed=1024, scales=256,  total=1280
+ *   [256,32] g32 → packed=4096, scales=1024, total=5120
  *
  * Tests:
  *   1. test_fixture_loads               – ATT1_OK, tensor_count=21

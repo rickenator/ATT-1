@@ -20,6 +20,17 @@ typedef struct att1_infer att1_infer_t;
 att1_status_t att1_infer_create(const att1_model *model,
                                 att1_infer_t **out_infer);
 
+/*
+ * Create a q4 inference context for a model whose weight tensors are grouped
+ * int4 (dtype=q4).  Validates the model with validate_decoder_q4, sets the
+ * backend to cpu-q4, and loads zero-copy views of all q4 weight matrices.
+ *
+ * Fails with ATT1_ERR_SHAPE / ATT1_ERR_NOT_FOUND if any required q4 tensor
+ * is absent or has an unexpected dtype or shape.
+ */
+att1_status_t att1_infer_create_q4(const att1_model *model,
+                                   att1_infer_t **out_infer);
+
 void att1_infer_destroy(att1_infer_t *infer);
 
 /*

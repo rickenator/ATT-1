@@ -30,7 +30,7 @@ TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
 	tokenizer sampler infer shard shard_meta shard_meta_fixture shard_meta_report shard_meta_consistency shard_meta_plan shard_meta_exec cluster_infer trace quant matmul_q8 backend bench_smoke tok_meta tok_meta_select tok_ext \
 	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer cuda_cluster cuda_bench \
-	q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture
+	q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -44,6 +44,7 @@ COMMON_SRCS := \
 	$(SRC_DIR)/sampler.c \
 	$(SRC_DIR)/backend_cpu_f32.c \
 	$(SRC_DIR)/backend_cpu_q8.c \
+	$(SRC_DIR)/backend_cpu_q4.c \
 	$(SRC_DIR)/backend_cuda.c \
 	$(SRC_DIR)/quant.c \
 	$(SRC_DIR)/matmul_q8.c \
