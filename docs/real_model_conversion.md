@@ -368,3 +368,25 @@ Steps performed:
 6. Compare `last_token`, `logits_bytes_produced`, `fabric_packets_sent` — must agree
 
 All artefacts written to `build/m44_validation/` (cleaned unless `--keep`).
+
+---
+
+## Real tiny model import plan (Milestone 45)
+
+M45 is documentation-only.  It defines the full implementation plan for
+importing a real tiny LLaMA-style model — covering source files, tensor
+mappings, transpose rules, RoPE conventions, dtype conversion, hostile-input
+validation, and the exact future milestone split.
+
+See [docs/real_tiny_model_import.md](real_tiny_model_import.md) for the
+complete plan.
+
+### Future milestone sequence
+
+| Milestone | Goal |
+|-----------|------|
+| M46 | safetensors metadata scanner (Python; no weight loading) |
+| M47 | safetensors tensor reader (Python; dtype coercion, transpose) |
+| M48 | Real f32 converted tiny model — first non-synthetic `.att1` artifact |
+| M49 | q8 converted tiny model — dtype-2 loader extension, cross-backend check |
+| M50 | Tokenizer import plan (documentation only) |
