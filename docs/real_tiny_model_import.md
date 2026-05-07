@@ -522,6 +522,55 @@ import and runtime selection without changing the current `.att1` model format.
 
 See [tokenizer_metadata.md](tokenizer_metadata.md) for the complete schema.
 
+### M52 — tokenizer asset scanner (complete)
+
+**Goal:** Scan a directory of tokenizer asset files, parse available metadata,
+and report tokenizer type, vocabulary, special-token IDs, and checksums —
+without implementing a tokenizer or modifying runtime behavior.
+
+**Implementation:**
+
+- **`compiler/scan_tokenizer.py`** — new module + CLI.  Public API:
+  - `TokenizerScanError(Exception)` — raised for fatal I/O or JSON errors.
+  - `scan_tokenizer_dir(dirpath, config_path=None) -> dict` — discovers and
+    parses `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`,
+    and detects `tokenizer.model` (unsupported in M52).  Returns:
+    `dir`, `assets`, `asset_hashes` (SHA-256), `tokenizer_type` (`bpe_json`,
+    `sentencepiece`, `byte`, or `unknown`), `vocab_size`, `bos_id`, `eos_id`,
+    `pad_id`, `unk_id`, `byte_fallback`, `normalizer`, `pretokenizer`,
+    `config_vocab_size`, `vocab_size_match`, `warnings`, `errors`.
+  - `format_tokenizer_report(result, show_detail=True) -> str` — human-readable
+    `key=value` output followed by per-asset listing and `scan: ok`.
+
+  CLI flags: `dirpath`, `--config PATH`, `--json`, `--no-detail`.
+  Exit codes: 0 = ok, 1 = fatal error or scan errors, 2 = vocab_size mismatch.
+
+  Error conditions:
+  - Directory not found → `TokenizerScanError`.
+  - `tokenizer.json` malformed (bad JSON, non-object root) → exit 1.
+  - `tokenizer_config.json` malformed → exit 1.
+  - `tokenizer.model` present → `tokenizer_type=sentencepiece`, error reported,
+    exit 1 (unsupported in M52).
+  - `config.vocab_size` mismatch → `vocab_size_match=no`, exit 2.
+  - No assets found → `tokenizer_type=byte`, warning only, exit 0.
+
+- **`compiler/fixtures/tiny_tokenizer/tokenizer.json`** — minimal BPE tokenizer
+  with 16-token vocab (UNK=0, BOS=1, EOS=2, plus 13 byte tokens), ByteLevel
+  pre-tokenizer, no normalizer, no merges.
+- **`compiler/fixtures/tiny_tokenizer/tokenizer_config.json`** — declares
+  `bos_token="<s>"`, `eos_token="</s>"`, `unk_token="<unk>"`,
+  `vocab_size=16`.
+- **`compiler/fixtures/tiny_tokenizer/special_tokens_map.json`** — maps
+  `bos_token`, `eos_token`, `unk_token`.
+
+- **`tests/test_bench_smoke.c`** — `check_tokenizer_scanner()` added
+  (Python-skippable): basic scan asserts `tokenizer_type=bpe_json`,
+  `vocab_size=16`, `bos_id=1`, `eos_id=2`, `scan: ok`; config cross-check
+  asserts `vocab_size_match=yes`.
+
+- No C source change (other than `test_bench_smoke.c`), no Makefile change,
+  no `.att1` format change.  `make test` passes (39 tests).
+
 ---
 
 ## Open questions (to resolve before M46)

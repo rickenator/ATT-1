@@ -1,0 +1,8 @@
+{
+    "bos_token": "<s>",
+    "eos_token": "</s>",
+    "model_max_length": 128,
+    "tokenizer_class": "PreTrainedTokenizerFast",
+    "unk_token": "<unk>",
+    "vocab_size": 16
+}
