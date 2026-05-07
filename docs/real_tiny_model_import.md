@@ -501,6 +501,27 @@ runtime tokenizer selection are part of M50.
 | M54 | Optional `.att1` tokenizer metadata section; loader/inspect reporting only, no default runtime selection |
 | M55 | Runtime tokenizer selection; opt-in real tokenizer path while byte tokenizer remains available for tests |
 
+### M51 — tokenizer metadata schema
+
+**Goal:** Define the optional tokenizer metadata schema for future converter
+import and runtime selection without changing the current `.att1` model format.
+
+**Schema summary:**
+
+- Metadata is optional; existing `.att1` models remain valid without it.
+- Existing byte-level tokenizer behavior remains the default for tests and
+  benchmarks.
+- Version `1` records tokenizer type (`byte`, `bpe_json`, `sentencepiece`, or
+  `unknown`), vocabulary size, BOS/EOS/PAD/UNK IDs, byte-fallback flag,
+  normalization policy, pretokenizer policy, tokenizer asset hash, and reserved
+  future asset offset/size fields.
+- Future compatibility checks must compare metadata `vocab_size` against
+  `config.json`, embedding rows, and lm_head rows.
+- Hostile-input validation and runtime fallback behavior are defined before any
+  parser or runtime integration work begins.
+
+See [tokenizer_metadata.md](tokenizer_metadata.md) for the complete schema.
+
 ---
 
 ## Open questions (to resolve before M46)
@@ -537,4 +558,6 @@ runtime tokenizer selection are part of M50.
 - [shard_metadata.md](shard_metadata.md) — shard metadata binary format and
   validation requirements
 - [model_format.md](model_format.md) — `.att1` binary format specification
+- [tokenizer_metadata.md](tokenizer_metadata.md) — optional future tokenizer
+  metadata schema and validation rules
 - [aimu_architecture.md](aimu_architecture.md) — AIMU tiled tensor architecture

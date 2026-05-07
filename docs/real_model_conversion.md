@@ -463,6 +463,20 @@ BOS/EOS/PAD/UNK handling, and documented byte-fallback behavior.  Runtime
 tokenizer selection and optional `.att1` tokenizer metadata are deferred to
 later milestones.
 
+## Tokenizer metadata schema (Milestone 51)
+
+M51 defines the optional tokenizer metadata schema in
+[docs/tokenizer_metadata.md](tokenizer_metadata.md). The schema is logical only
+in M51; it does not add a tokenizer metadata section to `.att1`, does not
+require metadata for existing models, and does not change the current byte
+tokenizer default.
+
+The schema covers versioning, tokenizer type, vocabulary size, special token
+IDs, byte fallback, normalization and pretokenizer policies, tokenizer asset
+hashing, reserved future embedded asset offset/size fields, compatibility
+checks against model vocabulary dimensions, hostile-input validation, and
+runtime fallback rules.
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -472,7 +486,7 @@ later milestones.
 | M48 | Real f32 converted tiny model — first non-synthetic `.att1` artifact |
 | M49 | q8 converted tiny model — dtype-2 loader extension, cross-backend check |
 | M50 | Tokenizer import plan (documentation only) |
-| M51 | Tokenizer metadata schema |
+| M51 | Tokenizer metadata schema (documentation only) |
 | M52 | Tokenizer scanner/parser skeleton |
 | M53 | Tokenizer fixture import |
 | M54 | Optional `.att1` tokenizer metadata section |

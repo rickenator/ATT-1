@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 51: tokenizer metadata schema.
+Milestone 52: tokenizer scanner/parser skeleton.
 
 ## Hard Rules
 
@@ -69,10 +69,11 @@ Milestone 51: tokenizer metadata schema.
 - Milestone 48: f32 ATT-1 conversion from tiny safetensors fixture — `compiler/convert_llama_to_att1.py` now supports `--safetensors PATH` to load real F32 payloads through the M47 reader, map Hugging Face LLaMA tensor names to ATT-1 names, transpose projection/output matrices, and emit dtype-1 `.att1` data without changing the binary format; tiny config fixtures now match `compiler/fixtures/tiny_llama_2l.safetensors` (`vocab_size=16`, `d_model=8`, `d_ff=16`); checked-in `models/real_tiny_f32/model.att1` loads via `att1-inspect` and runs `att1-bench` single and cluster cpu-f32; CPU and CUDA test suites pass on the RTX 3090 host; backend matrix passes `24/24`; `tests/test_converter_validation.c` validates the converted fixture without Python at test time; tokenizer import and q8/q4 conversion remain deferred.
 - Milestone 49: q8 ATT-1 conversion from tiny safetensors fixture — `compiler/convert_llama_to_att1.py` now supports `--weight-format q8` with `--safetensors PATH`, reusing the M48 F32 tensor reader/mapping/transpose path and emitting dtype-2 per-row q8 projection/output tensors while keeping embeddings and norms f32; dtype-2 `.att1` tensor payloads are validated as row-major int8 values followed by per-row float32 scales; checked-in `models/real_tiny_q8/model.att1` loads via the hostile-input C loader and reports q8 metadata in `att1-inspect`; CPU q8 single and cluster bench paths exit zero on the q8 artifact with nonzero fabric packets in cluster mode; CUDA q8 single and cluster bench paths exit zero on the RTX 3090 host; `tests/test_converter_validation.c` validates the f32 and q8 tiny converted fixtures without Python at test time; `make clean && make && make test` passes; `make clean && make CUDA=1 && make test CUDA=1` passes with backend matrix `24/24`; tokenizer import, q4 conversion, BF16/F16 source upcast, and multi-shard real-model import remain pending.
 - Milestone 50: tokenizer import plan — documentation-only plan added to `docs/real_tiny_model_import.md` and summarized in `docs/real_model_conversion.md`; current byte-level tokenizer remains the runtime default and real tokenizer import starts converter-side first; expected assets are `tokenizer.json`, future `tokenizer.model`, `tokenizer_config.json`, and `special_tokens_map.json`; plan covers token ID stability, `vocab_size` agreement across config/embeddings/lm_head/tokenizer vocab, BOS/EOS/PAD/UNK handling, byte-fallback behavior, validation risks, and M51-M55 follow-on split. No C source change. No Makefile change. No `.att1` format change. No tokenizer parser implementation. No new dependencies. `make clean && make && make test` passes.
+- Milestone 51: tokenizer metadata schema — `docs/tokenizer_metadata.md` added as the optional future tokenizer metadata schema; `docs/real_tiny_model_import.md` and `docs/real_model_conversion.md` cross-reference it. Schema version 1 covers tokenizer type (`byte`, `bpe_json`, `sentencepiece`, `unknown`), `vocab_size`, BOS/EOS/PAD/UNK IDs, byte fallback, normalization and pretokenizer policies, tokenizer asset hash, reserved future embedded asset offset/size fields, compatibility checks against model config and tensor vocab dimensions, hostile-input validation, and runtime fallback rules. Metadata remains optional; existing byte-level tokenizer remains default; no parser, SentencePiece import, dependency, Makefile, C source, `.att1` format, or inference behavior changes. Validation: `make clean && make && make test` passes.
 
 ## Active Task
 
-Milestone 50 complete. Await Milestone 51 scope.
+Milestone 51 complete. Await Milestone 52 scope.
 
 ## Next Prompt for Codex
 
