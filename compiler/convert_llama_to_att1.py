@@ -2,7 +2,8 @@
 """
 ATT-1 LLaMA converter (Milestone 32 — deterministic stub emitter,
                         Milestone 43 — shard metadata plan report,
-                        Milestone 48 — f32 safetensors import).
+                        Milestone 48 — f32 safetensors import,
+                        Milestone 49 — q8 safetensors import).
 
 Validates a LLaMA-style config, resolves architecture fields to the ATT-1
 config schema, and emits a `.att1` model artifact compatible with the C model
@@ -10,7 +11,7 @@ loader, att1-inspect, and att1-bench.
 
 By default the converter keeps the deterministic synthetic stub path used by
 older tests.  Passing --safetensors reads real F32 tensor payloads through the
-compiler/load_safetensors.py reader and writes f32 ATT-1 tensor data.
+compiler/load_safetensors.py reader and writes f32 or q8 ATT-1 tensor data.
 
 Usage:
     # dry run — validate and print plan only
@@ -67,6 +68,7 @@ _HEADER_SIZE  = 80
 _CONFIG_SIZE  = 36   # 9 × uint32 LE
 _DESC_SIZE    = 128
 _DTYPE_F32    = 1
+_DTYPE_Q8     = 2
 _SHARD_REC_SZ = 120  # ATT1_SHARD_META_RECORD_SIZE
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,7 @@ def _make_tensor(name: str, shape: list[int], tensor_index: int) -> dict:
     data = b"".join(
         struct.pack("<f", v) for v in _synthetic_values(tensor_index, count)
     )
-    return {"name": name, "shape": shape, "data": data}
+    return {"name": name, "shape": shape, "dtype": _DTYPE_F32, "data": data}
 
 
 def _pack_f32_values(name: str, values) -> bytes:
@@ -258,11 +260,53 @@ def _tensor_from_values(name: str, shape: list[int], values) -> dict:
         raise ValueError(
             f"tensor {name!r}: expected {count} values for shape {shape}, got {len(values)}"
         )
-    return {"name": name, "shape": shape, "data": _pack_f32_values(name, values)}
+    return {"name": name, "shape": shape, "dtype": _DTYPE_F32, "data": _pack_f32_values(name, values)}
 
 
 def _transpose_2d(values, rows: int, cols: int) -> list[float]:
     return [values[(r * cols) + c] for c in range(cols) for r in range(rows)]
+
+
+def _round_away_from_zero(value: float) -> int:
+    if value >= 0.0:
+        return int(math.floor(value + 0.5))
+    return int(math.ceil(value - 0.5))
+
+
+def _is_q8_eligible(name: str, shape: list[int]) -> bool:
+    return (len(shape) == 2) and (name != "tok_embeddings.weight")
+
+
+def _make_q8_tensor_from_f32(name: str, shape: list[int], values) -> dict:
+    if len(shape) != 2:
+        raise ValueError(f"tensor {name!r}: q8 requires a 2-D tensor")
+
+    in_dim, out_dim = shape
+    q8_values = _transpose_2d(values, in_dim, out_dim)
+    qbytes = bytearray()
+    scales = []
+
+    for row in range(out_dim):
+        begin = row * in_dim
+        row_values = q8_values[begin:begin + in_dim]
+        max_abs = 0.0
+        for i, value in enumerate(row_values):
+            v = float(value)
+            if not math.isfinite(v):
+                raise ValueError(f"tensor {name!r} contains non-finite value at row {row} col {i}")
+            max_abs = max(max_abs, abs(v))
+
+        scale = max_abs / 127.0 if max_abs > 0.0 else 1.0
+        scales.append(scale)
+        for value in row_values:
+            q = _round_away_from_zero(float(value) / scale)
+            q = min(127, max(-127, q))
+            qbytes += struct.pack("b", q)
+
+    for scale in scales:
+        qbytes += struct.pack("<f", scale)
+
+    return {"name": name, "shape": [out_dim, in_dim], "dtype": _DTYPE_Q8, "data": bytes(qbytes)}
 
 
 def _descriptor(tensor: dict, offset: int) -> bytes:
@@ -274,7 +318,7 @@ def _descriptor(tensor: dict, offset: int) -> bytes:
     return struct.pack(
         "<64sIIQQQQQQII",
         name_padded,
-        _DTYPE_F32,
+        tensor.get("dtype", _DTYPE_F32),
         len(tensor["shape"]),
         shape[0],
         shape[1],
@@ -311,6 +355,7 @@ def _layer_tile_assignment(n_layers: int, n_tiles: int) -> list[int]:
 def _shard_record_bytes(
     tensor_index: int,
     shape:        list[int],
+    dtype:        int,
     tile_id:      int,
     byte_offset:  int,
 ) -> bytes:
@@ -322,8 +367,8 @@ def _shard_record_bytes(
         tile_id,
         byte_offset,
         ps[0], ps[1], ps[2], ps[3],      # shape[4]
-        _DTYPE_F32,                       # dtype
-        0,                                # quantization (none)
+        dtype,
+        1 if dtype == _DTYPE_Q8 else 0,   # quantization
         tile_id,                          # owner_aimu
         0,                                # replication_policy (none)
         0, 0, 0, 0, 0, 0, 0, 0,          # dependency_graph[8]
@@ -363,7 +408,7 @@ def _build_shard_meta_blob(att1: dict, tensors: list[dict]) -> bytes:
                         tile_id = layer_assignment[layer_id]
                 except ValueError:
                     pass
-        blob += _shard_record_bytes(i, shape, tile_id, byte_offset)
+        blob += _shard_record_bytes(i, shape, t.get("dtype", _DTYPE_F32), tile_id, byte_offset)
         byte_offset += nbytes
     return bytes(blob)
 
@@ -558,22 +603,33 @@ def _build_att1_bytes_from_tensors(att1: dict,
 
     expected_plan = tensor_name_plan(att1)
     for i, ((expected_name, expected_shape), tensor) in enumerate(zip(expected_plan, tensors)):
+        dtype = tensor.get("dtype", _DTYPE_F32)
+        if dtype == _DTYPE_Q8:
+            if not _is_q8_eligible(expected_name, expected_shape):
+                raise ValueError(f"tensor {expected_name!r} is not q8-eligible")
+            shape_to_check = [expected_shape[1], expected_shape[0]]
+        else:
+            shape_to_check = expected_shape
         if tensor["name"] != expected_name:
             raise ValueError(
                 f"tensor[{i}] name mismatch: expected {expected_name!r}, got {tensor['name']!r}"
             )
-        if list(tensor["shape"]) != expected_shape:
+        if list(tensor["shape"]) != shape_to_check:
             raise ValueError(
                 f"tensor {tensor['name']!r} shape mismatch: "
-                f"expected {expected_shape}, got {tensor['shape']}"
+                f"expected {shape_to_check}, got {tensor['shape']}"
             )
-        count = 1
-        for dim in tensor["shape"]:
-            count *= dim
-        if len(tensor["data"]) != (count * 4):
+        if dtype == _DTYPE_Q8:
+            expected_nbytes = (tensor["shape"][0] * tensor["shape"][1]) + (tensor["shape"][0] * 4)
+        else:
+            count = 1
+            for dim in tensor["shape"]:
+                count *= dim
+            expected_nbytes = count * 4
+        if len(tensor["data"]) != expected_nbytes:
             raise ValueError(
                 f"tensor {tensor['name']!r} byte size mismatch: "
-                f"expected {count * 4}, got {len(tensor['data'])}"
+                f"expected {expected_nbytes}, got {len(tensor['data'])}"
             )
 
     config_offset = _HEADER_SIZE
@@ -805,6 +861,22 @@ def build_real_f32_tensors(att1: dict, safetensors_path: str) -> list[dict]:
     return tensors
 
 
+def build_real_q8_tensors(att1: dict, safetensors_path: str) -> list[dict]:
+    tensors: list[dict] = []
+
+    for tensor in build_real_f32_tensors(att1, safetensors_path):
+        if _is_q8_eligible(tensor["name"], tensor["shape"]):
+            count = 1
+            for dim in tensor["shape"]:
+                count *= dim
+            values = struct.unpack(f"<{count}f", tensor["data"])
+            tensors.append(_make_q8_tensor_from_f32(tensor["name"], tensor["shape"], values))
+        else:
+            tensors.append(tensor)
+
+    return tensors
+
+
 def build_att1_f32_from_safetensors(att1: dict,
                                     safetensors_path: str,
                                     emit_shard_meta: bool = False) -> bytes:
@@ -815,14 +887,31 @@ def build_att1_f32_from_safetensors(att1: dict,
     )
 
 
+def build_att1_q8_from_safetensors(att1: dict,
+                                   safetensors_path: str,
+                                   emit_shard_meta: bool = False) -> bytes:
+    return _build_att1_bytes_from_tensors(
+        att1,
+        build_real_q8_tensors(att1, safetensors_path),
+        emit_shard_meta=emit_shard_meta,
+    )
+
+
 def emit_att1(att1: dict,
               output_path: str,
               emit_shard_meta: bool = False,
-              safetensors_path: str | None = None) -> None:
+              safetensors_path: str | None = None,
+              weight_format: str = "f32") -> None:
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    if safetensors_path:
+    if safetensors_path and weight_format == "q8":
+        payload = build_att1_q8_from_safetensors(
+            att1,
+            safetensors_path,
+            emit_shard_meta=emit_shard_meta,
+        )
+    elif safetensors_path:
         payload = build_att1_f32_from_safetensors(
             att1,
             safetensors_path,
@@ -891,6 +980,8 @@ def main() -> None:
                         help="Override rope_theta (default: from config or 10000.0)")
     parser.add_argument("--safetensors", metavar="PATH", default=None,
                         help="Read real F32 tensor payloads from PATH instead of synthetic values")
+    parser.add_argument("--weight-format", choices=("f32", "q8"), default="f32",
+                        help="Output weight format for safetensors import (default: f32)")
     parser.add_argument("--tiles", type=int, default=None, metavar="N",
                         help="Number of tiles for shard metadata (default: 1)")
     parser.add_argument("--shard-meta", action="store_true",
@@ -945,6 +1036,9 @@ def main() -> None:
     if args.safetensors and not os.path.isfile(args.safetensors):
         print(f"error: safetensors file not found: {args.safetensors!r}", file=sys.stderr)
         sys.exit(1)
+    if (args.weight_format == "q8") and not args.safetensors:
+        print("error: --weight-format q8 requires --safetensors", file=sys.stderr)
+        sys.exit(1)
 
     errors = validate_att1_config(att1)
     if errors:
@@ -996,12 +1090,13 @@ def main() -> None:
                 output_path,
                 emit_shard_meta=args.shard_meta,
                 safetensors_path=args.safetensors,
+                weight_format=args.weight_format,
             )
         except (LoadError, ScanError, ValueError) as exc:
             print(f"error: safetensors import failed: {exc}", file=sys.stderr)
             sys.exit(1)
         if args.safetensors:
-            print("note: tensor data loaded from F32 safetensors")
+            print(f"note: tensor data loaded from F32 safetensors and emitted as {args.weight_format}")
         else:
             print("note: tensor data is deterministic synthetic values \u2014 not real weights")
         if args.shard_meta:

@@ -57,10 +57,6 @@ static int att1_tensor_nbytes_expected(const att1_model_tensor *tensor,
         return -1;
     }
 
-    if (tensor->dtype != ATT1_MODEL_DTYPE_F32) {
-        return -1;
-    }
-
     for (i = 0u; i < tensor->ndims; i++) {
         if (tensor->shape[i] == 0u) {
             return -1;
@@ -71,7 +67,30 @@ static int att1_tensor_nbytes_expected(const att1_model_tensor *tensor,
         }
     }
 
-    return att1_u64_mul(elements, sizeof(float), out_nbytes);
+    if (tensor->dtype == ATT1_MODEL_DTYPE_F32) {
+        return att1_u64_mul(elements, sizeof(float), out_nbytes);
+    }
+
+    if (tensor->dtype == ATT1_MODEL_DTYPE_Q8) {
+        uint64_t value_bytes = 0u;
+        uint64_t scale_bytes = 0u;
+
+        if (tensor->ndims != 2u) {
+            return -1;
+        }
+        if ((att1_u64_mul(tensor->shape[0], tensor->shape[1],
+                          &value_bytes) != 0) ||
+            (att1_u64_mul(tensor->shape[0], sizeof(float),
+                          &scale_bytes) != 0) ||
+            (scale_bytes > (UINT64_MAX - value_bytes))) {
+            return -1;
+        }
+
+        *out_nbytes = value_bytes + scale_bytes;
+        return 0;
+    }
+
+    return -1;
 }
 
 static int att1_model_read_file(const char *path,

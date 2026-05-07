@@ -14,6 +14,15 @@ static const char *shard_dtype_name(uint32_t dtype)
     }
 }
 
+static const char *model_dtype_name(uint32_t dtype)
+{
+    switch (dtype) {
+    case ATT1_MODEL_DTYPE_F32: return "f32";
+    case ATT1_MODEL_DTYPE_Q8:  return "q8";
+    default:                   return "unknown";
+    }
+}
+
 static const char *shard_repl_name(uint32_t repl)
 {
     switch (repl) {
@@ -81,6 +90,16 @@ int main(int argc, char **argv)
 
         printf("tensor name=%s dtype=%u shape=", tensor->name, tensor->dtype);
         print_shape(tensor);
+        printf(" dtype_name=%s", model_dtype_name(tensor->dtype));
+        if (tensor->dtype == ATT1_MODEL_DTYPE_Q8) {
+            const uint64_t rows = tensor->shape[0];
+            const uint64_t cols = tensor->shape[1];
+            printf(" quant=per-row-q8 q8_values=%" PRIu64 " q8_scales=%" PRIu64,
+                   rows * cols,
+                   rows);
+        } else {
+            printf(" quant=none");
+        }
         printf(" offset=%" PRIu64 " nbytes=%" PRIu64 " shard=%u flags=%u\n",
                tensor->offset,
                tensor->nbytes,

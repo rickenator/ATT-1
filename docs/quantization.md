@@ -2,7 +2,8 @@
 
 Milestone 10 added a standalone int8 weight path for kernel correctness and
 measurement. Milestone 24 wires CPU q8 into single-tile inference without
-changing the model file format or adding q4.
+changing the model file format or adding q4. Milestone 49 adds checked-in q8
+`.att1` tiny-model artifacts using the same per-row q8 representation.
 
 ## Representation
 
@@ -57,13 +58,33 @@ The float32 matmul path remains the correctness reference. Tests compare q8
 outputs to float32 outputs with a documented tolerance of `0.035` for the
 current tiny fixtures.
 
+## q8 `.att1` tensor layout
+
+Milestone 49 activates dtype code `2` for q8 model-file tensors while keeping
+the `.att1` container version unchanged.  A q8 tensor is a 2-D matrix in the
+runtime q8 layout:
+
+```text
+shape = [out_dim, in_dim]
+payload = int8 values[rows * cols] followed by float32 scales[rows]
+nbytes = rows * cols + rows * 4
+```
+
+Eligible projection and output matrices are converted from the f32 ATT-1
+logical shape into this `[out,in]` q8 layout.  `tok_embeddings.weight`,
+RMSNorm weights, activations, KV cache data, residuals, and logits remain
+float32.
+
+Single-tile and cluster q8 backends borrow dtype-2 q8 tensors directly from a
+q8 `.att1` file.  For f32 `.att1` files, those backends retain the existing
+behavior of building owned runtime q8 copies during backend selection.
+
 ## CPU q8 single-tile inference
 
 Milestone 24 adds `--backend cpu-q8` support to the existing single-tile
-inference path. The `.att1` model continues to store float32 tensors. When a
-single-tile inference context selects the `cpu-q8` backend, it builds owned
-runtime q8 copies of projection and output weights using the same
-`weights_q8[out, in]` representation described above.
+inference path. When a single-tile inference context selects the `cpu-q8`
+backend, it uses dtype-2 file tensors directly when present, or builds owned
+runtime q8 copies of projection and output weights from f32 tensors.
 
 The q8 path uses `matmul_q8xf32` for:
 
@@ -97,8 +118,7 @@ the multiply through the existing CUDA f32 matmul path. CPU q8 remains the
 correctness reference for the CUDA q8 operator. Tests also compare q8 outputs
 against CPU f32 where the existing q8 tolerance applies.
 
-This is not full CUDA quantized model inference. CUDA q8 inference and CUDA q4
-are not implemented.
+CUDA q4 is not implemented.
 
 ## CUDA q8 single-tile inference
 
@@ -118,7 +138,7 @@ match CPU q8 for the short tested prompt. As with CPU q8, token equivalence is
 not a general quantization contract for future models because small logit
 differences can move an argmax boundary.
 
-CUDA q8 cluster inference is not implemented. q4 is not implemented.
+q4 is not implemented.
 
 ## Benchmark
 
@@ -176,10 +196,10 @@ Milestone 27 adds explicit cluster q8 validation:
     and is asserted in tests; for future models, token divergence can still occur
     when logits remain within tolerance around argmax boundaries.
 
-Milestone 28 adds CUDA q8 cluster support using the same `att1_cluster_infer_set_backend()`
-path. The cuda-q8 backend dispatches all transformer block operations through the existing
-cuBLAS f32 operators (same as the cuda backend) since cluster inference passes float32
-weights via `att1_transformer_block_forward_backend()`. Activations remain float32.
+Milestone 28 adds CUDA q8 cluster support using the same
+`att1_cluster_infer_set_backend()` path.  For f32 model files, cluster q8
+builds runtime q8 copies before decode.  For M49 q8 model files, it borrows
+dtype-2 q8 tensors directly.  Activations remain float32.
 
 CUDA q8 cluster mode validation:
 
@@ -203,6 +223,31 @@ trace/fabric counter parity, and deterministic dummy-model generated tokens.
 
 `tests/test_cuda_q8_cluster.c` validates CPU q8 cluster vs CUDA q8 cluster token
 sequence equivalence, trace/fabric counter parity, and no-silent-fallback behavior.
+
+## Converted tiny q8 model
+
+`models/real_tiny_q8/model.att1` is emitted from
+`compiler/fixtures/tiny_llama_2l.safetensors` with:
+
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --safetensors compiler/fixtures/tiny_llama_2l.safetensors \
+    --weight-format q8 \
+    --out models/real_tiny_q8/model.att1
+```
+
+`att1-inspect` reports q8 tensors with `dtype_name=q8`,
+`quant=per-row-q8`, `q8_values`, and `q8_scales`.  Converter validation runs
+the q8 artifact through CPU q8 single and cluster benchmarks, checks cluster
+fabric packets, and compares the tiny fixture's CPU q8 `last_token` against
+the f32 converted model running through the CPU q8 backend.  On CUDA builds
+with an available runtime, the same fixture is validated with CUDA q8 single
+and cluster modes.
+
+Token equivalence is only asserted for the deterministic tiny fixture.  For
+larger or future models, q8 logits may move an argmax boundary; numerical logit
+tolerances remain the correctness contract.
 
 ## Ownership
 

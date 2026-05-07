@@ -3,8 +3,9 @@
  *
  * M44: Validation of converter-generated .att1 artifacts with shard metadata.
  * M48: Validation of checked-in tiny f32 safetensors conversion artifact.
+ * M49: Validation of checked-in tiny q8 safetensors conversion artifact.
  *
- * Uses models/converted_stub_meta/model.att1 — checked in, no Python required.
+ * Uses checked-in .att1 fixtures only; no Python is required at test time.
  *
  * Checks:
  *   1. att1-inspect produces expected tensor/shard_meta fields.
@@ -20,6 +21,7 @@
 
 #define MODEL_PATH "models/converted_stub_meta/model.att1"
 #define REAL_TINY_MODEL_PATH "models/real_tiny_f32/model.att1"
+#define REAL_TINY_Q8_MODEL_PATH "models/real_tiny_q8/model.att1"
 #define REAL_TINY_PROMPT "\001"
 #define TOKENS     "8"
 #define TILES      "2"
@@ -84,6 +86,14 @@ static int parse_u64_line(const char *text, const char *key, uint64_t *out)
 
     *out = (uint64_t)v;
     return 0;
+}
+
+static int output_is_cuda_unavailable(const char *out)
+{
+    return (out != NULL) &&
+           ((strstr(out, "unsupported or unavailable") != NULL) ||
+            (strstr(out, "CUDA unavailable") != NULL) ||
+            (strstr(out, "cuda backend unsupported") != NULL));
 }
 
 /* ----------------------------------------------------------------- inspect  */
@@ -260,13 +270,124 @@ static int check_real_tiny_f32(void)
     return 0;
 }
 
+/* ------------------------------------------------------------- real tiny q8 */
+
+static int check_real_tiny_q8(void)
+{
+    char     out[8192];
+    char     f32_out[4096];
+    char     q8_out[4096];
+    uint64_t f32_last = 0u;
+    uint64_t q8_last = 0u;
+    uint64_t pkts = 0u;
+
+    if (run_command("./build/att1-inspect " REAL_TINY_Q8_MODEL_PATH
+                    " > build/m49_real_tiny_q8_inspect.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/m49_real_tiny_q8_inspect.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+
+    if ((strstr(out, "vocab_size=16") == NULL) ||
+        (strstr(out, "tensor_count=21") == NULL) ||
+        (strstr(out, "tensor name=tok_embeddings.weight dtype=1 shape=[16,8]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.attention.wq.weight dtype=2 shape=[8,8]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.ffn.w_gate.weight dtype=2 shape=[16,8]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.ffn.w_down.weight dtype=2 shape=[8,16]") == NULL) ||
+        (strstr(out, "tensor name=output.weight dtype=2 shape=[16,8]") == NULL) ||
+        (strstr(out, "quant=per-row-q8") == NULL) ||
+        (strstr(out, "q8_scales=") == NULL)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode single --backend cpu-q8"
+                    " > build/m49_real_tiny_f32_cpu_q8_single.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode single --backend cpu-q8"
+                    " > build/m49_real_tiny_q8_cpu_q8_single.txt 2>&1") != 0) {
+        return -1;
+    }
+    if ((read_file("build/m49_real_tiny_f32_cpu_q8_single.txt", f32_out, sizeof(f32_out)) != 0) ||
+        (read_file("build/m49_real_tiny_q8_cpu_q8_single.txt", q8_out, sizeof(q8_out)) != 0)) {
+        return -1;
+    }
+    if ((strstr(q8_out, "mode=single") == NULL) ||
+        (strstr(q8_out, "backend=cpu-q8") == NULL) ||
+        (strstr(q8_out, "logits_bytes_produced=128") == NULL) ||
+        (parse_u64_line(f32_out, "last_token", &f32_last) != 0) ||
+        (parse_u64_line(q8_out, "last_token", &q8_last) != 0) ||
+        (f32_last != q8_last)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cpu-q8"
+                    " > build/m49_real_tiny_q8_cpu_q8_cluster.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/m49_real_tiny_q8_cpu_q8_cluster.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=cluster") == NULL) ||
+        (strstr(out, "backend=cpu-q8") == NULL) ||
+        (strstr(out, "logits_bytes_produced=128") == NULL) ||
+        (parse_u64_line(out, "fabric_packets_sent", &pkts) != 0) ||
+        (pkts == 0u)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode single --backend cuda-q8"
+                    " > build/m49_real_tiny_q8_cuda_q8_single.txt 2>&1") != 0) {
+        if ((read_file("build/m49_real_tiny_q8_cuda_q8_single.txt", out, sizeof(out)) != 0) ||
+            !output_is_cuda_unavailable(out)) {
+            return -1;
+        }
+    } else {
+        if ((read_file("build/m49_real_tiny_q8_cuda_q8_single.txt", out, sizeof(out)) != 0) ||
+            (strstr(out, "mode=single") == NULL) ||
+            (strstr(out, "backend=cuda-q8") == NULL)) {
+            return -1;
+        }
+    }
+
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q8_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cuda-q8"
+                    " > build/m49_real_tiny_q8_cuda_q8_cluster.txt 2>&1") != 0) {
+        if ((read_file("build/m49_real_tiny_q8_cuda_q8_cluster.txt", out, sizeof(out)) != 0) ||
+            !output_is_cuda_unavailable(out)) {
+            return -1;
+        }
+    } else {
+        if ((read_file("build/m49_real_tiny_q8_cuda_q8_cluster.txt", out, sizeof(out)) != 0) ||
+            (strstr(out, "mode=cluster") == NULL) ||
+            (strstr(out, "backend=cuda-q8") == NULL)) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 /* --------------------------------------------------------------- main ------- */
 
 int main(void)
 {
     if ((check_inspect()           != 0) ||
         (check_bench_consistency() != 0) ||
-        (check_real_tiny_f32()     != 0)) {
+        (check_real_tiny_f32()     != 0) ||
+        (check_real_tiny_q8()      != 0)) {
         fputs("converter validation test failed\n", stderr);
         return 1;
     }

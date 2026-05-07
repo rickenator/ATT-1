@@ -9,6 +9,19 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+
+typedef struct att1_cluster_q8_layer {
+    const float *attention_norm;
+    const float *ffn_norm;
+    att1_q8_matrix wq;
+    att1_q8_matrix wk;
+    att1_q8_matrix wv;
+    att1_q8_matrix wo;
+    att1_q8_matrix w_gate;
+    att1_q8_matrix w_up;
+    att1_q8_matrix w_down;
+} att1_cluster_q8_layer;
 
 struct att1_cluster_infer {
     const att1_model *model;
@@ -21,10 +34,78 @@ struct att1_cluster_infer {
     float *norm;
     float *logits;
     att1_backend *backend;
+    att1_cluster_q8_layer *q8_layers;
+    const float *q8_output_norm;
+    att1_q8_matrix q8_output_weight;
+    int q8_owned;
+    int q8_ready;
     att1_trace_t *trace;
     att1_cluster_tile_counters *tile_counters;
     size_t position;
 };
+
+static int cluster_backend_is_q8(const att1_backend *backend)
+{
+    return (backend != NULL) &&
+           (backend->ops != NULL) &&
+           (backend->ops->name != NULL) &&
+           ((strcmp(backend->ops->name, "cpu-q8") == 0) ||
+            (strcmp(backend->ops->name, "cuda-q8") == 0));
+}
+
+static int cluster_backend_supports_q8(const att1_backend *backend)
+{
+    return cluster_backend_is_q8(backend) &&
+           (backend->ops->alloc != NULL) &&
+           (backend->ops->free != NULL) &&
+           (backend->ops->matmul_q8xf32 != NULL) &&
+           (backend->ops->rmsnorm_f32 != NULL) &&
+           (backend->ops->softmax_f32 != NULL) &&
+           (backend->ops->rope_f32 != NULL) &&
+           (backend->ops->ffn_swiglu_f32 != NULL);
+}
+
+static void cluster_release_q8_layer(att1_cluster_q8_layer *layer, int owned)
+{
+    if (layer == NULL) {
+        return;
+    }
+
+    if (owned) {
+        att1_q8_matrix_free(&layer->wq);
+        att1_q8_matrix_free(&layer->wk);
+        att1_q8_matrix_free(&layer->wv);
+        att1_q8_matrix_free(&layer->wo);
+        att1_q8_matrix_free(&layer->w_gate);
+        att1_q8_matrix_free(&layer->w_up);
+        att1_q8_matrix_free(&layer->w_down);
+    }
+    memset(layer, 0, sizeof(*layer));
+}
+
+static void cluster_release_q8(att1_cluster_infer_t *infer)
+{
+    uint32_t layer = 0u;
+
+    if (infer == NULL) {
+        return;
+    }
+
+    if ((infer->model != NULL) && (infer->q8_layers != NULL)) {
+        for (layer = 0u; layer < infer->model->config.n_layers; layer++) {
+            cluster_release_q8_layer(&infer->q8_layers[layer], infer->q8_owned);
+        }
+    }
+
+    free(infer->q8_layers);
+    if (infer->q8_owned) {
+        att1_q8_matrix_free(&infer->q8_output_weight);
+    }
+    infer->q8_layers = NULL;
+    infer->q8_output_norm = NULL;
+    infer->q8_owned = 0;
+    infer->q8_ready = 0;
+}
 
 static int cluster_plan_complete(const att1_cluster_infer_t *infer)
 {
@@ -126,8 +207,240 @@ static void cluster_release_members(att1_cluster_infer_t *infer)
     free(infer->norm);
     free(infer->logits);
     att1_backend_destroy(infer->backend);
+    cluster_release_q8(infer);
     free(infer->tile_counters);
     memset(infer, 0, sizeof(*infer));
+}
+
+static int cluster_quantize_transposed(att1_q8_matrix *matrix,
+                                       const float *weights,
+                                       size_t input_count,
+                                       size_t output_count)
+{
+    float *transposed = NULL;
+    size_t input = 0u;
+    size_t output = 0u;
+    int rc = -1;
+
+    if ((matrix == NULL) || (weights == NULL) ||
+        (input_count == 0u) || (output_count == 0u) ||
+        (input_count > ((size_t)-1) / output_count)) {
+        return -1;
+    }
+
+    transposed = malloc(input_count * output_count * sizeof(*transposed));
+    if (transposed == NULL) {
+        return -1;
+    }
+
+    for (input = 0u; input < input_count; input++) {
+        for (output = 0u; output < output_count; output++) {
+            transposed[(output * input_count) + input] =
+                weights[(input * output_count) + output];
+        }
+    }
+
+    rc = att1_quantize_q8_per_row(matrix,
+                                  transposed,
+                                  output_count,
+                                  input_count);
+    free(transposed);
+    return rc;
+}
+
+static int cluster_model_has_file_q8(const att1_model *model)
+{
+    const att1_model_tensor *tensor = att1_model_find_tensor(model, "output.weight");
+
+    return (tensor != NULL) && (tensor->dtype == ATT1_MODEL_DTYPE_Q8);
+}
+
+static att1_status_t cluster_layer_q8_name(char *out,
+                                           size_t out_size,
+                                           uint32_t layer,
+                                           const char *suffix)
+{
+    const int written = snprintf(out, out_size, "layers.%u.%s", layer, suffix);
+
+    if ((written < 0) || ((size_t)written >= out_size)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    return ATT1_OK;
+}
+
+static att1_status_t cluster_load_file_q8_layer(const att1_model *model,
+                                                uint32_t layer,
+                                                att1_cluster_q8_layer *q8)
+{
+    char name[ATT1_MODEL_NAME_SIZE];
+    const uint64_t d_model = model->config.d_model;
+    const uint64_t d_ff = model->config.d_ff;
+    att1_status_t status = ATT1_OK;
+
+    status = cluster_layer_q8_name(name, sizeof(name), layer, "attention_norm.weight");
+    if (status != ATT1_OK) { return status; }
+    status = att1_model_view_tensor_f32(model, name, 1u, d_model, 1u, &q8->attention_norm);
+    if (status != ATT1_OK) { return status; }
+
+#define LOAD_Q8(member, suffix, rows, cols) \
+    do { \
+        status = cluster_layer_q8_name(name, sizeof(name), layer, suffix); \
+        if (status != ATT1_OK) { return status; } \
+        status = att1_model_view_tensor_q8(model, name, rows, cols, &q8->member); \
+        if (status != ATT1_OK) { return status; } \
+    } while (0)
+
+    LOAD_Q8(wq,     "attention.wq.weight", d_model, d_model);
+    LOAD_Q8(wk,     "attention.wk.weight", d_model, d_model);
+    LOAD_Q8(wv,     "attention.wv.weight", d_model, d_model);
+    LOAD_Q8(wo,     "attention.wo.weight", d_model, d_model);
+
+    status = cluster_layer_q8_name(name, sizeof(name), layer, "ffn_norm.weight");
+    if (status != ATT1_OK) { return status; }
+    status = att1_model_view_tensor_f32(model, name, 1u, d_model, 1u, &q8->ffn_norm);
+    if (status != ATT1_OK) { return status; }
+
+    LOAD_Q8(w_gate, "ffn.w_gate.weight",   d_ff, d_model);
+    LOAD_Q8(w_up,   "ffn.w_up.weight",     d_ff, d_model);
+    LOAD_Q8(w_down, "ffn.w_down.weight",   d_model, d_ff);
+
+#undef LOAD_Q8
+
+    return ATT1_OK;
+}
+
+static att1_status_t cluster_prepare_file_q8(att1_cluster_infer_t *infer)
+{
+    const att1_model *model = infer->model;
+    uint32_t layer = 0u;
+    att1_status_t status = ATT1_OK;
+
+    infer->q8_layers = calloc(model->config.n_layers, sizeof(*infer->q8_layers));
+    if (infer->q8_layers == NULL) {
+        return ATT1_ERR_OOM;
+    }
+
+    for (layer = 0u; layer < model->config.n_layers; layer++) {
+        status = cluster_load_file_q8_layer(model, layer, &infer->q8_layers[layer]);
+        if (status != ATT1_OK) {
+            cluster_release_q8(infer);
+            return status;
+        }
+    }
+
+    status = att1_model_view_output_norm(model, &infer->q8_output_norm);
+    if (status != ATT1_OK) {
+        cluster_release_q8(infer);
+        return status;
+    }
+
+    status = att1_model_view_tensor_q8(model,
+                                       "output.weight",
+                                       model->config.vocab_size,
+                                       model->config.d_model,
+                                       &infer->q8_output_weight);
+    if (status != ATT1_OK) {
+        cluster_release_q8(infer);
+        return status;
+    }
+
+    infer->q8_owned = 0;
+    infer->q8_ready = 1;
+    return ATT1_OK;
+}
+
+static att1_status_t cluster_prepare_runtime_q8(att1_cluster_infer_t *infer)
+{
+    const att1_model *model = infer->model;
+    const float *output_weight = NULL;
+    uint32_t layer = 0u;
+    att1_status_t status = ATT1_OK;
+
+    infer->q8_layers = calloc(model->config.n_layers, sizeof(*infer->q8_layers));
+    if (infer->q8_layers == NULL) {
+        return ATT1_ERR_OOM;
+    }
+    infer->q8_owned = 1;
+
+    for (layer = 0u; layer < model->config.n_layers; layer++) {
+        att1_transformer_block_weights weights;
+        att1_cluster_q8_layer *q8 = &infer->q8_layers[layer];
+
+        status = att1_model_view_load_layer_weights(model, layer, &weights);
+        if (status != ATT1_OK) {
+            cluster_release_q8(infer);
+            return status;
+        }
+
+        q8->attention_norm = weights.attention_norm;
+        q8->ffn_norm = weights.ffn_norm;
+
+        if ((cluster_quantize_transposed(&q8->wq, weights.wq,
+                                         model->config.d_model,
+                                         model->config.d_model) != 0) ||
+            (cluster_quantize_transposed(&q8->wk, weights.wk,
+                                         model->config.d_model,
+                                         model->config.d_model) != 0) ||
+            (cluster_quantize_transposed(&q8->wv, weights.wv,
+                                         model->config.d_model,
+                                         model->config.d_model) != 0) ||
+            (cluster_quantize_transposed(&q8->wo, weights.wo,
+                                         model->config.d_model,
+                                         model->config.d_model) != 0) ||
+            (cluster_quantize_transposed(&q8->w_gate, weights.w_gate,
+                                         model->config.d_model,
+                                         model->config.d_ff) != 0) ||
+            (cluster_quantize_transposed(&q8->w_up, weights.w_up,
+                                         model->config.d_model,
+                                         model->config.d_ff) != 0) ||
+            (cluster_quantize_transposed(&q8->w_down, weights.w_down,
+                                         model->config.d_ff,
+                                         model->config.d_model) != 0)) {
+            cluster_release_q8(infer);
+            return ATT1_ERR_OOM;
+        }
+    }
+
+    status = att1_model_view_output_norm(model, &infer->q8_output_norm);
+    if (status != ATT1_OK) {
+        cluster_release_q8(infer);
+        return status;
+    }
+
+    status = att1_model_view_output_weight(model, &output_weight);
+    if (status != ATT1_OK) {
+        cluster_release_q8(infer);
+        return status;
+    }
+
+    if (cluster_quantize_transposed(&infer->q8_output_weight,
+                                    output_weight,
+                                    model->config.d_model,
+                                    model->config.vocab_size) != 0) {
+        cluster_release_q8(infer);
+        return ATT1_ERR_OOM;
+    }
+
+    infer->q8_ready = 1;
+    return ATT1_OK;
+}
+
+static att1_status_t cluster_prepare_q8(att1_cluster_infer_t *infer)
+{
+    if ((infer == NULL) || (infer->model == NULL)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    if (infer->q8_ready) {
+        return ATT1_OK;
+    }
+
+    cluster_release_q8(infer);
+    if (cluster_model_has_file_q8(infer->model)) {
+        return cluster_prepare_file_q8(infer);
+    }
+
+    return cluster_prepare_runtime_q8(infer);
 }
 
 att1_status_t att1_cluster_infer_create(
@@ -289,6 +602,7 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     const float *output_norm = NULL;
     const float *output_weight = NULL;
     att1_transformer_block_config block_config;
+    int use_q8 = 0;
     size_t d_model_bytes = 0u;
     size_t logits_bytes = 0u;
     size_t tile = 0u;
@@ -301,6 +615,7 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     }
 
     model = infer->model;
+    use_q8 = cluster_backend_is_q8(infer->backend);
     if ((token_id >= model->config.vocab_size) ||
         (infer->position >= model->config.max_seq_len)) {
         return ATT1_ERR_INVALID_ARG;
@@ -322,9 +637,16 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     if (status != ATT1_OK) {
         return status;
     }
-    status = att1_model_view_output_weight(model, &output_weight);
-    if (status != ATT1_OK) {
-        return status;
+    if (use_q8) {
+        if (!infer->q8_ready || !cluster_backend_supports_q8(infer->backend)) {
+            return ATT1_ERR_STATE;
+        }
+        output_norm = infer->q8_output_norm;
+    } else {
+        status = att1_model_view_output_weight(model, &output_weight);
+        if (status != ATT1_OK) {
+            return status;
+        }
     }
 
     d_model_bytes = (size_t)model->config.d_model * sizeof(float);
@@ -370,29 +692,57 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
         infer->tile_counters[tile].activations_received++;
 
         for (layer = shard->layer_start; layer < shard->layer_end; layer++) {
-            att1_transformer_block_weights weights;
             uint64_t layer_start_us = 0u;
             uint64_t layer_us = 0u;
             const uint64_t kv_reads = (uint64_t)(infer->position + 1u) *
                 (uint64_t)model->config.n_heads;
 
-            status = att1_model_view_load_layer_weights(model, layer, &weights);
-            if (status != ATT1_OK) {
-                return status;
-            }
-
             if (infer->trace != NULL) {
                 layer_start_us = att1_trace_now_us();
             }
 
-            if (att1_transformer_block_forward_backend(infer->next_hidden,
-                                                       &infer->layer_kv[layer],
-                                                       infer->hidden,
-                                                       &weights,
-                                                       &block_config,
-                                                       infer->position,
-                                                       infer->backend) != 0) {
-                return ATT1_ERR_STATE;
+            if (use_q8) {
+                att1_transformer_block_q8_weights weights;
+                const att1_cluster_q8_layer *q8 = &infer->q8_layers[layer];
+
+                weights.attention_norm = q8->attention_norm;
+                weights.ffn_norm = q8->ffn_norm;
+                weights.wq = &q8->wq;
+                weights.wk = &q8->wk;
+                weights.wv = &q8->wv;
+                weights.wo = &q8->wo;
+                weights.w_gate = &q8->w_gate;
+                weights.w_up = &q8->w_up;
+                weights.w_down = &q8->w_down;
+
+                if (att1_transformer_block_forward_backend_q8(
+                        infer->next_hidden,
+                        &infer->layer_kv[layer],
+                        infer->hidden,
+                        &weights,
+                        &block_config,
+                        infer->position,
+                        infer->backend) != 0) {
+                    return ATT1_ERR_STATE;
+                }
+            } else {
+                att1_transformer_block_weights weights;
+
+                status = att1_model_view_load_layer_weights(model, layer, &weights);
+                if (status != ATT1_OK) {
+                    return status;
+                }
+
+                if (att1_transformer_block_forward_backend(
+                        infer->next_hidden,
+                        &infer->layer_kv[layer],
+                        infer->hidden,
+                        &weights,
+                        &block_config,
+                        infer->position,
+                        infer->backend) != 0) {
+                    return ATT1_ERR_STATE;
+                }
             }
 
             if (infer->trace != NULL) {
@@ -436,14 +786,25 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
                 return ATT1_ERR_STATE;
             }
 
-            if (infer->backend->ops->matmul_f32(infer->backend,
-                                                infer->logits,
-                                                infer->norm,
-                                                output_weight,
-                                                1u,
-                                                model->config.vocab_size,
-                                                model->config.d_model) != 0) {
-                return ATT1_ERR_STATE;
+            if (use_q8) {
+                if (infer->backend->ops->matmul_q8xf32(infer->backend,
+                                                       infer->logits,
+                                                       infer->norm,
+                                                       1u,
+                                                       model->config.d_model,
+                                                       &infer->q8_output_weight) != 0) {
+                    return ATT1_ERR_STATE;
+                }
+            } else {
+                if (infer->backend->ops->matmul_f32(infer->backend,
+                                                    infer->logits,
+                                                    infer->norm,
+                                                    output_weight,
+                                                    1u,
+                                                    model->config.vocab_size,
+                                                    model->config.d_model) != 0) {
+                    return ATT1_ERR_STATE;
+                }
             }
 
             if ((infer->backend->ops->sync != NULL) &&
@@ -618,8 +979,20 @@ att1_status_t att1_cluster_infer_set_trace(att1_cluster_infer_t *infer,
 att1_status_t att1_cluster_infer_set_backend(att1_cluster_infer_t *infer,
                                              att1_backend *backend)
 {
+    att1_status_t status = ATT1_OK;
+
     if ((infer == NULL) || (backend == NULL) || (backend->ops == NULL)) {
         return ATT1_ERR_INVALID_ARG;
+    }
+
+    if (cluster_backend_is_q8(backend)) {
+        if (!cluster_backend_supports_q8(backend)) {
+            return ATT1_ERR_UNSUPPORTED;
+        }
+        status = cluster_prepare_q8(infer);
+        if (status != ATT1_OK) {
+            return status;
+        }
     }
 
     att1_backend_destroy(infer->backend);

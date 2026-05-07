@@ -24,6 +24,28 @@ static int tensor_is_f32_shape(const att1_model_tensor *tensor,
     return 1;
 }
 
+static int tensor_is_q8_shape(const att1_model_tensor *tensor,
+                              uint64_t rows,
+                              uint64_t cols)
+{
+    if (tensor == NULL) {
+        return 0;
+    }
+
+    return (tensor->dtype == ATT1_MODEL_DTYPE_Q8) &&
+           (tensor->ndims == 2u) &&
+           (tensor->shape[0] == rows) &&
+           (tensor->shape[1] == cols);
+}
+
+static int tensor_is_output_weight_shape(const att1_model_tensor *tensor,
+                                         uint64_t d_model,
+                                         uint64_t vocab_size)
+{
+    return tensor_is_f32_shape(tensor, 2u, d_model, vocab_size) ||
+           tensor_is_q8_shape(tensor, vocab_size, d_model);
+}
+
 static att1_status_t layer_name(char *out,
                                 size_t out_size,
                                 uint32_t layer,
@@ -63,6 +85,38 @@ att1_status_t att1_model_view_tensor_f32(const att1_model *model,
     }
 
     *out_data = (const float *)tensor->data;
+    return ATT1_OK;
+}
+
+att1_status_t att1_model_view_tensor_q8(const att1_model *model,
+                                        const char *name,
+                                        uint64_t rows,
+                                        uint64_t cols,
+                                        att1_q8_matrix *out_matrix)
+{
+    const att1_model_tensor *tensor = NULL;
+    uint64_t value_bytes = 0u;
+
+    if ((model == NULL) || (name == NULL) || (out_matrix == NULL) ||
+        (rows == 0u) || (cols == 0u)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    memset(out_matrix, 0, sizeof(*out_matrix));
+    tensor = att1_model_find_tensor(model, name);
+    if (tensor == NULL) {
+        return ATT1_ERR_NOT_FOUND;
+    }
+
+    if (!tensor_is_q8_shape(tensor, rows, cols)) {
+        return ATT1_ERR_SHAPE;
+    }
+
+    value_bytes = rows * cols;
+    out_matrix->rows = (size_t)rows;
+    out_matrix->cols = (size_t)cols;
+    out_matrix->values = (int8_t *)tensor->data;
+    out_matrix->scales = (float *)((const unsigned char *)tensor->data + value_bytes);
     return ATT1_OK;
 }
 
@@ -114,6 +168,7 @@ att1_status_t att1_model_view_output_weight(const att1_model *model,
 att1_status_t att1_model_view_validate_decoder(const att1_model *model)
 {
     const float *data = NULL;
+    const att1_model_tensor *output_weight = NULL;
     const size_t head_dim = (model != NULL && model->config.n_heads != 0u) ?
         (model->config.d_model / model->config.n_heads) : 0u;
     att1_status_t status = ATT1_OK;
@@ -143,7 +198,15 @@ att1_status_t att1_model_view_validate_decoder(const att1_model *model)
         return status;
     }
 
-    return att1_model_view_output_weight(model, &data);
+    output_weight = att1_model_find_tensor(model, "output.weight");
+    if ((output_weight == NULL) ||
+        !tensor_is_output_weight_shape(output_weight,
+                                       model->config.d_model,
+                                       model->config.vocab_size)) {
+        return output_weight == NULL ? ATT1_ERR_NOT_FOUND : ATT1_ERR_SHAPE;
+    }
+
+    return ATT1_OK;
 }
 
 att1_status_t att1_model_view_load_layer_weights(

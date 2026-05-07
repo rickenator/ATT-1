@@ -165,22 +165,26 @@ must emit a warning and proceed only if `type == "linear"` and `factor == 1.0`
 
 ### q8 output (M49)
 
-q8 output is built from the f32 converter path — no new source loading needed:
+q8 output is built from the f32 converter path, so the safetensors reader still
+loads the source payloads as F32:
 
 1. Run the f32 converter to get the intermediate numpy arrays.
-2. For each 2-D projection tensor, apply per-row quantization:
+2. For each eligible 2-D projection/output tensor except
+   `tok_embeddings.weight`, transpose the ATT-1 f32 `[in,out]` matrix into the
+   runtime q8 `[out,in]` layout and apply per-row quantization:
    ```text
    scale[row] = max(abs(row)) / 127   (or 1.0 if row is all-zero)
    q[row, col] = clamp(round(val / scale), -127, 127)
    ```
-3. Interleave or append scales per the ATT-1 dtype-2 layout (to be defined
-   exactly when dtype 2 is added to the binary format).
+3. Store dtype-2 tensor payloads as all row-major int8 values followed by one
+   float32 scale per row.  The tensor shape is the q8 runtime shape
+   `[out_dim, in_dim]`, and `nbytes = rows * cols + rows * 4`.
 4. Write ATT-1 dtype code `2` (`ATT1_DTYPE_Q8`) for quantized tensors.
-5. RMSNorm weights and embeddings remain `f32` (dtype `1`).
+5. RMSNorm weights and token embeddings remain `f32` (dtype `1`).
 
-**q8 output is deferred to M49.**  The current binary format spec reserves
-dtype `2` but the loader does not yet validate q8 tensor byte counts.  That
-loader extension is part of M49.
+The `.att1` container remains version `1`; M49 only activates the previously
+reserved dtype code `2` and extends hostile-input byte-count validation for q8
+matrices.
 
 ### q4 output
 
@@ -373,18 +377,52 @@ python3 compiler/convert_llama_to_att1.py \
 
 ### M49 — q8 converted tiny model
 
-**Goal:** Produce a q8 `.att1` artifact and confirm the q8 cluster bench path
-gives the same `last_token` as the f32 path.
+**Goal:** Produce a q8 `.att1` artifact from the checked-in tiny safetensors
+fixture and validate it through inspect plus CPU/CUDA q8 inference paths.
 
 **Scope:**
-- Converter emits per-row quantized projection weights as dtype `2`.
-- ATT-1 loader extended to validate dtype-2 `nbytes` = rows × (cols + 4) or
-  equivalent layout agreed in the format spec update.
-- `tests/test_backend_matrix.c` extended with a real-model group (if the
-  artifact is small enough to check in).
-- Cross-backend consistency: `cpu-f32` and `cpu-q8` must agree on `last_token`
-  within tolerance (or exactly if the model is small).
-- No changes to Python-free `make test` unless artifact is checked in.
+- `compiler/convert_llama_to_att1.py --weight-format q8` emits per-row
+  quantized projection/output weights as dtype `2`.
+- The checked-in artifact is `models/real_tiny_q8/model.att1`.
+- The loader validates dtype-2 tensor shapes and byte counts as
+  `rows * cols + rows * sizeof(float)`.
+- `att1-inspect` reports `dtype_name=q8`, `quant=per-row-q8`, `q8_values`,
+  and `q8_scales` for quantized tensors.
+- `tests/test_converter_validation.c` validates the q8 artifact without
+  invoking Python during `make test`.
+- CPU q8 single and cluster benchmarks run on the q8 artifact; cluster mode
+  must report nonzero fabric packets.
+- CUDA q8 single and cluster benchmarks run on CUDA builds when the CUDA
+  runtime is available; CPU-only builds report unsupported cleanly.
+
+**Manual command:**
+
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --safetensors compiler/fixtures/tiny_llama_2l.safetensors \
+    --weight-format q8 \
+    --out models/real_tiny_q8/model.att1
+
+./build/att1-inspect models/real_tiny_q8/model.att1
+
+./build/att1-bench \
+    --model models/real_tiny_q8/model.att1 \
+    --prompt $'\x01' --tokens 2 \
+    --mode single --backend cpu-q8
+
+./build/att1-bench \
+    --model models/real_tiny_q8/model.att1 \
+    --prompt $'\x01' --tokens 2 \
+    --mode cluster --tiles 2 --backend cpu-q8
+```
+
+For the tiny fixture, tests compare q8 converted CPU behavior against the f32
+converted model running through the CPU q8 backend and assert matching
+`last_token`.  This is a fixture-level regression check, not a general token
+equivalence contract: q8 logits may move an argmax boundary on future models.
+The quantization tolerance remains the documented q8 logit tolerance in
+`docs/quantization.md`.
 
 ### M50 — tokenizer import plan
 

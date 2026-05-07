@@ -70,10 +70,16 @@ exceed 63 characters are rejected by the loader.
 | `2`  | 2     | q8 (int8 + per-row f32 scales) |
 
 The loader must reject any other dtype value.  q8 tensors in `.att1` files are
-not yet implemented; dtype `2` is reserved for a future format update and must
-not appear in milestone-30 files.  The converter must write dtype `1` for all
-tensors regardless of the quantization path used at inference time — runtime q8
-copies are always derived on load.
+supported for M49 tiny converted artifacts.  A dtype-2 tensor must be a 2-D
+matrix with payload layout:
+
+```text
+int8 values[rows * cols]  followed by  float32 scales[rows]
+```
+
+The tensor shape is the q8 runtime layout `[out_dim, in_dim]`, so q8
+projection tensors are transposed relative to their f32 ATT-1 file shape.
+RMSNorm tensors and `tok_embeddings.weight` remain dtype `1`.
 
 ---
 
@@ -89,9 +95,10 @@ copies are always derived on load.
 
 ---
 
-## Per-row q8 quantization rules (inference-time only)
+## Per-row q8 quantization rules
 
-When the runtime builds q8 copies from f32 `.att1` tensors:
+When the runtime builds q8 copies from f32 `.att1` tensors, or when the
+converter emits dtype-2 q8 tensors:
 
 ```text
 scale[row] = max(abs(row_values)) / 127   (or 1.0 if row is all-zero)
@@ -144,7 +151,8 @@ shape validation for converted models:
   consistent across all tensors.
 - `d_model % n_heads == 0` must hold.
 - `rope_dim <= d_model / n_heads` must hold.
-- Each tensor's `nbytes` must equal `product(shape) * sizeof(dtype)`.
+- Each f32 tensor's `nbytes` must equal `product(shape) * 4`.
+- Each q8 tensor's `nbytes` must equal `rows * cols + rows * 4`.
 - No duplicate tensor names in a single file.
 
 ---
@@ -154,14 +162,17 @@ shape validation for converted models:
 Single-tile inference (`att1_infer_t`):
 1. Loads the `.att1` file via `att1_model_load()`.
 2. Validates the model with `att1_model_view_validate_decoder()`.
-3. If a q8 backend is selected, builds runtime q8 copies of all projection
-   weights before decoding begins.
+3. If a q8 backend is selected, either borrows dtype-2 q8 tensors directly from
+   the model file or builds runtime q8 copies from dtype-1 f32 tensors before
+   decoding begins.
 4. Decodes tokens via `att1_infer_decode_token()`.
 
 Cluster inference (`att1_cluster_infer_t`):
 1. Loads the same `.att1` file identically.
 2. Builds a shard plan at runtime via `att1_shard_plan_build()`.
-3. Dispatches each tile's layers through `att1_transformer_block_forward_backend()`.
+3. Dispatches each tile's layers through the selected backend.  q8 cluster
+   backends borrow dtype-2 q8 tensors directly when present, or build runtime
+   q8 copies from dtype-1 f32 tensors.
 4. The backend selection (cpu-f32, cpu-q8, cuda, cuda-q8) is independent of the
    file format.
 
@@ -187,19 +198,21 @@ No file format changes are required to support cluster mode.
 | Tensor naming mismatch | Canonical name table in this document; converter asserts all names present |
 | Transposed weights | Converter tests round-trip: load → multiply → compare to original |
 | RoPE convention mismatch | Converter accepts `--rope-theta` argument; documented default is `10000.0` |
-| q8 scale mismatch | Runtime quantizes from f32 file; no scale in file format until dtype `2` is defined |
+| q8 scale mismatch | dtype-2 files store deterministic per-row f32 scales; f32 files still derive runtime q8 copies |
 | Tokenizer mismatch | Tokenizer is out of scope; converter emits raw byte IDs only for initial tests |
 | Model format drift | Version field enforced; loader rejects unknown versions |
 | safetensors C dependency | Converter is Python-only under `compiler/`; runtime never links it |
 
 ---
 
-## Converter status (Milestones 32 and 48)
+## Converter status (Milestones 32, 48, and 49)
 
-`compiler/convert_llama_to_att1.py` supports validated config parsing and
-deterministic stub emission.  It also supports M48 f32 safetensors import via
-`--safetensors PATH`; when that flag is present, real F32 tensor payloads are
-loaded under `compiler/` and emitted as dtype-1 `.att1` tensors.
+`compiler/convert_llama_to_att1.py` supports validated config parsing,
+deterministic stub emission, M48 f32 safetensors import, and M49 q8 safetensors
+conversion.  With `--safetensors PATH`, real F32 tensor payloads are loaded
+under `compiler/`.  `--weight-format f32` emits dtype-1 tensors, while
+`--weight-format q8` emits dtype-2 projection/output tensors plus dtype-1
+embedding and norm tensors.
 
 **Supported architectures:** `llama`, `mistral`
 
@@ -231,7 +244,7 @@ All three commands must exit 0.  The bench output should report
 - Tokenizer vocabulary import
 - Multi-shard safetensors or `.bin` shard weight loading
 - BF16/F16 source upcast
-- q8 pre-quantized `.att1` file emission (dtype `2`)
+- q4 conversion
 
 ### Tiny f32 safetensors conversion
 
@@ -259,6 +272,33 @@ python3 compiler/convert_llama_to_att1.py \
 The checked-in tiny f32 artifact is used by
 `tests/test_converter_validation.c`, so `make test` does not invoke Python for
 this validation path.
+
+### Tiny q8 safetensors conversion
+
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --safetensors compiler/fixtures/tiny_llama_2l.safetensors \
+    --weight-format q8 \
+    --out models/real_tiny_q8/model.att1
+
+./build/att1-inspect models/real_tiny_q8/model.att1
+
+./build/att1-bench \
+    --model models/real_tiny_q8/model.att1 \
+    --prompt $'\x01' --tokens 2 \
+    --mode single --backend cpu-q8
+
+./build/att1-bench \
+    --model models/real_tiny_q8/model.att1 \
+    --prompt $'\x01' --tokens 2 \
+    --mode cluster --tiles 2 --backend cpu-q8
+```
+
+On CUDA builds with an available runtime, the same artifact is also validated
+with `--backend cuda-q8` in single and cluster modes.  The checked-in q8
+artifact is part of `tests/test_converter_validation.c`, so normal `make test`
+remains Python-free.
 
 ---
 

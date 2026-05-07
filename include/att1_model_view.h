@@ -22,6 +22,12 @@ att1_status_t att1_model_view_tensor_f32(const att1_model *model,
                                          uint64_t dim1,
                                          const float **out_data);
 
+att1_status_t att1_model_view_tensor_q8(const att1_model *model,
+                                        const char *name,
+                                        uint64_t rows,
+                                        uint64_t cols,
+                                        att1_q8_matrix *out_matrix);
+
 att1_status_t att1_model_view_token_embedding(const att1_model *model,
                                               const float **out_data);
 

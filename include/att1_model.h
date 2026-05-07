@@ -23,7 +23,8 @@ typedef struct att1_model_info {
 } att1_model_info;
 
 typedef enum att1_model_dtype {
-    ATT1_MODEL_DTYPE_F32 = 1
+    ATT1_MODEL_DTYPE_F32 = 1,
+    ATT1_MODEL_DTYPE_Q8 = 2
 } att1_model_dtype;
 
 typedef struct att1_model_config {
@@ -63,7 +64,8 @@ typedef struct att1_model {
  * Load and validate an ATT-1 little-endian binary model file.
  *
  * The loader owns the file mapping copy and tensor descriptors until
- * att1_model_free is called. Only float32 tensors are supported in Milestone 6.
+ * att1_model_free is called. Supported tensor dtypes are validated by the
+ * loader before tensor views are exposed.
  */
 att1_status_t att1_model_load(const char *path, att1_model *model);
 

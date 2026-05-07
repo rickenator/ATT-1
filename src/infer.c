@@ -9,6 +9,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct att1_infer_q8_layer {
     const float *attention_norm;
@@ -33,24 +34,27 @@ struct att1_infer {
     att1_infer_q8_layer *q8_layers;
     const float *q8_output_norm;
     att1_q8_matrix q8_output_weight;
+    int q8_owned;
     int q8_ready;
     att1_trace_t *trace;
     size_t position;
 };
 
-static void infer_release_q8_layer(att1_infer_q8_layer *layer)
+static void infer_release_q8_layer(att1_infer_q8_layer *layer, int owned)
 {
     if (layer == NULL) {
         return;
     }
 
-    att1_q8_matrix_free(&layer->wq);
-    att1_q8_matrix_free(&layer->wk);
-    att1_q8_matrix_free(&layer->wv);
-    att1_q8_matrix_free(&layer->wo);
-    att1_q8_matrix_free(&layer->w_gate);
-    att1_q8_matrix_free(&layer->w_up);
-    att1_q8_matrix_free(&layer->w_down);
+    if (owned) {
+        att1_q8_matrix_free(&layer->wq);
+        att1_q8_matrix_free(&layer->wk);
+        att1_q8_matrix_free(&layer->wv);
+        att1_q8_matrix_free(&layer->wo);
+        att1_q8_matrix_free(&layer->w_gate);
+        att1_q8_matrix_free(&layer->w_up);
+        att1_q8_matrix_free(&layer->w_down);
+    }
     memset(layer, 0, sizeof(*layer));
 }
 
@@ -64,14 +68,17 @@ static void infer_release_q8(att1_infer_t *infer)
 
     if ((infer->model != NULL) && (infer->q8_layers != NULL)) {
         for (layer = 0u; layer < infer->model->config.n_layers; layer++) {
-            infer_release_q8_layer(&infer->q8_layers[layer]);
+            infer_release_q8_layer(&infer->q8_layers[layer], infer->q8_owned);
         }
     }
 
     free(infer->q8_layers);
-    att1_q8_matrix_free(&infer->q8_output_weight);
+    if (infer->q8_owned) {
+        att1_q8_matrix_free(&infer->q8_output_weight);
+    }
     infer->q8_layers = NULL;
     infer->q8_output_norm = NULL;
+    infer->q8_owned = 0;
     infer->q8_ready = 0;
 }
 
@@ -159,6 +166,108 @@ static int infer_quantize_transposed(att1_q8_matrix *matrix,
     return rc;
 }
 
+static int infer_model_has_file_q8(const att1_model *model)
+{
+    const att1_model_tensor *tensor = att1_model_find_tensor(model, "output.weight");
+
+    return (tensor != NULL) && (tensor->dtype == ATT1_MODEL_DTYPE_Q8);
+}
+
+static att1_status_t infer_layer_q8_name(char *out,
+                                         size_t out_size,
+                                         uint32_t layer,
+                                         const char *suffix)
+{
+    const int written = snprintf(out, out_size, "layers.%u.%s", layer, suffix);
+
+    if ((written < 0) || ((size_t)written >= out_size)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    return ATT1_OK;
+}
+
+static att1_status_t infer_load_file_q8_layer(const att1_model *model,
+                                              uint32_t layer,
+                                              att1_infer_q8_layer *q8)
+{
+    char name[ATT1_MODEL_NAME_SIZE];
+    const uint64_t d_model = model->config.d_model;
+    const uint64_t d_ff = model->config.d_ff;
+    att1_status_t status = ATT1_OK;
+
+    status = infer_layer_q8_name(name, sizeof(name), layer, "attention_norm.weight");
+    if (status != ATT1_OK) { return status; }
+    status = att1_model_view_tensor_f32(model, name, 1u, d_model, 1u, &q8->attention_norm);
+    if (status != ATT1_OK) { return status; }
+
+#define LOAD_Q8(member, suffix, rows, cols) \
+    do { \
+        status = infer_layer_q8_name(name, sizeof(name), layer, suffix); \
+        if (status != ATT1_OK) { return status; } \
+        status = att1_model_view_tensor_q8(model, name, rows, cols, &q8->member); \
+        if (status != ATT1_OK) { return status; } \
+    } while (0)
+
+    LOAD_Q8(wq,     "attention.wq.weight", d_model, d_model);
+    LOAD_Q8(wk,     "attention.wk.weight", d_model, d_model);
+    LOAD_Q8(wv,     "attention.wv.weight", d_model, d_model);
+    LOAD_Q8(wo,     "attention.wo.weight", d_model, d_model);
+
+    status = infer_layer_q8_name(name, sizeof(name), layer, "ffn_norm.weight");
+    if (status != ATT1_OK) { return status; }
+    status = att1_model_view_tensor_f32(model, name, 1u, d_model, 1u, &q8->ffn_norm);
+    if (status != ATT1_OK) { return status; }
+
+    LOAD_Q8(w_gate, "ffn.w_gate.weight",   d_ff, d_model);
+    LOAD_Q8(w_up,   "ffn.w_up.weight",     d_ff, d_model);
+    LOAD_Q8(w_down, "ffn.w_down.weight",   d_model, d_ff);
+
+#undef LOAD_Q8
+
+    return ATT1_OK;
+}
+
+static att1_status_t infer_prepare_file_q8(att1_infer_t *infer)
+{
+    const att1_model *model = infer->model;
+    uint32_t layer = 0u;
+    att1_status_t status = ATT1_OK;
+
+    infer->q8_layers = calloc(model->config.n_layers, sizeof(*infer->q8_layers));
+    if (infer->q8_layers == NULL) {
+        return ATT1_ERR_OOM;
+    }
+
+    for (layer = 0u; layer < model->config.n_layers; layer++) {
+        status = infer_load_file_q8_layer(model, layer, &infer->q8_layers[layer]);
+        if (status != ATT1_OK) {
+            infer_release_q8(infer);
+            return status;
+        }
+    }
+
+    status = att1_model_view_output_norm(model, &infer->q8_output_norm);
+    if (status != ATT1_OK) {
+        infer_release_q8(infer);
+        return status;
+    }
+
+    status = att1_model_view_tensor_q8(model,
+                                       "output.weight",
+                                       model->config.vocab_size,
+                                       model->config.d_model,
+                                       &infer->q8_output_weight);
+    if (status != ATT1_OK) {
+        infer_release_q8(infer);
+        return status;
+    }
+
+    infer->q8_owned = 0;
+    infer->q8_ready = 1;
+    return ATT1_OK;
+}
+
 static att1_status_t infer_prepare_q8(att1_infer_t *infer)
 {
     const att1_model *model = NULL;
@@ -176,11 +285,16 @@ static att1_status_t infer_prepare_q8(att1_infer_t *infer)
     model = infer->model;
     infer_release_q8(infer);
 
+    if (infer_model_has_file_q8(model)) {
+        return infer_prepare_file_q8(infer);
+    }
+
     infer->q8_layers = calloc(model->config.n_layers,
                               sizeof(*infer->q8_layers));
     if (infer->q8_layers == NULL) {
         return ATT1_ERR_OOM;
     }
+    infer->q8_owned = 1;
 
     for (layer = 0u; layer < model->config.n_layers; layer++) {
         att1_transformer_block_weights weights;
