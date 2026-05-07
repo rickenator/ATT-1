@@ -1,9 +1,11 @@
 #include "att1_tok_ext.h"
 #include "att1_status.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -27,6 +29,75 @@ static int write_ids_file(const char *path, const uint32_t *ids, size_t count)
     }
     fclose(fp);
     return 0;
+}
+
+/*
+ * Expected parser failures print public diagnostics to stderr.  Suppress only
+ * those calls so a passing test run does not look like it found CUDA errors.
+ */
+static int silence_stderr(int *saved_fd)
+{
+    int null_fd = -1;
+
+    fflush(stderr);
+    *saved_fd = dup(fileno(stderr));
+    if (*saved_fd < 0) {
+        return -1;
+    }
+
+    null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd < 0) {
+        close(*saved_fd);
+        *saved_fd = -1;
+        return -1;
+    }
+
+    if (dup2(null_fd, fileno(stderr)) < 0) {
+        close(null_fd);
+        close(*saved_fd);
+        *saved_fd = -1;
+        return -1;
+    }
+
+    close(null_fd);
+    return 0;
+}
+
+static void restore_stderr(int saved_fd)
+{
+    if (saved_fd >= 0) {
+        fflush(stderr);
+        dup2(saved_fd, fileno(stderr));
+        close(saved_fd);
+    }
+}
+
+static att1_status_t parse_ids_str_quiet(const char  *str,
+                                         uint32_t     vocab_size,
+                                         uint32_t   **out_ids,
+                                         size_t      *out_count)
+{
+    int saved_fd = -1;
+    att1_status_t rc = ATT1_OK;
+
+    (void)silence_stderr(&saved_fd);
+    rc = att1_tok_ext_parse_ids_str(str, vocab_size, out_ids, out_count);
+    restore_stderr(saved_fd);
+    return rc;
+}
+
+static att1_status_t parse_ids_file_quiet(const char  *path,
+                                          uint32_t     vocab_size,
+                                          uint32_t   **out_ids,
+                                          size_t      *out_count)
+{
+    int saved_fd = -1;
+    att1_status_t rc = ATT1_OK;
+
+    (void)silence_stderr(&saved_fd);
+    rc = att1_tok_ext_parse_ids_file(path, vocab_size, out_ids, out_count);
+    restore_stderr(saved_fd);
+    return rc;
 }
 
 /* ── test cases ──────────────────────────────────────────────────────────── */
@@ -106,7 +177,7 @@ static int test_parse_empty_string(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("", 16u, &ids, &count);
+        parse_ids_str_quiet("", 16u, &ids, &count);
 
     if (rc == ATT1_OK) {
         fputs("parse_empty_string: expected error, got ATT1_OK\n", stderr);
@@ -124,7 +195,7 @@ static int test_parse_null_string(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str(NULL, 16u, &ids, &count);
+        parse_ids_str_quiet(NULL, 16u, &ids, &count);
 
     if (rc == ATT1_OK) {
         fputs("parse_null_string: expected error, got ATT1_OK\n", stderr);
@@ -142,7 +213,7 @@ static int test_parse_malformed_alpha(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("1,foo,3", 16u, &ids, &count);
+        parse_ids_str_quiet("1,foo,3", 16u, &ids, &count);
 
     if (rc != ATT1_ERR_BAD_FORMAT) {
         fprintf(stderr,
@@ -163,7 +234,7 @@ static int test_parse_out_of_range(void)
     size_t count = 0u;
     /* vocab_size=16; token ID 16 is out of range */
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("1,16,3", 16u, &ids, &count);
+        parse_ids_str_quiet("1,16,3", 16u, &ids, &count);
 
     if (rc != ATT1_ERR_BAD_FORMAT) {
         fprintf(stderr, "parse_out_of_range: expected BAD_FORMAT, got %d\n",
@@ -182,7 +253,7 @@ static int test_parse_negative(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("-1", 16u, &ids, &count);
+        parse_ids_str_quiet("-1", 16u, &ids, &count);
 
     if (rc != ATT1_ERR_BAD_FORMAT) {
         fprintf(stderr, "parse_negative: expected BAD_FORMAT, got %d\n",
@@ -201,7 +272,7 @@ static int test_parse_empty_segment(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("1,,3", 16u, &ids, &count);
+        parse_ids_str_quiet("1,,3", 16u, &ids, &count);
 
     if (rc != ATT1_ERR_BAD_FORMAT) {
         fprintf(stderr, "parse_empty_segment: expected BAD_FORMAT, got %d\n",
@@ -220,7 +291,7 @@ static int test_parse_trailing_comma(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("1,2,", 16u, &ids, &count);
+        parse_ids_str_quiet("1,2,", 16u, &ids, &count);
 
     if (rc != ATT1_ERR_BAD_FORMAT) {
         fprintf(stderr, "parse_trailing_comma: expected BAD_FORMAT, got %d\n",
@@ -238,7 +309,7 @@ static int test_parse_null_out(void)
 {
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_str("1,2,3", 16u, NULL, &count);
+        parse_ids_str_quiet("1,2,3", 16u, NULL, &count);
 
     if (rc == ATT1_OK) {
         fputs("parse_null_out: expected error, got ATT1_OK\n", stderr);
@@ -325,8 +396,8 @@ static int test_file_not_found(void)
     uint32_t *ids = NULL;
     size_t count = 0u;
     const att1_status_t rc =
-        att1_tok_ext_parse_ids_file("build/tok_ext_nonexistent_xyz.txt",
-                                    16u, &ids, &count);
+        parse_ids_file_quiet("build/tok_ext_nonexistent_xyz.txt",
+                             16u, &ids, &count);
 
     if (rc != ATT1_ERR_NOT_FOUND) {
         fprintf(stderr, "file_not_found: expected NOT_FOUND, got %d\n",
@@ -356,7 +427,7 @@ static int test_file_out_of_range(void)
     fputs("1\n16\n3\n", fp); /* 16 >= vocab_size=16 */
     fclose(fp);
 
-    rc = att1_tok_ext_parse_ids_file(path, 16u, &ids, &count);
+    rc = parse_ids_file_quiet(path, 16u, &ids, &count);
     if (rc != ATT1_ERR_BAD_FORMAT) {
         fprintf(stderr, "file_out_of_range: expected BAD_FORMAT, got %d\n",
                 (int)rc);
