@@ -125,6 +125,21 @@ int main(int argc, char **argv)
                tensor->flags);
     }
 
+    /* Model-level inference status: flag q4 as not yet supported. */
+    {
+        int has_q4 = 0;
+
+        for (i = 0u; i < model.tensor_count; i++) {
+            if (model.tensors[i].dtype == ATT1_MODEL_DTYPE_Q4) {
+                has_q4 = 1;
+                break;
+            }
+        }
+        if (has_q4) {
+            printf("inference_status=q4_unsupported\n");
+        }
+    }
+
     if (model.shard_meta.count > 0u) {
         att1_shard_meta_summary    summary;
         att1_shard_meta_validation validation;

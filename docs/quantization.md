@@ -459,7 +459,7 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 | M74 | q4 format and schema: `ATT1_MODEL_DTYPE_Q4=3` enum, nbytes formula + group_size validation in loader, `ATT1_ERR_UNSUPPORTED` from validate_decoder, `att1-inspect` q4 reporting, `test_quant_q4` (9 checks) |
 | M75 | CPU q4 packing/unpacking primitives: `att1_q4_group_scale()`, `att1_q4_pack_group()`, `att1_q4_unpack_group()`, `att1_q4_quantize_group()`, `att1_q4_dequantize_group()`; `test_quant_q4_pack` (9 checks) |
 | M76 | CPU q4 matmul prototype: `att1_q4_matrix` struct, `att1_quantize_q4_per_group()`, `att1_matmul_q4xf32()` (dequantize-then-multiply, activations stay float32); `test_matmul_q4` (8 checks) |
-| M77 | q4 `.att1` fixture: `--weight-format q4` converter output, dtype-3 loader support, `att1-inspect` q4 reporting, checked-in tiny q4 model |
+| M77 | q4 `.att1` fixture: `compiler/make_q4_fixture.py` deterministic generator, `models/q4_tiny/model.att1` (54 132 bytes, 21 tensors, d_model=32, d_ff=64), `att1-inspect` `inference_status=q4_unsupported` note, `test_quant_q4_fixture` (8 checks) |
 | M78 | CPU q4 single-tile inference: `--backend cpu-q4` in `att1-bench`, single-tile decode validated against cpu-f32 |
 | M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |
 
@@ -689,3 +689,87 @@ Eight test cases in `tests/test_matmul_q4.c`:
 | 6 | `test_q4_vs_q8` | 4×32 sin-based weights quantized both ways; q4 vs q8 output within Q4_TOLERANCE |
 | 7 | `test_dimension_mismatch` | `lhs_cols ≠ weights->cols` and zero `lhs_rows` both rejected |
 | 8 | `test_null_args` | Null dst/lhs/weights in matmul; null src/matrix in quantize all rejected |
+
+---
+
+## q4 fixture generation and validation (M77)
+
+A deterministic q4 `.att1` fixture is generated offline by
+`compiler/make_q4_fixture.py` and checked in as `models/q4_tiny/model.att1`.
+C tests load the fixture directly at test time — no Python dependency at
+build or test time.
+
+### Fixture configuration
+
+| Field | Value |
+|-------|-------|
+| vocab_size | 256 |
+| n_layers | 2 |
+| n_heads | 2 |
+| d_model | 32 |
+| d_ff | 64 |
+| max_seq_len | 8 |
+| rope_dim | 8 |
+| n_tiles | 1 |
+| group_size | 32 |
+| tensor_count | 21 |
+| file_size | 54 132 bytes |
+
+### Tensor dtypes
+
+| Tensor | Shape | dtype |
+|--------|-------|-------|
+| `tok_embeddings.weight` | `[256, 32]` | f32 |
+| `layers.N.attention_norm.weight` | `[32]` | f32 |
+| `layers.N.attention.wq.weight` | `[32, 32]` | q4 g32 |
+| `layers.N.attention.wk.weight` | `[32, 32]` | q4 g32 |
+| `layers.N.attention.wv.weight` | `[32, 32]` | q4 g32 |
+| `layers.N.attention.wo.weight` | `[32, 32]` | q4 g32 |
+| `layers.N.ffn_norm.weight` | `[32]` | f32 |
+| `layers.N.ffn.w_gate.weight` | `[32, 64]` | q4 g32 |
+| `layers.N.ffn.w_up.weight` | `[32, 64]` | q4 g32 |
+| `layers.N.ffn.w_down.weight` | `[64, 32]` | q4 g32 |
+| `output_norm.weight` | `[32]` | f32 |
+| `output.weight` | `[32, 256]` | q4 g32 |
+
+Norm weights and token embeddings remain f32; all projection matrices and the
+output weight are q4.  15 q4 tensors, 6 f32 tensors.
+
+### Q4 payload layout per tensor
+
+| Shape | packed bytes | scale bytes | total bytes |
+|-------|-------------|-------------|-------------|
+| `[32, 32]` g32 | 512 | 128 | 640 |
+| `[32, 64]` g32 | 1 024 | 256 | 1 280 |
+| `[64, 32]` g32 | 1 024 | 256 | 1 280 |
+| `[32, 256]` g32 | 4 096 | 1 024 | 5 120 |
+
+### Deterministic weight generation
+
+Weights for q4 tensors are set to `sin(base + (r*cols + c) * 0.05) * 0.7` where
+`base` varies per tensor index.  This guarantees `max_abs > 0` in every group
+so scale values are always finite, positive, and approximately `0.1`.
+
+### att1-inspect inference_status note
+
+When any loaded tensor has `dtype=q4`, `att1-inspect` prints the model-level line:
+```
+inference_status=q4_unsupported
+```
+after the per-tensor table.  This is a read-only status note; it does not
+prevent inspection of the model.
+
+### Test coverage (`test_quant_q4_fixture`)
+
+Eight test cases in `tests/test_quant_q4_fixture.c`:
+
+| # | Name | What it checks |
+|---|------|---------------|
+| 1 | `test_fixture_loads` | Model loads with `ATT1_OK`; `tensor_count == 21` |
+| 2 | `test_fixture_q4_tensor_dtypes` | All 15 projection tensors report `dtype=Q4`, `group_size=32` |
+| 3 | `test_fixture_f32_tensor_dtypes` | All 6 norm/embedding tensors report `dtype=F32` |
+| 4 | `test_fixture_nbytes` | Exact `nbytes` for 6 representative tensors (loader formula validation) |
+| 5 | `test_fixture_scales_finite` | All 32 scale values for `layers.0.attention.wq.weight` are finite and > 0 |
+| 6 | `test_fixture_packed_nonzero` | At least one of the 512 packed bytes for the same tensor is nonzero |
+| 7 | `test_fixture_inference_rejected` | `att1_model_view_validate_decoder()` returns `ATT1_ERR_UNSUPPORTED` |
+| 8 | `test_fixture_inspect_output` | `att1-inspect` output contains `dtype_name=q4`, `quant=grouped-q4-g32`, `q4_groups=32`, `q4_packed_bytes=512`, `q4_scale_bytes=128`, `inference_status=q4_unsupported` |
