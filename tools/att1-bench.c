@@ -3,6 +3,7 @@
 #include "att1_infer.h"
 #include "att1_model.h"
 #include "att1_shard_meta.h"
+#include "att1_tok_ext.h"
 #include "att1_trace.h"
 
 #include <inttypes.h>
@@ -12,19 +13,28 @@
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s --model PATH --prompt TEXT --tokens N --mode single|cluster"
+    printf("usage: %s --model PATH --tokens N --mode single|cluster"
+           " [--prompt TEXT]"
            " [--tiles N] [--backend cpu-f32|cpu-q8|cuda|cuda-q8]"
            " [--shard-plan runtime|metadata]"
-           " [--tokenizer byte|metadata|external]\n",
+           " [--tokenizer byte|metadata|external]"
+           " [--input-token-ids \"1,2,3\"]"
+           " [--tokens-file PATH]\n"
+           "\n"
+           "byte mode (default): --prompt TEXT is required\n"
+           "external mode:       --input-token-ids or --tokens-file is required;\n"
+           "                     --prompt is not used\n",
            argv0);
 }
 
 /*
  * check_tokenizer_mode() validates the requested tokenizer mode against the
- * loaded model.  "byte" (the default) always succeeds.  "metadata" performs
- * full M57 runtime compatibility checks via att1_tok_meta_check_runtime()
- * then fails with "not implemented yet".  "external" fails immediately.
- * Returns 0 on success (byte mode only), 1 on any error.
+ * loaded model.  "byte" (default) and "external" always succeed here.
+ * "metadata" performs full M57 runtime compatibility checks then fails with
+ * "not implemented yet".  Returns 0 on success, 1 on any error.
+ *
+ * Note: external mode token-ID parsing and range validation are handled
+ * separately in main() after this call.
  */
 static int check_tokenizer_mode(const att1_model *model, const char *mode)
 {
@@ -59,8 +69,8 @@ static int check_tokenizer_mode(const att1_model *model, const char *mode)
     }
 
     if (strcmp(mode, "external") == 0) {
-        fputs("error: external tokenizer mode not implemented yet\n", stderr);
-        return 1;
+        /* Token-ID source is validated in main(); no error here. */
+        return 0;
     }
 
     /* unreachable: invalid mode is caught at parse time */
@@ -205,6 +215,231 @@ static void print_counters(const att1_trace_t *trace)
                    (unsigned long long)tile.logits_bytes_produced);
         }
     }
+}
+
+/*
+ * run_single_external() runs single-tile inference using pre-tokenized input.
+ *
+ * ext_ids[0..ext_count-1] are fed via att1_infer_decode_token() as the
+ * "prompt" phase.  max_tokens additional tokens are then generated and
+ * collected in the output.  Reports tokenizer=external in bench output.
+ */
+static int run_single_external(const att1_model *model,
+                                const uint32_t  *ext_ids,
+                                size_t           ext_count,
+                                size_t           max_tokens,
+                                const char      *backend_name)
+{
+    att1_infer_t *infer = NULL;
+    att1_trace_t *trace = NULL;
+    att1_backend *backend = NULL;
+    uint32_t *tokens = NULL;
+    uint32_t token = 0u;
+    size_t i = 0u;
+    size_t produced = 0u;
+    size_t run_tokens = 0u;
+    size_t capacity = 0u;
+    int rc = 1;
+
+    if (ext_count >= (size_t)model->config.max_seq_len) {
+        fputs("error: external token count fills or exceeds model max_seq_len\n",
+              stderr);
+        return 1;
+    }
+
+    run_tokens = benchmark_token_count(model, ext_count, max_tokens);
+    capacity   = run_tokens == 0u ? 1u : run_tokens;
+
+    tokens = calloc(capacity, sizeof(*tokens));
+    if (tokens == NULL) {
+        return 1;
+    }
+
+    if ((att1_trace_create(model->config.n_layers, 1u, &trace) != ATT1_OK) ||
+        (att1_infer_create(model, &infer) != ATT1_OK)) {
+        goto cleanup;
+    }
+
+    if (backend_name != NULL) {
+        if (create_backend(backend_name, &backend) != ATT1_OK) {
+            fprintf(stderr, "backend unsupported or unavailable: %s\n",
+                    backend_name);
+            goto cleanup;
+        }
+        if (att1_infer_set_backend(infer, backend) != ATT1_OK) {
+            att1_backend_destroy(backend);
+            backend = NULL;
+            goto cleanup;
+        }
+        backend = NULL;
+    }
+
+    if (att1_infer_set_trace(infer, trace) != ATT1_OK) {
+        goto cleanup;
+    }
+
+    /* feed external prompt IDs one by one */
+    for (i = 0u; i < ext_count; i++) {
+        uint32_t next = 0u;
+        if (att1_infer_decode_token(infer, ext_ids[i], &next) != ATT1_OK) {
+            goto cleanup;
+        }
+        token = next;
+    }
+
+    /* generate run_tokens output tokens */
+    for (produced = 0u; produced < run_tokens; produced++) {
+        uint32_t next = 0u;
+        tokens[produced] = token;
+        if ((produced + 1u) < run_tokens) {
+            if (att1_infer_decode_token(infer, token, &next) != ATT1_OK) {
+                goto cleanup;
+            }
+            token = next;
+        }
+    }
+
+    printf("mode=single\n");
+    printf("shard_plan=runtime\n");
+    printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
+    printf("tokenizer=external\n");
+    printf("prompt_tokens=%zu\n", ext_count);
+    printf("requested_tokens=%zu\n", max_tokens);
+    printf("benchmark_tokens=%zu\n", run_tokens);
+    printf("generated_tokens=%zu\n", produced);
+    if (produced > 0u) {
+        printf("last_token=%u\n", tokens[produced - 1u]);
+    }
+    print_counters(trace);
+    rc = 0;
+
+cleanup:
+    att1_backend_destroy(backend);
+    att1_infer_destroy(infer);
+    att1_trace_destroy(trace);
+    free(tokens);
+    return rc;
+}
+
+/*
+ * run_cluster_external() runs cluster inference using pre-tokenized input.
+ *
+ * Same semantics as run_single_external() but uses the multi-tile cluster
+ * inference context.
+ */
+static int run_cluster_external(const att1_model      *model,
+                                 const uint32_t        *ext_ids,
+                                 size_t                 ext_count,
+                                 size_t                 max_tokens,
+                                 size_t                 tile_count,
+                                 const char            *backend_name,
+                                 att1_shard_plan_mode   shard_plan_mode)
+{
+    att1_cluster_infer_config config;
+    att1_cluster_infer_t *infer = NULL;
+    att1_trace_t *trace = NULL;
+    att1_backend *backend = NULL;
+    uint32_t *tokens = NULL;
+    uint32_t token = 0u;
+    size_t i = 0u;
+    size_t produced = 0u;
+    size_t run_tokens = 0u;
+    size_t capacity = 0u;
+    int rc = 1;
+
+    if (ext_count >= (size_t)model->config.max_seq_len) {
+        fputs("error: external token count fills or exceeds model max_seq_len\n",
+              stderr);
+        return 1;
+    }
+
+    run_tokens = benchmark_token_count(model, ext_count, max_tokens);
+    capacity   = run_tokens == 0u ? 1u : run_tokens;
+
+    if (backend_name != NULL) {
+        if (create_backend(backend_name, &backend) != ATT1_OK) {
+            fprintf(stderr, "backend unsupported or unavailable: %s\n",
+                    backend_name);
+            return 1;
+        }
+    }
+
+    tokens = calloc(capacity, sizeof(*tokens));
+    if (tokens == NULL) {
+        goto cleanup;
+    }
+
+    config.tile_count              = tile_count;
+    config.fabric_queue_capacity   = 4u;
+    config.fabric_max_payload_bytes = 0u;
+    config.shard_plan_mode         = shard_plan_mode;
+
+    if (att1_trace_create(model->config.n_layers, tile_count, &trace) != ATT1_OK) {
+        goto cleanup;
+    }
+
+    if (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK) {
+        if (shard_plan_mode == ATT1_SHARD_PLAN_METADATA) {
+            fputs("error: metadata shard plan invalid, incomplete, or absent\n",
+                  stderr);
+        }
+        goto cleanup;
+    }
+
+    if (backend != NULL) {
+        if (att1_cluster_infer_set_backend(infer, backend) != ATT1_OK) {
+            goto cleanup;
+        }
+        backend = NULL;
+    }
+
+    if (att1_cluster_infer_set_trace(infer, trace) != ATT1_OK) {
+        goto cleanup;
+    }
+
+    /* feed external prompt IDs one by one */
+    for (i = 0u; i < ext_count; i++) {
+        uint32_t next = 0u;
+        if (att1_cluster_infer_decode_token(infer, ext_ids[i], &next) != ATT1_OK) {
+            goto cleanup;
+        }
+        token = next;
+    }
+
+    /* generate run_tokens output tokens */
+    for (produced = 0u; produced < run_tokens; produced++) {
+        uint32_t next = 0u;
+        tokens[produced] = token;
+        if ((produced + 1u) < run_tokens) {
+            if (att1_cluster_infer_decode_token(infer, token, &next) != ATT1_OK) {
+                goto cleanup;
+            }
+            token = next;
+        }
+    }
+
+    printf("mode=cluster\n");
+    printf("shard_plan=%s\n",
+           shard_plan_mode == ATT1_SHARD_PLAN_METADATA ? "metadata" : "runtime");
+    printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
+    printf("tokenizer=external\n");
+    printf("tiles=%zu\n", tile_count);
+    printf("prompt_tokens=%zu\n", ext_count);
+    printf("requested_tokens=%zu\n", max_tokens);
+    printf("benchmark_tokens=%zu\n", run_tokens);
+    printf("generated_tokens=%zu\n", produced);
+    if (produced > 0u) {
+        printf("last_token=%u\n", tokens[produced - 1u]);
+    }
+    print_counters(trace);
+    rc = 0;
+
+cleanup:
+    att1_backend_destroy(backend);
+    att1_cluster_infer_destroy(infer);
+    att1_trace_destroy(trace);
+    free(tokens);
+    return rc;
 }
 
 static int run_single(const att1_model *model,
@@ -374,10 +609,14 @@ int main(int argc, char **argv)
     const char *backend_name = NULL;
     const char *shard_plan_name = NULL;
     const char *tokenizer_name = "byte";
+    const char *ext_ids_str = NULL;
+    const char *ext_ids_file = NULL;
     size_t max_tokens = 0u;
     size_t tile_count = 2u;
     att1_shard_plan_mode shard_plan_mode = ATT1_SHARD_PLAN_RUNTIME;
     att1_model model;
+    uint32_t *ext_ids = NULL;
+    size_t ext_count = 0u;
     int i = 0;
     int rc = 1;
 
@@ -429,16 +668,43 @@ int main(int argc, char **argv)
                 usage(argv[0]);
                 return 1;
             }
+        } else if ((strcmp(argv[i], "--input-token-ids") == 0) &&
+                   ((i + 1) < argc)) {
+            ext_ids_str = argv[++i];
+        } else if ((strcmp(argv[i], "--tokens-file") == 0) &&
+                   ((i + 1) < argc)) {
+            ext_ids_file = argv[++i];
         } else {
             usage(argv[0]);
             return 1;
         }
     }
 
-    if ((model_path == NULL) || (prompt == NULL) || (mode == NULL) ||
-        (prompt[0] == '\0')) {
+    if ((model_path == NULL) || (mode == NULL)) {
         usage(argv[0]);
         return 1;
+    }
+
+    /* Validate mode-specific required arguments. */
+    if (strcmp(tokenizer_name, "external") == 0) {
+        /* External mode: require --input-token-ids or --tokens-file, not both.
+         * --prompt is not used. */
+        if ((ext_ids_str == NULL) && (ext_ids_file == NULL)) {
+            fputs("error: --tokenizer external requires "
+                  "--input-token-ids or --tokens-file\n", stderr);
+            return 1;
+        }
+        if ((ext_ids_str != NULL) && (ext_ids_file != NULL)) {
+            fputs("error: --input-token-ids and --tokens-file "
+                  "are mutually exclusive\n", stderr);
+            return 1;
+        }
+    } else {
+        /* Byte / metadata modes: --prompt is required. */
+        if ((prompt == NULL) || (prompt[0] == '\0')) {
+            usage(argv[0]);
+            return 1;
+        }
     }
 
     if (att1_model_load(model_path, &model) != ATT1_OK) {
@@ -451,9 +717,43 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Parse and validate external token IDs (after model load, so we have
+     * vocab_size for range checking). */
+    if (strcmp(tokenizer_name, "external") == 0) {
+        att1_status_t parse_rc = ATT1_OK;
+
+        if (ext_ids_str != NULL) {
+            parse_rc = att1_tok_ext_parse_ids_str(ext_ids_str,
+                                                   model.config.vocab_size,
+                                                   &ext_ids, &ext_count);
+        } else {
+            parse_rc = att1_tok_ext_parse_ids_file(ext_ids_file,
+                                                    model.config.vocab_size,
+                                                    &ext_ids, &ext_count);
+        }
+
+        if (parse_rc != ATT1_OK) {
+            att1_model_free(&model);
+            return 1;
+        }
+    }
+
     print_shard_meta_summary(&model.shard_meta);
 
-    if (strcmp(mode, "single") == 0) {
+    if (strcmp(tokenizer_name, "external") == 0) {
+        /* Route to external inference. */
+        if (strcmp(mode, "single") == 0) {
+            rc = run_single_external(&model, ext_ids, ext_count,
+                                      max_tokens, backend_name);
+        } else if (strcmp(mode, "cluster") == 0) {
+            rc = run_cluster_external(&model, ext_ids, ext_count,
+                                       max_tokens, tile_count, backend_name,
+                                       shard_plan_mode);
+        } else {
+            usage(argv[0]);
+            rc = 1;
+        }
+    } else if (strcmp(mode, "single") == 0) {
         rc = run_single(&model,
                         (const unsigned char *)prompt,
                         strlen(prompt),
@@ -474,6 +774,7 @@ int main(int argc, char **argv)
         rc = 1;
     }
 
+    free(ext_ids);
     att1_model_free(&model);
     return rc;
 }

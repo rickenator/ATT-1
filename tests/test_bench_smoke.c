@@ -675,17 +675,19 @@ static int check_tokenizer_selection(void)
         return -1;
     }
 
-    /* --- M57: --tokenizer external fails clearly --- */
+    /* --- M58: --tokenizer external without ID source fails with clear message
+     *   (external mode is now wired; this tests the missing-source error path)
+     *   The full positive-path tests live in check_external_tokenizer(). --- */
     if (run_command("./build/att1-bench --model models/dummy/model.att1 "
-                    "--prompt hello --tokens 4 --mode single "
+                    "--tokens 4 --mode single "
                     "--tokenizer external "
                     "> build/tok_sel_external.txt 2>&1") == 0) {
-        fputs("tok_sel: external should have failed\n", stderr);
+        fputs("tok_sel: external without IDs should have failed\n", stderr);
         return -1;
     }
     if ((read_file("build/tok_sel_external.txt", output, sizeof(output)) != 0) ||
-        (strstr(output, "not implemented yet") == NULL)) {
-        fputs("tok_sel: expected \"not implemented yet\" for external\n", stderr);
+        (strstr(output, "--input-token-ids or --tokens-file") == NULL)) {
+        fputs("tok_sel: expected missing-source error for external\n", stderr);
         return -1;
     }
 
@@ -701,6 +703,153 @@ static int check_tokenizer_selection(void)
     return 0;
 }
 
+static int check_external_tokenizer(void)
+{
+    char output[4096];
+
+    /* ── helper: write a token IDs file ─────────────────────────────── */
+    {
+        FILE *fp = fopen("build/ext_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("ext_tok: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n", fp);
+        fclose(fp);
+    }
+
+    /* --- external single: --input-token-ids accepted; tokenizer=external --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external --input-token-ids \"1,2,3\" "
+                    "> build/ext_single.txt 2>&1") != 0) {
+        fputs("ext_tok: input-token-ids single failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_single.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL)) {
+        fputs("ext_tok: tokenizer=external missing from single output\n",
+              stderr);
+        return -1;
+    }
+    if (strstr(output, "last_token=") == NULL) {
+        fputs("ext_tok: last_token missing from single output\n", stderr);
+        return -1;
+    }
+
+    /* --- external cluster: --input-token-ids accepted --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode cluster --tiles 2 "
+                    "--tokenizer external --input-token-ids \"1,2,3\" "
+                    "> build/ext_cluster.txt 2>&1") != 0) {
+        fputs("ext_tok: input-token-ids cluster failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_cluster.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL)) {
+        fputs("ext_tok: tokenizer=external missing from cluster output\n",
+              stderr);
+        return -1;
+    }
+
+    /* --- external single: --tokens-file accepted --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external --tokens-file build/ext_ids.txt "
+                    "> build/ext_file.txt 2>&1") != 0) {
+        fputs("ext_tok: tokens-file single failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_file.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL)) {
+        fputs("ext_tok: tokenizer=external missing from tokens-file output\n",
+              stderr);
+        return -1;
+    }
+
+    /* --- out-of-range token ID fails clearly --- */
+    /* dummy model vocab_size=256; ID 256 is out of range */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external --input-token-ids \"1,256,3\" "
+                    "> build/ext_oor.txt 2>&1") == 0) {
+        fputs("ext_tok: out-of-range should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_oor.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "out of range") == NULL)) {
+        fputs("ext_tok: expected \"out of range\" in error output\n", stderr);
+        return -1;
+    }
+
+    /* --- malformed token ID fails clearly --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external --input-token-ids \"1,foo,3\" "
+                    "> build/ext_bad.txt 2>&1") == 0) {
+        fputs("ext_tok: malformed should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_bad.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "malformed") == NULL)) {
+        fputs("ext_tok: expected \"malformed\" in error output\n", stderr);
+        return -1;
+    }
+
+    /* --- empty --input-token-ids fails clearly --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external --input-token-ids \"\" "
+                    "> build/ext_empty.txt 2>&1") == 0) {
+        fputs("ext_tok: empty IDs should have failed\n", stderr);
+        return -1;
+    }
+
+    /* --- external without ID source fails clearly --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external "
+                    "> build/ext_nosrc.txt 2>&1") == 0) {
+        fputs("ext_tok: missing ID source should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_nosrc.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "--input-token-ids or --tokens-file") == NULL)) {
+        fputs("ext_tok: expected missing-source error message\n", stderr);
+        return -1;
+    }
+
+    /* --- byte mode unchanged by M58 --- */
+    if (run_command("./build/att1-bench --model models/dummy/model.att1 "
+                    "--prompt hello --tokens 2 --mode single "
+                    "--tokenizer byte "
+                    "> build/ext_byte_check.txt 2>&1") != 0) {
+        fputs("ext_tok: byte mode broken\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_byte_check.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=byte") == NULL)) {
+        fputs("ext_tok: byte mode tokenizer=byte missing\n", stderr);
+        return -1;
+    }
+
+    /* --- metadata mode still validation-only / not-impl --- */
+    if (run_command("./build/att1-bench --model models/tok_meta/model.att1 "
+                    "--prompt hello --tokens 1 --mode single "
+                    "--tokenizer metadata "
+                    "> build/ext_meta_check.txt 2>&1") == 0) {
+        fputs("ext_tok: metadata should still fail (not-impl)\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/ext_meta_check.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "not implemented yet") == NULL)) {
+        fputs("ext_tok: metadata not-impl message missing\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -710,7 +859,8 @@ int main(void)
         (check_tensor_reader()            != 0) ||
         (check_tokenizer_scanner()        != 0) ||
         (check_tokenizer_import_report()  != 0) ||
-        (check_tokenizer_selection()      != 0)) {
+        (check_tokenizer_selection()      != 0) ||
+        (check_external_tokenizer()       != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

@@ -28,7 +28,7 @@ TINY_LLM_BIN := $(BUILD_DIR)/run_tiny_llm
 CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
-	tokenizer sampler infer shard shard_meta shard_meta_fixture shard_meta_report shard_meta_consistency shard_meta_plan shard_meta_exec cluster_infer trace quant matmul_q8 backend bench_smoke tok_meta tok_meta_select \
+	tokenizer sampler infer shard shard_meta shard_meta_fixture shard_meta_report shard_meta_consistency shard_meta_plan shard_meta_exec cluster_infer trace quant matmul_q8 backend bench_smoke tok_meta tok_meta_select tok_ext \
 	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer cuda_cluster cuda_bench \
 	q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
@@ -62,6 +62,7 @@ COMMON_SRCS := \
 	$(SRC_DIR)/model_loader.c \
 	$(SRC_DIR)/shard_meta.c \
 	$(SRC_DIR)/tok_meta.c \
+	$(SRC_DIR)/tok_ext.c \
 	$(SRC_DIR)/attention.c \
 	$(SRC_DIR)/transformer_block.c
 

@@ -209,7 +209,7 @@ real tokenizer is explicitly requested.
 | M55 | Runtime tokenizer selection plan: modes, CLI policy, compatibility checks, failure policy, and milestone split. ✅ |
 | M56 | Tokenizer selection CLI stub (`--tokenizer byte|metadata|external`); byte mode only wired; others stub-fail. ✅ |
 | M57 | Metadata tokenizer validation path: load, range-check, vocab cross-check; no BPE parser. ✅ |
-| M58 | External tokenizer preprocessing mode: pipe external process for prompt encoding. |
+| M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
 | M59 | BPE tokenizer parser prototype (if chosen). |
 | M60 | Tokenizer-aware converted model validation. |
 
@@ -380,7 +380,7 @@ hard error, not a fallback.
 |-----------|------|
 | M56 | Tokenizer selection CLI stub: `--tokenizer byte\|metadata\|external`; byte wired; others stub-fail clearly. ✅ |
 | M57 | Metadata tokenizer validation path: selection precondition checks, vocab/hash cross-check; no BPE parser yet. ✅ |
-| M58 | External tokenizer preprocessing mode: caller provides pre-encoded token IDs. |
+| M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
 | M59 | BPE tokenizer parser prototype (if chosen). |
 | M60 | Tokenizer-aware converted model validation: golden prompt-to-ID fixtures, round-trip checks. |
 
@@ -477,6 +477,68 @@ loader.
 15. `test_asset_half_set` — `asset_offset` nonzero, `asset_size` zero → `ATT1_ERR_BAD_FORMAT`
 
 `make test` passes (40 tests).  No `.att1` format change.  No backend change.
+
+## M58 External Tokenizer Preprocessing Mode
+
+M58 wires `--tokenizer external` in `att1-bench`.  The caller supplies
+pre-tokenized token IDs; the runtime feeds them directly into the decode
+loop without performing any byte encoding or BPE parsing.
+
+**New public API (`include/att1_tok_ext.h`):**
+
+```c
+att1_status_t att1_tok_ext_parse_ids_str(const char *str, uint32_t vocab_size,
+                                         uint32_t **out_ids, size_t *out_count);
+att1_status_t att1_tok_ext_parse_ids_file(const char *path, uint32_t vocab_size,
+                                          uint32_t **out_ids, size_t *out_count);
+```
+
+Both functions allocate `*out_ids` on success (caller must `free()`).
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `include/att1_tok_ext.h` | New: `att1_tok_ext_parse_ids_str()`, `att1_tok_ext_parse_ids_file()` |
+| `src/tok_ext.c` | New: implementation with per-token validation, stderr diagnostics |
+| `tools/att1-bench.c` | `--input-token-ids`, `--tokens-file`, `--prompt` optional for external; `run_single_external()`, `run_cluster_external()`; prints `tokenizer=external` |
+| `tests/test_tok_ext.c` | New: 15 unit-test cases for parse functions |
+| `Makefile` | `tok_ext` in `TEST_NAMES`; `tok_ext.c` in `COMMON_SRCS` |
+
+**Parse function return codes:**
+
+| Return | Condition |
+|--------|-----------|
+| `ATT1_OK` | Parsed OK; `*out_ids` allocated, `*out_count` set |
+| `ATT1_ERR_INVALID_ARG` | NULL/empty input or file yields no IDs |
+| `ATT1_ERR_BAD_FORMAT` | Malformed segment or token ID ≥ `vocab_size` |
+| `ATT1_ERR_NOT_FOUND` | File cannot be opened (file variant only) |
+| `ATT1_ERR_OOM` | Allocation failed |
+
+**Updated `check_tokenizer_mode()` entry:**
+
+| Mode | Precondition | Result |
+|------|-------------|--------|
+| `external` | — | OK; token-ID source validated in `main()` |
+
+**`test_tok_ext.c` test cases (15):**
+1. `test_parse_valid` — `"1,2,3"`, vocab=16 → `ATT1_OK`, ids=[1,2,3]
+2. `test_parse_single_zero` — `"0"` → `ATT1_OK`, ids=[0]
+3. `test_parse_max_id` — `"15"`, vocab=16 → `ATT1_OK`
+4. `test_parse_empty_string` — `""` → error
+5. `test_parse_null_string` — NULL → error
+6. `test_parse_malformed_alpha` — `"1,foo,3"` → `ATT1_ERR_BAD_FORMAT`
+7. `test_parse_out_of_range` — `"1,16,3"`, vocab=16 → `ATT1_ERR_BAD_FORMAT`
+8. `test_parse_negative` — `"-1"` → `ATT1_ERR_BAD_FORMAT`
+9. `test_parse_empty_segment` — `"1,,3"` → `ATT1_ERR_BAD_FORMAT`
+10. `test_parse_trailing_comma` — `"1,2,"` → `ATT1_ERR_BAD_FORMAT`
+11. `test_parse_null_out` — NULL `out_ids` → error
+12. `test_file_valid` — file with `1\n2\n3` → `ATT1_OK`, ids=[1,2,3]
+13. `test_file_comments` — file with `#`/blank lines → `ATT1_OK`, ids=[5,10]
+14. `test_file_not_found` — nonexistent path → `ATT1_ERR_NOT_FOUND`
+15. `test_file_out_of_range` — file with ID=16, vocab=16 → `ATT1_ERR_BAD_FORMAT`
+
+`make test` passes (41 tests).  No `.att1` format change.  No backend change.
 
 ## Canonical Asset Hash (M53)
 
