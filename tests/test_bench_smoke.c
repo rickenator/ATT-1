@@ -1242,6 +1242,158 @@ static int check_source_comparison(void)
     return 0;
 }
 
+/*
+ * check_m63_validation() — M63
+ *
+ * Python-skippable.  Requires numpy.  Validates the M63 larger tiny fixture
+ * (vocab=64, d_model=32, n_heads=4, d_ff=64, n_layers=2) through:
+ *   1. att1-bench cpu-f32 single and cluster modes
+ *   2. att1-bench cpu-q8 single and cluster modes
+ *   3. source comparison harness (--report and --report-json)
+ */
+static int check_m63_validation(void)
+{
+    char output[16384];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+    if (run_command("python3 -c 'import numpy' > /dev/null 2>&1") != 0) {
+        return 0; /* skip — numpy not installed */
+    }
+
+    /* Write token IDs file for external tokenizer */
+    {
+        FILE *fp = fopen("build/m63_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("m63: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("5\n20\n40\n", fp);
+        fclose(fp);
+    }
+
+    /* 1. f32 single */
+    if (run_command("./build/att1-bench "
+                    "--model models/m63_f32/model.att1 "
+                    "--tokenizer external --tokens-file build/m63_ids.txt "
+                    "--tokens 1 --mode single --backend cpu-f32 "
+                    "> build/m63_f32_single.txt 2>&1") != 0) {
+        fputs("m63: f32 single failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m63_f32_single.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "mode=single")     == NULL) ||
+        (strstr(output, "backend=cpu-f32") == NULL) ||
+        (strstr(output, "last_token=")     == NULL)) {
+        fputs("m63: f32 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* 2. f32 cluster */
+    if (run_command("./build/att1-bench "
+                    "--model models/m63_f32/model.att1 "
+                    "--tokenizer external --tokens-file build/m63_ids.txt "
+                    "--tokens 1 --mode cluster --tiles 2 --backend cpu-f32 "
+                    "> build/m63_f32_cluster.txt 2>&1") != 0) {
+        fputs("m63: f32 cluster failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m63_f32_cluster.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "mode=cluster")         == NULL) ||
+        (strstr(output, "fabric_packets_sent=") == NULL)) {
+        fputs("m63: f32 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    /* 3. q8 single */
+    if (run_command("./build/att1-bench "
+                    "--model models/m63_q8/model.att1 "
+                    "--tokenizer external --tokens-file build/m63_ids.txt "
+                    "--tokens 1 --mode single --backend cpu-q8 "
+                    "> build/m63_q8_single.txt 2>&1") != 0) {
+        fputs("m63: q8 single failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m63_q8_single.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "mode=single")    == NULL) ||
+        (strstr(output, "backend=cpu-q8") == NULL) ||
+        (strstr(output, "last_token=")    == NULL)) {
+        fputs("m63: q8 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* 4. q8 cluster */
+    if (run_command("./build/att1-bench "
+                    "--model models/m63_q8/model.att1 "
+                    "--tokenizer external --tokens-file build/m63_ids.txt "
+                    "--tokens 1 --mode cluster --tiles 2 --backend cpu-q8 "
+                    "> build/m63_q8_cluster.txt 2>&1") != 0) {
+        fputs("m63: q8 cluster failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/m63_q8_cluster.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "mode=cluster")         == NULL) ||
+        (strstr(output, "backend=cpu-q8")       == NULL) ||
+        (strstr(output, "fabric_packets_sent=") == NULL)) {
+        fputs("m63: q8 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    /* 5. source comparison --report */
+    if (run_command(
+            "python3 compiler/compare_att1_to_source.py "
+            "--safetensors compiler/fixtures/m63_llama_2l.safetensors "
+            "--config compiler/fixtures/m63_llama_config.json "
+            "--att1-f32 models/m63_f32/model.att1 "
+            "--att1-q8 models/m63_q8/model.att1 "
+            "--prompt-ids 5,20,40 "
+            "--report "
+            "> build/m63_report.txt 2>&1") != 0) {
+        fputs("m63: source comparison --report failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m63_report.txt", output, sizeof(output)) != 0) {
+        fputs("m63: cannot read --report output\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "result:              pass") == NULL) {
+        fputs("m63: result not pass\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "report:              ok") == NULL) {
+        fputs("m63: report: ok not found\n", stderr);
+        return -1;
+    }
+
+    /* 6. source comparison --report-json */
+    if (run_command(
+            "python3 compiler/compare_att1_to_source.py "
+            "--safetensors compiler/fixtures/m63_llama_2l.safetensors "
+            "--config compiler/fixtures/m63_llama_config.json "
+            "--att1-f32 models/m63_f32/model.att1 "
+            "--att1-q8 models/m63_q8/model.att1 "
+            "--prompt-ids 5,20,40 "
+            "--report-json build/m63_rpt.json "
+            "> /dev/null 2>&1") != 0) {
+        fputs("m63: --report-json failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m63_rpt.json", output, sizeof(output)) != 0) {
+        fputs("m63: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"result\"")     == NULL) ||
+        (strstr(output, "\"f32_static\"") == NULL) ||
+        (strstr(output, "\"forward\"")    == NULL)) {
+        fputs("m63: JSON missing expected keys\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1255,7 +1407,8 @@ int main(void)
         (check_external_tokenizer()       != 0) ||
         (check_hf_tokenizer()             != 0) ||
         (check_pretokenized_pipeline()    != 0) ||
-        (check_source_comparison()        != 0)) {
+        (check_source_comparison()        != 0) ||
+        (check_m63_validation()           != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

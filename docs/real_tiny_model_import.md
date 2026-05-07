@@ -506,6 +506,7 @@ runtime tokenizer selection are part of M50.
 | M60 | Converted model validation with pretokenized input: `att1-bench --tokenizer external` on `real_tiny_f32` and `real_tiny_q8`; cpu-f32/q8 single+cluster; CUDA skipped if absent. ✅ |
 | M61 | Source-model comparison harness: Python harness validates ATT-1 f32/q8 artifacts against source safetensors; static tensor mapping with transpose rules; numpy LLaMA forward pass; next-token match; m61 fixture with seeded random weights. ✅ |
 | M62 | Source comparison report integration: `--report`, `--report-json`, `--tokens-file`, `--backend`, `max_rel_error`, `logits_shape`; structured JSON result dict; hard fail on bad report path; smoke test extended. ✅ |
+| M63 | Larger tiny-model fixture and validation: vocab=64, d_model=32, d_ff=64, n_heads=4, n_layers=2; seeded safetensors; f32+q8 models; all four bench modes validated; source comparison passes. ✅ |
 
 ### M51 — tokenizer metadata schema
 
@@ -920,6 +921,72 @@ fields, and add a `--tokens-file` / `--backend` option.  No C changes.  No
    non-zero exit status.
 
 `make test` passes (41 tests) after M62.  No new C test binary.
+
+### M63 — larger tiny-model fixture and validation (complete)
+
+**Goal:** Replace the minimal M61 tiny fixture (vocab=16, d_model=8) with a
+wider model fixture that produces a more numerically meaningful forward pass.
+No C changes.  No `.att1` format changes.  No network access.
+
+**Fixture dimensions:**
+
+| Parameter | M61 value | M63 value |
+|-----------|-----------|-----------|
+| vocab_size | 16 | 64 |
+| d_model | 8 | 32 |
+| n_heads | 2 | 4 |
+| d_ff | 16 | 64 |
+| n_layers | 2 | 2 |
+| max_seq_len | 128 | 32 |
+| weight_scale | 0.10 | 0.02 |
+| seed | 61 | 63 |
+
+The smaller weight scale (0.02 vs 0.1) prevents logit saturation in the wider
+model where each matrix product accumulates more terms.
+
+**New files:**
+
+| File | Purpose |
+|------|---------|
+| `compiler/fixtures/make_m63_fixture.py` | Generator — seeded random F32 weights, same pattern as M61 |
+| `compiler/fixtures/m63_llama_config.json` | LLaMA-style config for the M63 fixture |
+| `compiler/fixtures/m63_llama_2l.safetensors` | 21 tensors, 101064 bytes |
+| `models/m63_f32/model.att1` | Converted f32 artifact (101748 bytes) |
+| `models/m63_q8/model.att1` | Converted q8 artifact (36724 bytes) |
+
+**Modified files:**
+
+| File | Change |
+|------|--------|
+| `tests/test_bench_smoke.c` | Added `check_m63_validation()` (Python+numpy-skippable) |
+
+**Validation results:**
+
+| Mode | Backend | last_token |
+|------|---------|-----------|
+| single | cpu-f32 | 11 |
+| cluster (tiles=2) | cpu-f32 | 11 |
+| single | cpu-q8 | 11 |
+| cluster (tiles=2) | cpu-q8 | 11 |
+
+**Source comparison** (prompt `[5, 20, 40]`):
+
+- `f32_max_abs_error = 0.000e+00` (exact copy)
+- `q8_max_abs_error = 1.190e-01` (well below 0.6 tolerance)
+- `f32_forward_match = yes`, `q8_forward_match = yes`
+- `result = pass`
+
+**Smoke test additions (`tests/test_bench_smoke.c`):**
+
+`check_m63_validation()` (Python+numpy-skippable, wired into `main()`):
+1. f32 single: asserts `mode=single`, `backend=cpu-f32`, `last_token=`.
+2. f32 cluster: asserts `mode=cluster`, `fabric_packets_sent=`.
+3. q8 single: asserts `mode=single`, `backend=cpu-q8`, `last_token=`.
+4. q8 cluster: asserts `mode=cluster`, `backend=cpu-q8`, `fabric_packets_sent=`.
+5. `--report`: asserts `result:              pass`, `report:              ok`.
+6. `--report-json`: asserts JSON contains `"result"`, `"f32_static"`, `"forward"`.
+
+`make test` passes (41 tests) after M63.  No new C test binary.
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is
    out of scope until after M48.
 
