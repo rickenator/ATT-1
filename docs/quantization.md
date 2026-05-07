@@ -457,7 +457,7 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 | Milestone | Goal |
 |-----------|------|
 | M74 | q4 format and schema: `ATT1_MODEL_DTYPE_Q4=3` enum, nbytes formula + group_size validation in loader, `ATT1_ERR_UNSUPPORTED` from validate_decoder, `att1-inspect` q4 reporting, `test_quant_q4` (9 checks) |
-| M75 | CPU q4 packing and unpacking primitives: `att1_q4_pack_row()`, `att1_q4_unpack_row()`, standalone unit tests |
+| M75 | CPU q4 packing/unpacking primitives: `att1_q4_group_scale()`, `att1_q4_pack_group()`, `att1_q4_unpack_group()`, `att1_q4_quantize_group()`, `att1_q4_dequantize_group()`; `test_quant_q4_pack` (9 checks) |
 | M76 | CPU q4 matmul prototype: `att1_matmul_q4xf32()` (dequantize-then-multiply), tests against f32 reference |
 | M77 | q4 `.att1` fixture: `--weight-format q4` converter output, dtype-3 loader support, `att1-inspect` q4 reporting, checked-in tiny q4 model |
 | M78 | CPU q4 single-tile inference: `--backend cpu-q4` in `att1-bench`, single-tile decode validated against cpu-f32 |
@@ -562,3 +562,67 @@ Nine test cases in `tests/test_quant_q4.c`:
 | 7 | `test_q4_inference_rejected` | load succeeds, `att1_model_view_validate_decoder()` returns `ATT1_ERR_UNSUPPORTED` |
 | 8 | `test_q4_inspect_output` | `att1-inspect` exits 0, output contains `dtype_name=q4`, `quant=grouped-q4-g32`, correct counts |
 | 9 | `test_existing_dtypes_unaffected` | existing f32 and q8 fixtures still load correctly |
+
+---
+
+## q4 packing and unpacking primitives (M75)
+
+Five per-group helper functions added to `src/quant.c` and declared in
+`include/att1_quant.h`. No q4 matmul or q4 inference is included.
+
+### API
+
+| Function | Purpose |
+|----------|---------|
+| `att1_q4_group_scale(src, group_size, out_scale)` | Compute per-group float32 scale: `max(|src[i]|) / 7.0`, or `1.0` for a zero row |
+| `att1_q4_pack_group(src_int4, group_size, dst_packed)` | Pack `group_size` int4 values (clamped to `[-7,7]`) into `group_size/2` bytes |
+| `att1_q4_unpack_group(src_packed, group_size, dst_int4)` | Unpack `group_size/2` bytes back to `group_size` int4 values (sign-extended) |
+| `att1_q4_quantize_group(src, group_size, dst_packed, out_scale)` | Compute scale, round-and-clamp to int4, pack; rejects non-finite input |
+| `att1_q4_dequantize_group(src_packed, group_size, scale, dst)` | Unpack and multiply by scale to recover float32 values |
+
+All functions return `0` on success, `-1` on invalid arguments (null pointers,
+invalid group size, non-finite input).
+
+### Valid group sizes
+
+Same constraint as M74: powers of two in `[ATT1_Q4_GROUP_SIZE_MIN,
+ATT1_Q4_GROUP_SIZE_MAX]` (16 to 128 inclusive).  `group_size=0` is **not**
+valid as a function argument (the default-32 shorthand is a wire-format concept
+only; callers must resolve the group size before calling these functions).
+
+### Nibble packing convention
+
+Matches the M74 wire format:
+- `packed[i/2]` low nibble  = element `i`   (even index)
+- `packed[i/2]` high nibble = element `i+1` (odd index)
+
+Signed int4 values use two's-complement bit pattern.  The value `-8` is
+excluded; the range is `[-7, 7]`.
+
+### Saturation
+
+Values outside `[-7, 7]` passed to `att1_q4_pack_group()` or produced by
+rounding in `att1_q4_quantize_group()` are clamped to `[-7, 7]` before packing.
+
+### Round-trip tolerance
+
+For a deterministic 32-element vector covering `[-1, 1]`, the max absolute
+reconstruction error is at most one quantization step (`scale * 1`).  With
+`group_size=32` and `max_abs=1.0`, `scale = 1/7 ≈ 0.143`; expected
+`max_abs_error < 0.143`.
+
+### Test coverage (`test_quant_q4_pack`)
+
+Nine test cases in `tests/test_quant_q4_pack.c`:
+
+| # | Name | What it checks |
+|---|------|---------------|
+| 1 | `test_nibble_order` | Exact byte encoding for `{-3, 5}` pair; round-trip via unpack |
+| 2 | `test_pack_unpack_all_values` | All 15 distinct int4 values in `[-7, 7]` survive pack/unpack |
+| 3 | `test_saturation` | `±127` input clamps to `±7` after pack/unpack |
+| 4 | `test_zero_row` | Zero vector → scale=1.0, all-zero output |
+| 5 | `test_round_trip_tolerance` | 32-element evenly-spaced vector; `max_err ≤ scale` |
+| 6 | `test_invalid_group_size` | `{0,1,3,15,48,256}` all rejected by every function |
+| 7 | `test_null_args` | Null pointers rejected by every function |
+| 8 | `test_nonfinite_input` | `inf`/`nan` in `src` rejected by `group_scale` and `quantize_group` |
+| 9 | `test_all_valid_group_sizes` | `{16,32,64,128}` all quantize/dequantize successfully |

@@ -37,6 +37,69 @@ typedef struct att1_quant_desc {
 #define ATT1_Q4_GROUP_SIZE_MAX     128u
 #define ATT1_Q4_FLAGS_GROUP_MASK   0xFFu
 
+/*
+ * q4 primitives (M75).
+ *
+ * All functions operate on a single group of `group_size` float32 values.
+ * `group_size` must be a power of two in [ATT1_Q4_GROUP_SIZE_MIN,
+ * ATT1_Q4_GROUP_SIZE_MAX], or ATT1_Q4_GROUP_SIZE_DEFAULT (32).
+ *
+ * Nibble packing convention (matches M74 wire format):
+ *   packed byte [i/2]: low nibble = element[i], high nibble = element[i+1]
+ *   i is always even.
+ *
+ * Signed int4 range: [-7, 7]. -8 is excluded (symmetric around zero).
+ */
+
+/*
+ * Compute the per-group scale for a row segment [src, src+group_size).
+ * scale = max(|src[i]|) / 7.0, or 1.0 if the row is all-zero.
+ * Returns -1 on null/bad args, 0 on success.
+ */
+int att1_q4_group_scale(const float *src,
+                        uint32_t     group_size,
+                        float       *out_scale);
+
+/*
+ * Pack `group_size` int4 values (in [-7,7], clamped before packing) from
+ * `src_int4` into `group_size/2` packed bytes in `dst_packed`.
+ * Low nibble = even index, high nibble = odd index.
+ * Returns -1 on null/bad args, 0 on success.
+ */
+int att1_q4_pack_group(const int8_t *src_int4,
+                       uint32_t      group_size,
+                       uint8_t      *dst_packed);
+
+/*
+ * Unpack `group_size/2` packed bytes from `src_packed` into `group_size`
+ * int4 values in `dst_int4`. Sign-extends 4-bit values to int8.
+ * Returns -1 on null/bad args, 0 on success.
+ */
+int att1_q4_unpack_group(const uint8_t *src_packed,
+                         uint32_t       group_size,
+                         int8_t        *dst_int4);
+
+/*
+ * Quantize `group_size` float32 values from `src` into packed int4 bytes in
+ * `dst_packed` and store the computed scale in `*out_scale`.
+ * Returns -1 on null/bad args or non-finite input, 0 on success.
+ */
+int att1_q4_quantize_group(const float *src,
+                           uint32_t     group_size,
+                           uint8_t     *dst_packed,
+                           float       *out_scale);
+
+/*
+ * Dequantize `group_size/2` packed bytes from `src_packed` using `scale`
+ * into `group_size` float32 values in `dst`.
+ * dst[i] = int4_value[i] * scale.
+ * Returns -1 on null/bad args, 0 on success.
+ */
+int att1_q4_dequantize_group(const uint8_t *src_packed,
+                             uint32_t       group_size,
+                             float          scale,
+                             float         *dst);
+
 typedef struct att1_q8_matrix {
     size_t rows;
     size_t cols;
