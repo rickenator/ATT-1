@@ -617,5 +617,6 @@ not implemented, and BPE/SentencePiece parsing remains out of C.
 | M69 | Public model source comparison report: `--model-dir`, external f32/q8 artifact paths, source-safetensors numpy reference, richer pass/fail report fields |
 | M70 | Public backend smoke validation: local f32/q8 artifacts across CPU single/cluster and optional CUDA single/cluster paths |
 | M71 | Public tokenized end-to-end validation: local HF tokenizer IDs plus f32/q8 CPU and optional CUDA backend smoke report |
-| M72 | GQA support: `n_kv_heads` config field, converter, runtime attention |
-| M73 | SmolLM2-135M import and validation (first real public model) |
+| M72 | Larger-model scaling and placement report: `att1-size --config`, `--layers/--d-model/--heads/--d-ff/--vocab-size`, `--json`; per-category storage, KV-cache by context, AIMU tile plan, backend feasibility; `check_scaling_report()` smoke test |
+| M73 | GQA support: `n_kv_heads` config field, converter, runtime attention |
+| M74 | SmolLM2-135M import and validation (first real public model) |

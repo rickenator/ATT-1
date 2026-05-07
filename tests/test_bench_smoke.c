@@ -1910,6 +1910,126 @@ static int check_public_tokenized_validation(void)
     return 0;
 }
 
+/*
+ * check_scaling_report() — M72
+ *
+ * Validates the extended att1-size scaling report for three input modes:
+ *   1. Existing preset modes still work (regression).
+ *   2. --config PATH mode with tiny LLaMA fixture.
+ *   3. --config --json mode.
+ *   4. Manual shape mode (--layers, --d-model, --heads, --d-ff, --vocab-size).
+ *   5. Bad config path fails with exit code 1.
+ *   6. Invalid d_model/heads combination fails with exit code 1.
+ */
+static int check_scaling_report(void)
+{
+    char output[8192];
+
+    /* 1a. Existing tiny-dummy preset still works. */
+    if (run_command("./build/att1-size --preset tiny-dummy"
+                    " > build/m72_size_tiny.txt 2>&1") != 0) {
+        fputs("scaling_report: tiny-dummy preset failed\n", stderr);
+        return -1;
+    }
+
+    /* 1b. Existing gpt-oss-120b-shape preset still works. */
+    if (run_command("./build/att1-size --preset gpt-oss-120b-shape"
+                    " --tiles 8 --context 8192 --dtype q4"
+                    " > build/m72_size_gptoss.txt 2>&1") != 0) {
+        fputs("scaling_report: gpt-oss preset failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m72_size_gptoss.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "synthetic/non-executable") == NULL) ||
+        (strstr(output, "dtype=q4")                 == NULL) ||
+        (strstr(output, "max_seq_len=8192")          == NULL) ||
+        (strstr(output, "tiles=8")                   == NULL)) {
+        fputs("scaling_report: gpt-oss preset output unexpected\n", stderr);
+        return -1;
+    }
+
+    /* 2. --config mode with tiny LLaMA fixture. */
+    if (run_command("./build/att1-size"
+                    " --config compiler/fixtures/tiny_llama_config.json"
+                    " --tiles 2"
+                    " > build/m72_size_config.txt 2>&1") != 0) {
+        fputs("scaling_report: --config mode failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m72_size_config.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "vocab_size")            == NULL) ||
+        (strstr(output, "n_layers")              == NULL) ||
+        (strstr(output, "storage")               == NULL) ||
+        (strstr(output, "kv_cache")              == NULL) ||
+        (strstr(output, "cluster_placement")     == NULL) ||
+        (strstr(output, "aimu_tile_plan")        == NULL) ||
+        (strstr(output, "backend_feasibility")   == NULL)) {
+        fputs("scaling_report: --config report missing sections\n", stderr);
+        return -1;
+    }
+
+    /* 3. --config --json mode. */
+    if (run_command("./build/att1-size"
+                    " --config compiler/fixtures/tiny_llama_config.json"
+                    " --json"
+                    " > build/m72_size_json.txt 2>&1") != 0) {
+        fputs("scaling_report: --config --json failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m72_size_json.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "\"shape\"")               == NULL) ||
+        (strstr(output, "\"storage\"")             == NULL) ||
+        (strstr(output, "\"kv_cache_f32\"")        == NULL) ||
+        (strstr(output, "\"cluster\"")             == NULL) ||
+        (strstr(output, "\"backend_feasibility\"") == NULL)) {
+        fputs("scaling_report: JSON report missing fields\n", stderr);
+        return -1;
+    }
+
+    /* 4. Manual shape mode. */
+    if (run_command("./build/att1-size"
+                    " --layers 4 --d-model 256 --heads 4 --d-ff 512"
+                    " --vocab-size 1000 --tiles 2 --context 512"
+                    " > build/m72_size_manual.txt 2>&1") != 0) {
+        fputs("scaling_report: manual mode failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m72_size_manual.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "vocab_size     = 1000") == NULL) ||
+        (strstr(output, "n_layers       = 4")    == NULL) ||
+        (strstr(output, "backend_feasibility")   == NULL)) {
+        fputs("scaling_report: manual mode output unexpected\n", stderr);
+        return -1;
+    }
+
+    /* 5. Bad config path must fail. */
+    if (run_command("./build/att1-size"
+                    " --config /nonexistent/config.json"
+                    " > build/m72_size_bad.txt 2>&1") == 0) {
+        fputs("scaling_report: bad config path should fail\n", stderr);
+        return -1;
+    }
+
+    /* 6. Invalid d_model/heads must fail. */
+    if (run_command("./build/att1-size"
+                    " --layers 4 --d-model 100 --heads 7 --d-ff 256"
+                    " --vocab-size 1000"
+                    " > build/m72_size_invalid.txt 2>&1") == 0) {
+        fputs("scaling_report: invalid d_model/heads should fail\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1929,7 +2049,8 @@ int main(void)
         (check_bf16_coercion()            != 0) ||
         (check_q8_conversion()            != 0) ||
         (check_public_backend_smoke()     != 0) ||
-        (check_public_tokenized_validation() != 0)) {
+        (check_public_tokenized_validation() != 0) ||
+        (check_scaling_report()           != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
