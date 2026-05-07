@@ -194,11 +194,12 @@ No file format changes are required to support cluster mode.
 
 ---
 
-## Converter status (Milestone 32)
+## Converter status (Milestones 32 and 48)
 
 `compiler/convert_llama_to_att1.py` supports validated config parsing and
-deterministic stub emission.  Real safetensors weight loading is not yet
-implemented.
+deterministic stub emission.  It also supports M48 f32 safetensors import via
+`--safetensors PATH`; when that flag is present, real F32 tensor payloads are
+loaded under `compiler/` and emitted as dtype-1 `.att1` tensors.
 
 **Supported architectures:** `llama`, `mistral`
 
@@ -225,12 +226,39 @@ python3 compiler/convert_llama_to_att1.py \
 All three commands must exit 0.  The bench output should report
 `generated_tokens=4` and nonzero `tokens_decoded`.
 
-### Not yet implemented
+### Still not implemented
 
-- Safetensors or `.bin` shard weight loading
 - Tokenizer vocabulary import
-- Real weight transposition and shape alignment
+- Multi-shard safetensors or `.bin` shard weight loading
+- BF16/F16 source upcast
 - q8 pre-quantized `.att1` file emission (dtype `2`)
+
+### Tiny f32 safetensors conversion
+
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --safetensors compiler/fixtures/tiny_llama_2l.safetensors \
+    --out models/real_tiny_f32/model.att1
+
+./build/att1-inspect models/real_tiny_f32/model.att1
+
+# The fixture vocab is 16, so prompts must use raw byte IDs 0..15 until
+# tokenizer import is implemented.
+./build/att1-bench \
+    --model models/real_tiny_f32/model.att1 \
+    --prompt $'\x01' --tokens 2 \
+    --mode single --backend cpu-f32
+
+./build/att1-bench \
+    --model models/real_tiny_f32/model.att1 \
+    --prompt $'\x01' --tokens 2 \
+    --mode cluster --tiles 2 --backend cpu-f32
+```
+
+The checked-in tiny f32 artifact is used by
+`tests/test_converter_validation.c`, so `make test` does not invoke Python for
+this validation path.
 
 ---
 

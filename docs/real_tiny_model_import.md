@@ -157,8 +157,8 @@ must emit a warning and proceed only if `type == "linear"` and `factor == 1.0`
 
 ### f32 output (M48)
 
-1. Load source weights as `float32` (upcasting from `bfloat16` if needed via
-   `tensor.float().numpy()`).
+1. Load source weights as `float32` using `compiler/load_safetensors.py`.
+   BF16/F16 coercion remains deferred; M48 accepts only `F32` source tensors.
 2. Transpose where required (see table above).
 3. Write ATT-1 dtype code `1` (`ATT1_DTYPE_F32`) for every tensor.
 4. Compute `nbytes = product(shape) * 4`.
@@ -329,23 +329,47 @@ standard library only (no numpy, no external dependencies).
 - No changes to C source (other than `test_bench_smoke.c`), Makefile, or
   `.att1` format.  `make test` passes (39 tests).
 
-### M48 — real f32 converted tiny model
+### M48 — real f32 converted tiny model (complete)
 
 **Goal:** Produce a real (non-synthetic) `.att1` artifact from a tiny
 LLaMA-style model's weights and confirm it loads and runs.
 
-**Scope:**
-- Full converter path: `config.json` + `model.safetensors` → `.att1`.
-- All tensors loaded from real weights, transposed where required, written as
-  `f32` (dtype `1`).
-- Artifact inspected with `att1-inspect`.
-- `att1-bench --mode single --backend cpu-f32` runs to completion.
-- `last_token` is deterministic for a given model (not validated against a
-  reference decoder, just stable across runs).
-- The generated `.att1` file is **not** checked into the repository unless it
-  is tiny enough (< 5 MB; a 1-layer, 64-d_model toy is fine).
-- No tokenizer; input is raw byte IDs.
-- No changes to C source or Makefile.
+**Implementation:**
+
+- `compiler/convert_llama_to_att1.py` keeps the synthetic stub path as the
+  default.  Passing `--safetensors PATH` switches emission to real f32 tensor
+  payloads loaded through the M47 safetensors reader.
+- The checked-in fixture pair is:
+  - `compiler/fixtures/tiny_llama_config.json`
+  - `compiler/fixtures/tiny_llama_2l.safetensors`
+- The fixture shape is intentionally tiny: `vocab_size=16`, `n_layers=2`,
+  `n_heads=2`, `d_model=8`, `d_ff=16`.
+- The checked-in converted artifact is
+  `models/real_tiny_f32/model.att1` (21 f32 tensors, no shard metadata).
+- The C decoder validation now accepts any nonzero `vocab_size` instead of
+  only 256, while all tensor shape checks still bind to the model config.
+
+**Converter command:**
+
+```bash
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --safetensors compiler/fixtures/tiny_llama_2l.safetensors \
+    --out models/real_tiny_f32/model.att1
+```
+
+**Validation:**
+
+- `att1-inspect` loads the converted model through the hostile-input C loader.
+- `tests/test_converter_validation.c` verifies config fields and transposed
+  ATT-1 matrix shapes such as `ffn.w_gate.weight [8,16]`,
+  `ffn.w_down.weight [16,8]`, and `output.weight [8,16]`.
+- `att1-bench --mode single --backend cpu-f32` runs on the converted model.
+- `att1-bench --mode cluster --tiles 2 --backend cpu-f32` also runs and
+  reports nonzero fabric packets.
+- No tokenizer import is included.  Until tokenizer support lands, prompts for
+  this 16-token fixture must be raw byte IDs in the range `0..15`.
+- No q8/q4 conversion is included, and the `.att1` binary format is unchanged.
 
 ### M49 — q8 converted tiny model
 

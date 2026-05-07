@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 36: Deterministic shard metadata fixture generation.
+Milestone 48: f32 ATT-1 conversion from tiny safetensors fixture.
 
 ## Hard Rules
 
@@ -66,8 +66,11 @@ Milestone 36: Deterministic shard metadata fixture generation.
 - Milestone 45: Real tiny model import plan — `docs/real_tiny_model_import.md` added (source files, tensor mappings, transpose rules, RoPE conventions, dtype conversion, hostile-input validation, validation ladder, M46–M50 milestone split); `docs/real_model_conversion.md` §M45 cross-reference added; no C source change, no Makefile change, no `.att1` format change. `make test` passes (39 tests).
 - Milestone 46: safetensors metadata scanner — `compiler/scan_safetensors.py` added (module + CLI: `scan_safetensors()`, `llama_required_keys()`, `check_llama_tensors()`, `format_scan_report()`; `ScanError` for fatal issues; exit codes 0/1/2; validates file size, header length bounds, UTF-8/JSON parse, tensor `data_offsets[1]` against data region size, non-overlapping regions); `compiler/fixtures/make_tiny_safetensors.py` generator added; `compiler/fixtures/tiny_llama_2l.safetensors` (21 tensors, 8325 bytes, all required LLaMA keys) checked in; `tests/test_bench_smoke.c` `check_scanner()` added (Python-skippable, asserts `tensor_count=21`, `scan: ok`, `llama_check: ok`, `llama_missing: 0`); `docs/real_tiny_model_import.md` §M46 updated. No C source change. No Makefile change. No `.att1` format change. `make test` passes (39 tests).
 - Milestone 47: safetensors tensor reader — `compiler/load_safetensors.py` added (module + CLI: `load_tensor()`, `load_all()`, `format_tensor_report()`, `format_summary()`; `LoadError`; `TensorData` namedtuple; F32 payload decode via `struct.unpack` only; `--tensor NAME`, `--expected-dtype`, `--expected-shape`, `--check-values`, `--summary` CLI flags; exit codes 0/1/2); `compiler/test_load_safetensors.py` added (10 error-case checks, outputs `self_test: ok`); `tests/test_bench_smoke.c` `check_tensor_reader()` added (Python-skippable, checks embed/q_proj/gate_proj/norm loads, `check-values` all-finite, self-test); `docs/real_tiny_model_import.md` §M47 updated. No C source change (other than smoke test). No Makefile change. No `.att1` format change. `make test` passes (39 tests).
+- Milestone 48: f32 ATT-1 conversion from tiny safetensors fixture — `compiler/convert_llama_to_att1.py` now supports `--safetensors PATH` to load real F32 payloads through the M47 reader, map Hugging Face LLaMA tensor names to ATT-1 names, transpose projection/output matrices, and emit dtype-1 `.att1` data without changing the binary format; tiny config fixtures now match `compiler/fixtures/tiny_llama_2l.safetensors` (`vocab_size=16`, `d_model=8`, `d_ff=16`); checked-in `models/real_tiny_f32/model.att1` loads via `att1-inspect` and runs `att1-bench` single and cluster cpu-f32; `tests/test_converter_validation.c` validates the converted fixture without Python at test time; tokenizer import and q8/q4 conversion remain deferred.
 
 ## Active Task
+
+Milestone 48 implementation and validation.
 
 ## Next Prompt for Codex
 

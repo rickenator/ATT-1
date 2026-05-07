@@ -2,6 +2,7 @@
  * test_converter_validation.c
  *
  * M44: Validation of converter-generated .att1 artifacts with shard metadata.
+ * M48: Validation of checked-in tiny f32 safetensors conversion artifact.
  *
  * Uses models/converted_stub_meta/model.att1 — checked in, no Python required.
  *
@@ -18,6 +19,8 @@
 #include <string.h>
 
 #define MODEL_PATH "models/converted_stub_meta/model.att1"
+#define REAL_TINY_MODEL_PATH "models/real_tiny_f32/model.att1"
+#define REAL_TINY_PROMPT "\001"
 #define TOKENS     "8"
 #define TILES      "2"
 
@@ -190,12 +193,80 @@ static int check_bench_consistency(void)
     return 0;
 }
 
+/* ------------------------------------------------------------ real tiny f32 */
+
+static int check_real_tiny_f32(void)
+{
+    char     out[8192];
+    uint64_t pkts = 0u;
+
+    if (run_command("./build/att1-inspect " REAL_TINY_MODEL_PATH
+                    " > build/m48_real_tiny_inspect.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/m48_real_tiny_inspect.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+
+    if ((strstr(out, "vocab_size=16") == NULL) ||
+        (strstr(out, "n_layers=2") == NULL) ||
+        (strstr(out, "d_model=8") == NULL) ||
+        (strstr(out, "d_ff=16") == NULL) ||
+        (strstr(out, "tensor_count=21") == NULL)) {
+        return -1;
+    }
+
+    if ((strstr(out, "tensor name=tok_embeddings.weight dtype=1 shape=[16,8]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.attention.wq.weight dtype=1 shape=[8,8]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.ffn.w_gate.weight dtype=1 shape=[8,16]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.ffn.w_down.weight dtype=1 shape=[16,8]") == NULL) ||
+        (strstr(out, "tensor name=output.weight dtype=1 shape=[8,16]") == NULL)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode single --backend cpu-f32"
+                    " > build/m48_real_tiny_single.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/m48_real_tiny_single.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=single") == NULL) ||
+        (strstr(out, "backend=cpu-f32") == NULL) ||
+        (strstr(out, "logits_bytes_produced=128") == NULL)) {
+        return -1;
+    }
+
+    if (run_command("./build/att1-bench --model " REAL_TINY_MODEL_PATH
+                    " --prompt " REAL_TINY_PROMPT
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cpu-f32"
+                    " > build/m48_real_tiny_cluster.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/m48_real_tiny_cluster.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=cluster") == NULL) ||
+        (strstr(out, "backend=cpu-f32") == NULL) ||
+        (strstr(out, "logits_bytes_produced=128") == NULL) ||
+        (parse_u64_line(out, "fabric_packets_sent", &pkts) != 0) ||
+        (pkts == 0u)) {
+        return -1;
+    }
+
+    return 0;
+}
+
 /* --------------------------------------------------------------- main ------- */
 
 int main(void)
 {
     if ((check_inspect()           != 0) ||
-        (check_bench_consistency() != 0)) {
+        (check_bench_consistency() != 0) ||
+        (check_real_tiny_f32()     != 0)) {
         fputs("converter validation test failed\n", stderr);
         return 1;
     }

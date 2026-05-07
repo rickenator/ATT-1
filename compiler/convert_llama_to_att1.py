@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 ATT-1 LLaMA converter (Milestone 32 — deterministic stub emitter,
-                        Milestone 43 — shard metadata plan report).
+                        Milestone 43 — shard metadata plan report,
+                        Milestone 48 — f32 safetensors import).
 
 Validates a LLaMA-style config, resolves architecture fields to the ATT-1
-config schema, and emits a deterministic synthetic `.att1` model artifact
-compatible with the C model loader, att1-inspect, and att1-bench.
+config schema, and emits a `.att1` model artifact compatible with the C model
+loader, att1-inspect, and att1-bench.
 
-No safetensors or real weight loading is performed; all tensor values are
-deterministic synthetic floats derived from the validated config.
+By default the converter keeps the deterministic synthetic stub path used by
+older tests.  Passing --safetensors reads real F32 tensor payloads through the
+compiler/load_safetensors.py reader and writes f32 ATT-1 tensor data.
 
 Usage:
     # dry run — validate and print plan only
@@ -49,6 +51,11 @@ import math
 import os
 import struct
 import sys
+
+# Keep Python import dependencies local to compiler/.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from load_safetensors import LoadError, load_tensor  # noqa: E402
+from scan_safetensors import ScanError  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # .att1 binary format constants (must match C header att1_model.h)
@@ -231,6 +238,31 @@ def _make_tensor(name: str, shape: list[int], tensor_index: int) -> dict:
         struct.pack("<f", v) for v in _synthetic_values(tensor_index, count)
     )
     return {"name": name, "shape": shape, "data": data}
+
+
+def _pack_f32_values(name: str, values) -> bytes:
+    out = bytearray()
+    for i, value in enumerate(values):
+        v = float(value)
+        if not math.isfinite(v):
+            raise ValueError(f"tensor {name!r} contains non-finite value at index {i}")
+        out += struct.pack("<f", v)
+    return bytes(out)
+
+
+def _tensor_from_values(name: str, shape: list[int], values) -> dict:
+    count = 1
+    for dim in shape:
+        count *= dim
+    if len(values) != count:
+        raise ValueError(
+            f"tensor {name!r}: expected {count} values for shape {shape}, got {len(values)}"
+        )
+    return {"name": name, "shape": shape, "data": _pack_f32_values(name, values)}
+
+
+def _transpose_2d(values, rows: int, cols: int) -> list[float]:
+    return [values[(r * cols) + c] for c in range(cols) for r in range(rows)]
 
 
 def _descriptor(tensor: dict, offset: int) -> bytes:
@@ -515,40 +547,34 @@ def format_report_text(report: dict) -> str:
 # .att1 binary builder
 # ---------------------------------------------------------------------------
 
-def build_att1_bytes(att1: dict, emit_shard_meta: bool = False) -> bytes:
-    """
-    Build a complete deterministic .att1 binary from a resolved ATT-1 config.
-
-    Tensor names match exactly what the C model_view.c layer_name() and
-    att1_model_view_* functions expect.
-
-    When emit_shard_meta is True, a shard metadata section is appended and
-    the header shard_metadata_offset/size fields are set accordingly.
-    """
+def _build_att1_bytes_from_tensors(att1: dict,
+                                   tensors: list[dict],
+                                   emit_shard_meta: bool = False) -> bytes:
     d  = att1["d_model"]
     v  = att1["vocab_size"]
-    ff = att1["d_ff"]
+    expected = 3 + att1["n_layers"] * 9
+    if len(tensors) != expected:
+        raise ValueError(f"expected {expected} tensors, got {len(tensors)}")
 
-    tensors: list[dict] = []
-    index = 0
-
-    tensors.append(_make_tensor("tok_embeddings.weight", [v, d], index))
-    index += 1
-
-    for layer in range(att1["n_layers"]):
-        pfx = f"layers.{layer}"
-        tensors.append(_make_tensor(f"{pfx}.attention_norm.weight", [d],    index));     index += 1
-        tensors.append(_make_tensor(f"{pfx}.attention.wq.weight",   [d, d], index));     index += 1
-        tensors.append(_make_tensor(f"{pfx}.attention.wk.weight",   [d, d], index));     index += 1
-        tensors.append(_make_tensor(f"{pfx}.attention.wv.weight",   [d, d], index));     index += 1
-        tensors.append(_make_tensor(f"{pfx}.attention.wo.weight",   [d, d], index));     index += 1
-        tensors.append(_make_tensor(f"{pfx}.ffn_norm.weight",       [d],    index));     index += 1
-        tensors.append(_make_tensor(f"{pfx}.ffn.w_gate.weight",     [d, ff], index));    index += 1
-        tensors.append(_make_tensor(f"{pfx}.ffn.w_up.weight",       [d, ff], index));    index += 1
-        tensors.append(_make_tensor(f"{pfx}.ffn.w_down.weight",     [ff, d], index));    index += 1
-
-    tensors.append(_make_tensor("output_norm.weight", [d],    index)); index += 1
-    tensors.append(_make_tensor("output.weight",      [d, v], index))
+    expected_plan = tensor_name_plan(att1)
+    for i, ((expected_name, expected_shape), tensor) in enumerate(zip(expected_plan, tensors)):
+        if tensor["name"] != expected_name:
+            raise ValueError(
+                f"tensor[{i}] name mismatch: expected {expected_name!r}, got {tensor['name']!r}"
+            )
+        if list(tensor["shape"]) != expected_shape:
+            raise ValueError(
+                f"tensor {tensor['name']!r} shape mismatch: "
+                f"expected {expected_shape}, got {tensor['shape']}"
+            )
+        count = 1
+        for dim in tensor["shape"]:
+            count *= dim
+        if len(tensor["data"]) != (count * 4):
+            raise ValueError(
+                f"tensor {tensor['name']!r} byte size mismatch: "
+                f"expected {count * 4}, got {len(tensor['data'])}"
+            )
 
     config_offset = _HEADER_SIZE
     desc_offset   = config_offset + _CONFIG_SIZE
@@ -595,11 +621,215 @@ def build_att1_bytes(att1: dict, emit_shard_meta: bool = False) -> bytes:
     return header + config_blob + bytes(desc_blob) + bytes(data_blob) + shard_blob
 
 
-def emit_att1(att1: dict, output_path: str, emit_shard_meta: bool = False) -> None:
+def build_synthetic_tensors(att1: dict) -> list[dict]:
+    d  = att1["d_model"]
+    v  = att1["vocab_size"]
+    ff = att1["d_ff"]
+
+    tensors: list[dict] = []
+    index = 0
+
+    tensors.append(_make_tensor("tok_embeddings.weight", [v, d], index))
+    index += 1
+
+    for layer in range(att1["n_layers"]):
+        pfx = f"layers.{layer}"
+        tensors.append(_make_tensor(f"{pfx}.attention_norm.weight", [d],     index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wq.weight",   [d, d],  index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wk.weight",   [d, d],  index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wv.weight",   [d, d],  index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.attention.wo.weight",   [d, d],  index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn_norm.weight",       [d],     index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn.w_gate.weight",     [d, ff], index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn.w_up.weight",       [d, ff], index)); index += 1
+        tensors.append(_make_tensor(f"{pfx}.ffn.w_down.weight",     [ff, d], index)); index += 1
+
+    tensors.append(_make_tensor("output_norm.weight", [d],    index)); index += 1
+    tensors.append(_make_tensor("output.weight",      [d, v], index))
+    return tensors
+
+
+def build_att1_bytes(att1: dict, emit_shard_meta: bool = False) -> bytes:
+    """
+    Build a complete deterministic .att1 binary from a resolved ATT-1 config.
+
+    Tensor names match exactly what the C model_view.c layer_name() and
+    att1_model_view_* functions expect.
+    """
+    return _build_att1_bytes_from_tensors(
+        att1,
+        build_synthetic_tensors(att1),
+        emit_shard_meta=emit_shard_meta,
+    )
+
+
+def llama_source_tensor_plan(att1: dict) -> list[dict]:
+    d  = att1["d_model"]
+    v  = att1["vocab_size"]
+    ff = att1["d_ff"]
+
+    plan: list[dict] = [{
+        "source": "model.embed_tokens.weight",
+        "target": "tok_embeddings.weight",
+        "source_shape": [v, d],
+        "target_shape": [v, d],
+        "transpose": False,
+    }]
+
+    for layer in range(att1["n_layers"]):
+        src = f"model.layers.{layer}"
+        dst = f"layers.{layer}"
+        plan += [
+            {
+                "source": f"{src}.input_layernorm.weight",
+                "target": f"{dst}.attention_norm.weight",
+                "source_shape": [d],
+                "target_shape": [d],
+                "transpose": False,
+            },
+            {
+                "source": f"{src}.self_attn.q_proj.weight",
+                "target": f"{dst}.attention.wq.weight",
+                "source_shape": [d, d],
+                "target_shape": [d, d],
+                "transpose": True,
+            },
+            {
+                "source": f"{src}.self_attn.k_proj.weight",
+                "target": f"{dst}.attention.wk.weight",
+                "source_shape": [d, d],
+                "target_shape": [d, d],
+                "transpose": True,
+            },
+            {
+                "source": f"{src}.self_attn.v_proj.weight",
+                "target": f"{dst}.attention.wv.weight",
+                "source_shape": [d, d],
+                "target_shape": [d, d],
+                "transpose": True,
+            },
+            {
+                "source": f"{src}.self_attn.o_proj.weight",
+                "target": f"{dst}.attention.wo.weight",
+                "source_shape": [d, d],
+                "target_shape": [d, d],
+                "transpose": True,
+            },
+            {
+                "source": f"{src}.post_attention_layernorm.weight",
+                "target": f"{dst}.ffn_norm.weight",
+                "source_shape": [d],
+                "target_shape": [d],
+                "transpose": False,
+            },
+            {
+                "source": f"{src}.mlp.gate_proj.weight",
+                "target": f"{dst}.ffn.w_gate.weight",
+                "source_shape": [ff, d],
+                "target_shape": [d, ff],
+                "transpose": True,
+            },
+            {
+                "source": f"{src}.mlp.up_proj.weight",
+                "target": f"{dst}.ffn.w_up.weight",
+                "source_shape": [ff, d],
+                "target_shape": [d, ff],
+                "transpose": True,
+            },
+            {
+                "source": f"{src}.mlp.down_proj.weight",
+                "target": f"{dst}.ffn.w_down.weight",
+                "source_shape": [d, ff],
+                "target_shape": [ff, d],
+                "transpose": True,
+            },
+        ]
+
+    plan += [
+        {
+            "source": "model.norm.weight",
+            "target": "output_norm.weight",
+            "source_shape": [d],
+            "target_shape": [d],
+            "transpose": False,
+        },
+        {
+            "source": "lm_head.weight",
+            "target": "output.weight",
+            "source_shape": [v, d],
+            "target_shape": [d, v],
+            "transpose": True,
+        },
+    ]
+    return plan
+
+
+def build_real_f32_tensors(att1: dict, safetensors_path: str) -> list[dict]:
+    tensors: list[dict] = []
+
+    for item in llama_source_tensor_plan(att1):
+        source = item["source"]
+        if source == "lm_head.weight":
+            try:
+                td = load_tensor(
+                    safetensors_path,
+                    source,
+                    expected_dtype="F32",
+                    expected_shape=item["source_shape"],
+                )
+            except LoadError as exc:
+                if "tensor not found" not in str(exc):
+                    raise
+                source = "model.embed_tokens.weight"
+                td = load_tensor(
+                    safetensors_path,
+                    source,
+                    expected_dtype="F32",
+                    expected_shape=item["source_shape"],
+                )
+        else:
+            td = load_tensor(
+                safetensors_path,
+                source,
+                expected_dtype="F32",
+                expected_shape=item["source_shape"],
+            )
+
+        values = td.values
+        if item["transpose"]:
+            rows, cols = item["source_shape"]
+            values = _transpose_2d(values, rows, cols)
+
+        tensors.append(_tensor_from_values(item["target"], item["target_shape"], values))
+
+    return tensors
+
+
+def build_att1_f32_from_safetensors(att1: dict,
+                                    safetensors_path: str,
+                                    emit_shard_meta: bool = False) -> bytes:
+    return _build_att1_bytes_from_tensors(
+        att1,
+        build_real_f32_tensors(att1, safetensors_path),
+        emit_shard_meta=emit_shard_meta,
+    )
+
+
+def emit_att1(att1: dict,
+              output_path: str,
+              emit_shard_meta: bool = False,
+              safetensors_path: str | None = None) -> None:
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    payload = build_att1_bytes(att1, emit_shard_meta=emit_shard_meta)
+    if safetensors_path:
+        payload = build_att1_f32_from_safetensors(
+            att1,
+            safetensors_path,
+            emit_shard_meta=emit_shard_meta,
+        )
+    else:
+        payload = build_att1_bytes(att1, emit_shard_meta=emit_shard_meta)
     with open(output_path, "wb") as f:
         f.write(payload)
     print(f"wrote {len(payload)} bytes → {output_path}")
@@ -659,6 +889,8 @@ def main() -> None:
 
     parser.add_argument("--rope-theta", type=float, default=None,
                         help="Override rope_theta (default: from config or 10000.0)")
+    parser.add_argument("--safetensors", metavar="PATH", default=None,
+                        help="Read real F32 tensor payloads from PATH instead of synthetic values")
     parser.add_argument("--tiles", type=int, default=None, metavar="N",
                         help="Number of tiles for shard metadata (default: 1)")
     parser.add_argument("--shard-meta", action="store_true",
@@ -710,6 +942,10 @@ def main() -> None:
         # --shard-meta without --tiles defaults to 1 tile (still valid)
         pass
 
+    if args.safetensors and not os.path.isfile(args.safetensors):
+        print(f"error: safetensors file not found: {args.safetensors!r}", file=sys.stderr)
+        sys.exit(1)
+
     errors = validate_att1_config(att1)
     if errors:
         print("error: ATT-1 config validation failed:", file=sys.stderr)
@@ -725,6 +961,17 @@ def main() -> None:
         for name, shape in tensor_name_plan(att1):
             shape_str = " \u00d7 ".join(str(s) for s in shape)
             print(f"  {name:<50} {shape_str}")
+        if args.safetensors:
+            print()
+            print("source tensor mapping:")
+            for item in llama_source_tensor_plan(att1):
+                action = "transpose" if item["transpose"] else "copy"
+                src_shape = " \u00d7 ".join(str(s) for s in item["source_shape"])
+                dst_shape = " \u00d7 ".join(str(s) for s in item["target_shape"])
+                print(
+                    f"  {item['source']:<54} -> {item['target']:<40} "
+                    f"{src_shape} -> {dst_shape} ({action})"
+                )
 
     # --- shard plan report ---
     if args.report or args.report_json:
@@ -743,8 +990,20 @@ def main() -> None:
 
     if output_path:
         print()
-        emit_att1(att1, output_path, emit_shard_meta=args.shard_meta)
-        print("note: tensor data is deterministic synthetic values \u2014 not real weights")
+        try:
+            emit_att1(
+                att1,
+                output_path,
+                emit_shard_meta=args.shard_meta,
+                safetensors_path=args.safetensors,
+            )
+        except (LoadError, ScanError, ValueError) as exc:
+            print(f"error: safetensors import failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if args.safetensors:
+            print("note: tensor data loaded from F32 safetensors")
+        else:
+            print("note: tensor data is deterministic synthetic values \u2014 not real weights")
         if args.shard_meta:
             n_tensors = 3 + att1["n_layers"] * 9
             print(f"note: shard metadata section: {n_tensors} records \u00d7 {_SHARD_REC_SZ} bytes")

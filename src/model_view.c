@@ -122,7 +122,7 @@ att1_status_t att1_model_view_validate_decoder(const att1_model *model)
         return ATT1_ERR_INVALID_ARG;
     }
 
-    if ((model->config.vocab_size != 256u) ||
+    if ((model->config.vocab_size == 0u) ||
         (model->config.n_layers == 0u) ||
         (model->config.n_heads == 0u) ||
         (model->config.d_model == 0u) ||
