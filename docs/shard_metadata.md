@@ -927,6 +927,59 @@ Both flags are orthogonal to `--output`, `--tiles`, and `--shard-meta`.
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)
+---
+
+## §16 Converter Executable Metadata Plan Validation (Milestone 44)
+
+### Goal
+
+Prove that a converter-generated `.att1` stub with shard metadata passes
+end-to-end inspection and bench execution with both `--shard-plan runtime` and
+`--shard-plan metadata`.
+
+### New artefacts
+
+| Path | Type | Purpose |
+|------|------|---------|
+| `tests/test_converter_validation.c` | C test | Inspect + bench consistency on checked-in fixture |
+| `compiler/validate_converter_flow.sh` | Shell script | Full pipeline including Python generation (dev only) |
+
+### `check_inspect()` — validated fields
+
+```
+n_tiles=2
+tensor_count=21
+shard_meta: 21 records
+shard_meta_tiles=2
+shard_meta_assigned=21
+shard_meta_unassigned=0
+shard_meta_dtype_f32=21
+shard_meta_dtype_q8=0
+tile=0 aimu=0   (at least one record)
+tile=1 aimu=1   (at least one record)
+```
+
+### `check_bench_consistency()` — validated fields
+
+| Field | runtime | metadata | Required |
+|-------|---------|----------|----------|
+| `shard_plan` | `runtime` | `metadata` | present + correct label |
+| `shard_meta` | `present` | `present` | both |
+| `last_token` | 255 | 255 | equal |
+| `logits_bytes_produced` | 12288 | 12288 | equal |
+| `fabric_packets_sent` | 36 | 36 | equal |
+
+### Invariants
+
+- No `.att1` binary format change.
+- No backend behavior change.
+- `make test` remains Python-free (test uses checked-in fixture only).
+- The validation script is idempotent and self-cleaning.
+
+---
+
+## Related Documents
+
 - [aimu_architecture.md](aimu_architecture.md) — AIMU concept and prototype mapping
 - [cluster_inference.md](cluster_inference.md) — cluster sharding and activation routing
 - [real_model_conversion.md](real_model_conversion.md) — converter plan and tensor naming

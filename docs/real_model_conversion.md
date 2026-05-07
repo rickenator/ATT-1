@@ -330,3 +330,41 @@ python3 compiler/convert_llama_to_att1.py \
 
 The check is skipped (not failed) when `python3` is absent from `$PATH`,
 preserving the Python-free `make test` guarantee.
+
+---
+
+## Converter executable metadata plan validation (Milestone 44)
+
+M44 proves that a converter-generated `.att1` stub with shard metadata can be
+inspected and benchmarked end-to-end using both shard-plan modes.
+
+### New C test: `tests/test_converter_validation.c`
+
+Uses the checked-in `models/converted_stub_meta/model.att1` fixture — no
+Python required at test time.
+
+| Check | What it verifies |
+|-------|------------------|
+| `check_inspect()` | `att1-inspect` reports `tensor_count=21`, `n_tiles=2`, `shard_meta: 21 records`, `shard_meta_assigned=21`, `shard_meta_unassigned=0`, `shard_meta_dtype_f32=21`, both tile groups present |
+| `check_bench_consistency()` | `att1-bench --shard-plan runtime` and `--shard-plan metadata` produce identical `last_token`, `logits_bytes_produced`, and `fabric_packets_sent` |
+
+### Validation script: `compiler/validate_converter_flow.sh`
+
+Developer-facing script (not run by `make test`) that exercises the full
+pipeline end-to-end including Python generation:
+
+```bash
+bash compiler/validate_converter_flow.sh         # run and clean up
+bash compiler/validate_converter_flow.sh --keep  # keep build/m44_validation/
+```
+
+Steps performed:
+
+1. Generate converted stub via `convert_llama_to_att1.py --shard-meta`
+2. Generate shard plan report (`--report --report-json`)
+3. Run `att1-inspect` and validate key fields
+4. Run `att1-bench --shard-plan runtime`
+5. Run `att1-bench --shard-plan metadata`
+6. Compare `last_token`, `logits_bytes_produced`, `fabric_packets_sent` — must agree
+
+All artefacts written to `build/m44_validation/` (cleaned unless `--keep`).
