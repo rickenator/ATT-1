@@ -501,8 +501,8 @@ runtime tokenizer selection are part of M50.
 | M55 | Runtime tokenizer selection plan: modes, CLI policy, compatibility checks, failure policy, and milestone split. ✅ |
 | M56 | Tokenizer selection CLI stub; byte wired; metadata/external stub-fail. |
 | M57 | Metadata tokenizer validation path; no BPE parser yet. |
-| M58 | External tokenizer preprocessing mode. |
-| M59 | BPE tokenizer parser prototype (if chosen). |
+| M58 | External tokenizer preprocessing mode. ✅ |
+| M59 | Local HF tokenizer helper: `compiler/tokenize_hf.py` — local text → token IDs; no C changes; no network. ✅ |
 | M60 | Tokenizer-aware converted model validation. |
 
 ### M51 — tokenizer metadata schema
@@ -714,6 +714,65 @@ See `docs/tokenizer_metadata.md` §M55 for the full spec.  Summary:
   M59 BPE parser → M60 tokenizer-aware model validation.
 
 `make test` passes (40 tests).  No code changes.
+
+### M56–M58 — tokenizer CLI and external preprocessing (complete)
+
+M56 added the `--tokenizer byte|metadata|external` CLI flag to `att1-bench`.
+M57 added runtime validation for the `metadata` path (`att1_tok_meta_check_runtime()`).
+M58 wired `--tokenizer external` end-to-end: `--input-token-ids` and
+`--tokens-file` supply pre-tokenized IDs, validated against `vocab_size`.
+
+See `docs/tokenizer_metadata.md` §M56–M58 for full details.
+
+`make test` passes (41 tests) after M58.
+
+### M59 — local HF tokenizer helper (complete)
+
+**Goal:** Add `compiler/tokenize_hf.py` to bridge external Hugging Face
+tokenizers to the ATT-1 external preprocessing mode without adding a BPE/
+SentencePiece parser to the C runtime.
+
+**File:** `compiler/tokenize_hf.py`
+
+**What it does:**
+
+- Accepts `--tokenizer PATH` (directory containing `tokenizer.json`),
+  `--text TEXT` or `--text-file PATH` for input, and optional
+  `--out PATH` (one-ID-per-line), `--json-out PATH`, `--add-special-tokens`,
+  and `--timing` flags.
+- Loads the tokenizer locally using the `tokenizers` library (preferred) or
+  `transformers` with `local_files_only=True`.  No network access.
+- Prints comma-separated token IDs to stdout (usable with
+  `att1-bench --input-token-ids`) and optionally writes a one-per-line IDs file
+  (usable with `att1-bench --tokens-file`).
+- Exits 1 on path/argument error, 2 if neither `tokenizers` nor `transformers`
+  is installed (with install guidance), 3 on tokenization error.
+
+**Typical workflow:**
+
+```sh
+# Tokenize and pass to att1-bench in one step
+IDS=$(python3 compiler/tokenize_hf.py \
+        --tokenizer /path/to/llama/tokenizer \
+        --text "Once upon a time" \
+        --add-special-tokens false)
+./build/att1-bench --model MODEL.att1 --tokens 32 --mode single \
+    --tokenizer external --input-token-ids "$IDS"
+
+# Or: write IDs to file, then pass with --tokens-file
+python3 compiler/tokenize_hf.py \
+    --tokenizer /path/to/tokenizer --text "Once upon a time" \
+    --out build/prompt_ids.txt --add-special-tokens false
+./build/att1-bench --model MODEL.att1 --tokens 32 --mode single \
+    --tokenizer external --tokens-file build/prompt_ids.txt
+```
+
+**Constraints unchanged:** Python under `compiler/` only; C runtime unchanged;
+`make test` Python-free except existing skippable smoke tests.
+
+See `docs/tokenizer_metadata.md` §M59 for full specification.
+
+`make test` passes (41 tests) after M59.
 
 1. **Single vs multi-shard safetensors:** Initial target is single-file
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is

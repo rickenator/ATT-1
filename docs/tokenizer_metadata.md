@@ -210,7 +210,7 @@ real tokenizer is explicitly requested.
 | M56 | Tokenizer selection CLI stub (`--tokenizer byte|metadata|external`); byte mode only wired; others stub-fail. ✅ |
 | M57 | Metadata tokenizer validation path: load, range-check, vocab cross-check; no BPE parser. ✅ |
 | M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
-| M59 | BPE tokenizer parser prototype (if chosen). |
+| M59 | Local Hugging Face tokenizer helper: `compiler/tokenize_hf.py` converts text to token IDs using a local tokenizer directory; no C runtime changes; no network access. ✅ |
 | M60 | Tokenizer-aware converted model validation. |
 
 ## M54 Binary Section Layout
@@ -381,7 +381,7 @@ hard error, not a fallback.
 | M56 | Tokenizer selection CLI stub: `--tokenizer byte\|metadata\|external`; byte wired; others stub-fail clearly. ✅ |
 | M57 | Metadata tokenizer validation path: selection precondition checks, vocab/hash cross-check; no BPE parser yet. ✅ |
 | M58 | External tokenizer preprocessing mode: `--tokenizer external` with `--input-token-ids` or `--tokens-file`; token ID range validation; no BPE parser. ✅ |
-| M59 | BPE tokenizer parser prototype (if chosen). |
+| M59 | Local Hugging Face tokenizer helper: `compiler/tokenize_hf.py` converts text to token IDs using a local tokenizer directory; no C runtime changes; no network access. ✅ |
 | M60 | Tokenizer-aware converted model validation: golden prompt-to-ID fixtures, round-trip checks. |
 
 ## M56 Tokenizer Selection CLI Stub
@@ -539,6 +539,71 @@ Both functions allocate `*out_ids` on success (caller must `free()`).
 15. `test_file_out_of_range` — file with ID=16, vocab=16 → `ATT1_ERR_BAD_FORMAT`
 
 `make test` passes (41 tests).  No `.att1` format change.  No backend change.
+
+## M59 Local Hugging Face Tokenizer Helper
+
+M59 adds `compiler/tokenize_hf.py` — a Python helper that converts text to
+pretokenized token IDs using a local Hugging Face tokenizer directory.  The
+output is consumed by `att1-bench --tokenizer external` (M58), bridging an
+external HF tokenizer to the ATT-1 C runtime without adding BPE/SentencePiece
+parsing to the C code.
+
+**Design constraints:**
+
+- Python only; lives under `compiler/`.  Never imported by the C runtime.
+- No network access.  `local_files_only=True` when using `transformers`;
+  `tokenizers` library loads directly from the local JSON file.
+- `make test` remains Python-free (smoke test is Python-skippable).
+- No `.att1` format change.  No C source change.
+
+**File:**
+
+| File | Role |
+|------|------|
+| `compiler/tokenize_hf.py` | New: tokenize text with local HF tokenizer; print CSV IDs to stdout |
+
+**CLI synopsis:**
+
+```
+python3 compiler/tokenize_hf.py --tokenizer PATH --text TEXT
+python3 compiler/tokenize_hf.py --tokenizer PATH --text-file PATH
+    [--out PATH]               # write one-ID-per-line file (for --tokens-file)
+    [--json-out PATH]          # write JSON metadata record
+    [--add-special-tokens true|false]   # default: true
+    [--timing]                 # print elapsed time to stderr
+```
+
+**Output formats:**
+
+| Output | Format | ATT-1 usage |
+|--------|--------|-------------|
+| stdout (default) | `1,104,234` — comma-separated IDs | `att1-bench --input-token-ids "$(...)"`  |
+| `--out PATH` | one ID per line | `att1-bench --tokens-file PATH` |
+| `--json-out PATH` | JSON with `token_ids`, `token_count`, `tokenizer_path`, `add_special_tokens`, optionally `elapsed_s` | inspection / debugging |
+
+**Exit codes:**
+
+| Code | Condition |
+|------|-----------|
+| 0 | Success |
+| 1 | Argument or path error (missing directory, missing text file, etc.) |
+| 2 | Missing dependency: neither `tokenizers` nor `transformers` installed |
+| 3 | Tokenization error (tokenizer internal failure) |
+
+**Dependency loading strategy:**
+
+1. Try `tokenizers` library (HuggingFace Rust tokenizers): `Tokenizer.from_file(tokenizer.json)`
+2. Fall back to `transformers`: `AutoTokenizer.from_pretrained(path, local_files_only=True)`
+3. If neither available: print install guidance and exit 2
+
+**Smoke test (`check_hf_tokenizer()`):**
+
+- Always runs (Python present): missing-path → exit nonzero with `"not found"`
+- Skipped when neither `tokenizers` nor `transformers` is installed
+- When package present: basic tokenize, JSON output fields, `--out` file, pipeline to `att1-bench --tokens-file`, `--timing` flag
+
+`make test` passes (41 tests).  No `.att1` format change.  No C source change.
+No backend change.  No new C test files.
 
 ## Canonical Asset Hash (M53)
 

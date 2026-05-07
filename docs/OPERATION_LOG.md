@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 58: external tokenizer preprocessing mode.
+Milestone 59: local Hugging Face tokenizer helper.
 
 ## Hard Rules
 
@@ -77,12 +77,13 @@ Milestone 58: external tokenizer preprocessing mode.
 - Milestone 56: tokenizer selection CLI stub — `--tokenizer byte|metadata|external` added to `att1-bench`; `check_tokenizer_mode()` helper validates preconditions and emits clear error messages: `tokenizer metadata absent` when tok_meta is not present, `tokenizer type unsupported: unknown` for unknown type, `metadata tokenizer runtime not implemented yet` when tok_meta is present and type is known, `external tokenizer mode not implemented yet` for external mode; default is `byte`; `tokenizer=<name>` printed in bench output for both single and cluster modes; `tests/test_bench_smoke.c` `check_tokenizer_selection()` added (6 cases: default byte, explicit byte, metadata-absent fail, metadata-notimpl fail, external fail, invalid-mode fail); existing bench output checks updated to assert `tokenizer=byte`; `docs/tokenizer_metadata.md` §M56 added. No `.att1` format change. No backend change. No BPE/SentencePiece parser. `make test` passes (40 tests).
 - Milestone 57: metadata tokenizer validation path — `att1_tok_meta_check_runtime()` added to `include/att1_tok_meta.h` and `src/tok_meta.c` (selection-time defense-in-depth: validates present flag, schema_version, tokenizer_type, vocab match against model config, special token ID range, byte_fallback ≤ 1, norm/pretok/hash enums, flags==0, asset half-set); `check_tokenizer_mode()` in `tools/att1-bench.c` updated to call `att1_tok_meta_check_runtime()` and emit differentiated error messages (`tokenizer type unsupported: <name>` for UNSUPPORTED, `tokenizer metadata incompatible with model` for BAD_FORMAT); `tests/test_tok_meta_select.c` added (15 unit-test cases: valid, null, absent, bad_schema_version, unknown_type, bad_type, zero_vocab, vocab_mismatch, bos_out_of_range, unk_out_of_range, absent_ids_ok, bad_byte_fallback, nonzero_flags, sentpiece_type_ok, asset_half_set); `Makefile` TEST_NAMES extended with `tok_meta_select`; `docs/tokenizer_metadata.md` §M57 added and milestone table updated. No `.att1` format change. No backend change. No BPE parser. `make test` passes (40 tests).
 - Milestone 58: external tokenizer preprocessing mode — `include/att1_tok_ext.h` and `src/tok_ext.c` added (`att1_tok_ext_parse_ids_str()`, `att1_tok_ext_parse_ids_file()` with per-token range validation against `vocab_size`, stderr diagnostics, and clear error codes); `tools/att1-bench.c` extended with `--input-token-ids` and `--tokens-file` CLI flags, `run_single_external()` and `run_cluster_external()` decode paths, `tokenizer=external` output, and `--prompt` only required for byte/metadata modes; `check_tokenizer_mode()` updated to accept external mode (ID-source validation moved to `main()`); `tests/test_tok_ext.c` added (15 unit-test cases: valid string, single zero, max ID, empty string, null string, malformed alpha, out-of-range, negative, empty segment, trailing comma, null out-param, file valid, file with comments, file not-found, file out-of-range); `tests/test_bench_smoke.c` `check_external_tokenizer()` added (9 integration checks); `Makefile` TEST_NAMES and COMMON_SRCS updated; `docs/tokenizer_metadata.md` §M58 added and milestone tables updated; `docs/OPERATION_LOG.md` updated. No `.att1` format change. No backend change. No BPE parser. `make test` passes (41 tests).
+- Milestone 59: local Hugging Face tokenizer helper — `compiler/tokenize_hf.py` added; converts text to pretokenized token IDs using a local Hugging Face tokenizer directory; outputs comma-separated IDs to stdout (for `att1-bench --input-token-ids`) and optionally one-ID-per-line files (for `att1-bench --tokens-file`) and JSON metadata; tries `tokenizers` library first then falls back to `transformers` with `local_files_only=True`; exits 1 on missing path, 2 on missing package (with install guidance), 3 on tokenization error; `tests/test_bench_smoke.c` `check_hf_tokenizer()` added (always tests missing-path error; skips positive-path tests if neither package is installed); `docs/tokenizer_metadata.md` §M59 added and milestone tables updated; `docs/real_tiny_model_import.md` §M59 and §M56–M58 added; no C source change, no Makefile change, no `.att1` format change. `make test` passes (41 tests).
 
 ## Next Prompt for Codex
 
 ## Active Task
 
-Milestone 58 complete. Await Milestone 59 scope.
+Milestone 59 complete. Await Milestone 60 scope.
 
 ## Known Risks
 

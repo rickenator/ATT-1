@@ -850,6 +850,163 @@ static int check_external_tokenizer(void)
     return 0;
 }
 
+static int check_hf_tokenizer(void)
+{
+    char output[4096];
+    int  has_tokenizers;
+    int  has_transformers;
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* --- missing tokenizer directory fails clearly (always runs) ---
+     * Path validation happens before any package import, so this test
+     * exercises the early-exit path regardless of package availability. */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer /nonexistent/tok/dir "
+                    "--text hello "
+                    "> build/hf_notfound.txt 2>&1") == 0) {
+        fputs("hf_tok: missing path should have failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/hf_notfound.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "not found") == NULL)) {
+        fputs("hf_tok: expected \"not found\" in missing-path error\n", stderr);
+        return -1;
+    }
+
+    /* --- skip positive-path tests when HF packages absent --- */
+    has_tokenizers   = (run_command(
+        "python3 -c 'import tokenizers' > /dev/null 2>&1") == 0);
+    has_transformers = (run_command(
+        "python3 -c 'import transformers' > /dev/null 2>&1") == 0);
+    if (!has_tokenizers && !has_transformers) {
+        return 0; /* skip — neither tokenizers nor transformers installed */
+    }
+
+    /* ---- positive-path tests (require tokenizers or transformers) ---- */
+
+    /* --- basic tokenize: CSV token IDs printed to stdout --- */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer compiler/fixtures/tiny_tokenizer "
+                    "--text hello "
+                    "--add-special-tokens false "
+                    "> build/hf_basic.txt 2>&1") != 0) {
+        fputs("hf_tok: basic tokenize failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/hf_basic.txt", output, sizeof(output)) != 0) {
+        fputs("hf_tok: could not read basic output\n", stderr);
+        return -1;
+    }
+    /* Output must contain at least one digit (a token ID). */
+    {
+        int has_digit = 0;
+        int i;
+        for (i = 0; output[i] != '\0'; i++) {
+            if ((output[i] >= '0') && (output[i] <= '9')) {
+                has_digit = 1;
+                break;
+            }
+        }
+        if (!has_digit) {
+            fputs("hf_tok: basic output has no token IDs\n", stderr);
+            return -1;
+        }
+    }
+
+    /* --- JSON output contains expected fields --- */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer compiler/fixtures/tiny_tokenizer "
+                    "--text hello "
+                    "--add-special-tokens false "
+                    "--json-out build/hf_basic.json "
+                    "> /dev/null 2>&1") != 0) {
+        fputs("hf_tok: --json-out failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/hf_basic.json", output, sizeof(output)) != 0) {
+        fputs("hf_tok: could not read JSON output\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"token_ids\"")         == NULL) ||
+        (strstr(output, "\"token_count\"")        == NULL) ||
+        (strstr(output, "\"tokenizer_path\"")     == NULL) ||
+        (strstr(output, "\"add_special_tokens\"") == NULL)) {
+        fputs("hf_tok: JSON output missing expected fields\n", stderr);
+        return -1;
+    }
+
+    /* --- --out writes one-ID-per-line file for --tokens-file --- */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer compiler/fixtures/tiny_tokenizer "
+                    "--text hello "
+                    "--add-special-tokens false "
+                    "--out build/hf_ids.txt "
+                    "> /dev/null 2>&1") != 0) {
+        fputs("hf_tok: --out failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/hf_ids.txt", output, sizeof(output)) != 0) {
+        fputs("hf_tok: could not read IDs file\n", stderr);
+        return -1;
+    }
+    {
+        int has_digit = 0;
+        int i;
+        for (i = 0; output[i] != '\0'; i++) {
+            if ((output[i] >= '0') && (output[i] <= '9')) {
+                has_digit = 1;
+                break;
+            }
+        }
+        if (!has_digit) {
+            fputs("hf_tok: IDs file has no token IDs\n", stderr);
+            return -1;
+        }
+    }
+
+    /* --- pipeline: tokenize → --tokens-file → att1-bench --tokenizer external --- */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer compiler/fixtures/tiny_tokenizer "
+                    "--text hello "
+                    "--add-special-tokens false "
+                    "--out build/hf_pipe_ids.txt "
+                    "> /dev/null 2>&1") != 0) {
+        fputs("hf_tok: pipeline tokenize step failed\n", stderr);
+        return -1;
+    }
+    if (run_command("./build/att1-bench "
+                    "--model models/dummy/model.att1 "
+                    "--tokens 1 --mode single "
+                    "--tokenizer external "
+                    "--tokens-file build/hf_pipe_ids.txt "
+                    "> build/hf_pipe_bench.txt 2>&1") != 0) {
+        fputs("hf_tok: att1-bench with tokenized IDs failed\n", stderr);
+        return -1;
+    }
+    if ((read_file("build/hf_pipe_bench.txt", output, sizeof(output)) != 0) ||
+        (strstr(output, "tokenizer=external") == NULL)) {
+        fputs("hf_tok: tokenizer=external missing in bench output\n", stderr);
+        return -1;
+    }
+
+    /* --- --timing flag does not cause an error --- */
+    if (run_command("python3 compiler/tokenize_hf.py "
+                    "--tokenizer compiler/fixtures/tiny_tokenizer "
+                    "--text hi "
+                    "--add-special-tokens false "
+                    "--timing "
+                    "> /dev/null 2>&1") != 0) {
+        fputs("hf_tok: --timing flag failed\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -860,7 +1017,8 @@ int main(void)
         (check_tokenizer_scanner()        != 0) ||
         (check_tokenizer_import_report()  != 0) ||
         (check_tokenizer_selection()      != 0) ||
-        (check_external_tokenizer()       != 0)) {
+        (check_external_tokenizer()       != 0) ||
+        (check_hf_tokenizer()             != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
