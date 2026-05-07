@@ -21,11 +21,10 @@ static void usage(const char *argv0)
 
 /*
  * check_tokenizer_mode() validates the requested tokenizer mode against the
- * loaded model.  "byte" (the default) always succeeds.  "metadata" and
- * "external" are stub-only: they validate preconditions then fail with a
- * clear "not implemented yet" message so callers can distinguish a bad flag
- * from a missing feature.  Returns 0 on success (byte mode only), 1 on any
- * error.
+ * loaded model.  "byte" (the default) always succeeds.  "metadata" performs
+ * full M57 runtime compatibility checks via att1_tok_meta_check_runtime()
+ * then fails with "not implemented yet".  "external" fails immediately.
+ * Returns 0 on success (byte mode only), 1 on any error.
  */
 static int check_tokenizer_mode(const att1_model *model, const char *mode)
 {
@@ -34,15 +33,28 @@ static int check_tokenizer_mode(const att1_model *model, const char *mode)
     }
 
     if (strcmp(mode, "metadata") == 0) {
+        att1_status_t rc = ATT1_OK;
+
         if (!model->tok_meta.present) {
             fputs("error: tokenizer metadata absent\n", stderr);
             return 1;
         }
-        if (model->tok_meta.tokenizer_type == ATT1_TOK_TYPE_UNKNOWN) {
-            fputs("error: tokenizer type unsupported: unknown\n", stderr);
+
+        rc = att1_tok_meta_check_runtime(&model->tok_meta,
+                                         model->config.vocab_size);
+        if (rc == ATT1_ERR_UNSUPPORTED) {
+            fprintf(stderr, "error: tokenizer type unsupported: %s\n",
+                    att1_tok_type_name(model->tok_meta.tokenizer_type));
             return 1;
         }
-        fputs("error: metadata tokenizer runtime not implemented yet\n", stderr);
+        if (rc != ATT1_OK) {
+            fputs("error: tokenizer metadata incompatible with model\n",
+                  stderr);
+            return 1;
+        }
+
+        fputs("error: metadata tokenizer runtime not implemented yet\n",
+              stderr);
         return 1;
     }
 

@@ -131,4 +131,29 @@ const char *att1_tok_norm_name(uint32_t policy);
  */
 const char *att1_tok_pretok_name(uint32_t policy);
 
+/*
+ * Validate tokenizer metadata for runtime selection (Milestone 57).
+ *
+ * Performs explicit selection-time compatibility checks on an already-parsed
+ * att1_tok_meta struct.  Called by the runtime tokenizer selection path after
+ * the model is loaded; provides defense-in-depth beyond the loader checks in
+ * att1_tok_meta_parse().
+ *
+ * Parameters:
+ *   meta         pointer to parsed tokenizer metadata (meta->present must be 1)
+ *   model_vocab  model config vocab_size to cross-check against
+ *
+ * Returns:
+ *   ATT1_OK                meta is structurally valid and safe to select
+ *   ATT1_ERR_INVALID_ARG   meta is NULL or meta->present == 0
+ *   ATT1_ERR_UNSUPPORTED   tokenizer_type is ATT1_TOK_TYPE_UNKNOWN
+ *   ATT1_ERR_BAD_FORMAT    any field fails validation (version, vocab mismatch,
+ *                          special token ID out of range, bad enum, etc.)
+ *
+ * Note: ATT1_OK does NOT mean the tokenizer is implemented.  The caller must
+ * still check whether the declared tokenizer_type has a runtime implementation.
+ */
+att1_status_t att1_tok_meta_check_runtime(const att1_tok_meta *meta,
+                                          uint32_t             model_vocab);
+
 #endif /* ATT1_TOK_META_H */

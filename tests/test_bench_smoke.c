@@ -660,8 +660,8 @@ static int check_tokenizer_selection(void)
         return -1;
     }
 
-    /* --- --tokenizer metadata with tok_meta present fails with not-impl --- */
-    /* models/tok_meta/model.att1 is a v2 model with bpe_json tok_meta */
+    /* --- M57: --tokenizer metadata on v2 fixture passes check_runtime
+     *   then fails with "not implemented yet" --- */
     if (run_command("./build/att1-bench --model models/tok_meta/model.att1 "
                     "--prompt hello --tokens 4 --mode single "
                     "--tokenizer metadata "
@@ -675,7 +675,7 @@ static int check_tokenizer_selection(void)
         return -1;
     }
 
-    /* --- --tokenizer external fails clearly --- */
+    /* --- M57: --tokenizer external fails clearly --- */
     if (run_command("./build/att1-bench --model models/dummy/model.att1 "
                     "--prompt hello --tokens 4 --mode single "
                     "--tokenizer external "

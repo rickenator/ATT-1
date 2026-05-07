@@ -213,3 +213,81 @@ const char *att1_tok_pretok_name(uint32_t policy)
     default:                         return "invalid";
     }
 }
+
+att1_status_t att1_tok_meta_check_runtime(const att1_tok_meta *meta,
+                                          uint32_t             model_vocab)
+{
+    const int32_t special_ids[4] = { 0, 0, 0, 0 };
+    uint32_t k = 0u;
+
+    if ((meta == NULL) || (!meta->present)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    /* schema_version must be the version this runtime understands. */
+    if (meta->schema_version != ATT1_TOK_META_SCHEMA_VERSION) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* tokenizer_type must be a recognized non-unknown value. */
+    if (meta->tokenizer_type == ATT1_TOK_TYPE_UNKNOWN) {
+        return ATT1_ERR_UNSUPPORTED;
+    }
+    if (meta->tokenizer_type > ATT1_TOK_TYPE_SENTPIECE) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* vocab_size must be nonzero and match the model config. */
+    if ((meta->vocab_size == 0u) || (meta->vocab_size != model_vocab)) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* Special token IDs must be -1 (absent) or in [0, vocab_size). */
+    {
+        const int32_t ids[4] = {
+            meta->bos_token_id, meta->eos_token_id,
+            meta->pad_token_id, meta->unk_token_id
+        };
+        (void)special_ids; /* suppress -Wunused */
+        for (k = 0u; k < 4u; k++) {
+            if (ids[k] != ATT1_TOK_ID_ABSENT) {
+                if ((ids[k] < 0) ||
+                    ((uint32_t)ids[k] >= meta->vocab_size)) {
+                    return ATT1_ERR_BAD_FORMAT;
+                }
+            }
+        }
+    }
+
+    /* byte_fallback must be 0 or 1. */
+    if (meta->byte_fallback > 1u) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* normalization_policy must be a known code. */
+    if (meta->normalization_policy > ATT1_TOK_NORM_CUSTOM) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* pretokenizer_policy must be a known code. */
+    if (meta->pretokenizer_policy > ATT1_TOK_PRETOK_CUSTOM) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* asset_hash_kind must be a known code. */
+    if (meta->asset_hash_kind > ATT1_TOK_HASH_SHA256) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* flags must be zero. */
+    if (meta->flags != 0u) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    /* asset_offset and asset_size must be both zero or both nonzero. */
+    if ((meta->asset_offset == 0u) != (meta->asset_size == 0u)) {
+        return ATT1_ERR_BAD_FORMAT;
+    }
+
+    return ATT1_OK;
+}

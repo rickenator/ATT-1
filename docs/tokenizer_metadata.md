@@ -208,7 +208,7 @@ real tokenizer is explicitly requested.
 | M54 | Optional `.att1` tokenizer metadata section; C parser, loader detection, inspect reporting, Python fixture generator. ✅ |
 | M55 | Runtime tokenizer selection plan: modes, CLI policy, compatibility checks, failure policy, and milestone split. ✅ |
 | M56 | Tokenizer selection CLI stub (`--tokenizer byte|metadata|external`); byte mode only wired; others stub-fail. ✅ |
-| M57 | Metadata tokenizer validation path: load, range-check, vocab cross-check; no BPE parser. |
+| M57 | Metadata tokenizer validation path: load, range-check, vocab cross-check; no BPE parser. ✅ |
 | M58 | External tokenizer preprocessing mode: pipe external process for prompt encoding. |
 | M59 | BPE tokenizer parser prototype (if chosen). |
 | M60 | Tokenizer-aware converted model validation. |
@@ -379,7 +379,7 @@ hard error, not a fallback.
 | Milestone | Goal |
 |-----------|------|
 | M56 | Tokenizer selection CLI stub: `--tokenizer byte\|metadata\|external`; byte wired; others stub-fail clearly. ✅ |
-| M57 | Metadata tokenizer validation path: selection precondition checks, vocab/hash cross-check; no BPE parser yet. |
+| M57 | Metadata tokenizer validation path: selection precondition checks, vocab/hash cross-check; no BPE parser yet. ✅ |
 | M58 | External tokenizer preprocessing mode: caller provides pre-encoded token IDs. |
 | M59 | BPE tokenizer parser prototype (if chosen). |
 | M60 | Tokenizer-aware converted model validation: golden prompt-to-ID fixtures, round-trip checks. |
@@ -416,6 +416,65 @@ yet" message.
 4. `--tokenizer metadata` on v2 tok_meta fixture (bpe_json) → exit nonzero, `not implemented yet`.
 5. `--tokenizer external` → exit nonzero, `not implemented yet`.
 6. `--tokenizer bogus` → exit nonzero.
+
+`make test` passes (40 tests).  No `.att1` format change.  No backend change.
+
+## M57 Metadata Tokenizer Validation Path
+
+M57 adds `att1_tok_meta_check_runtime()` — a selection-time validation helper
+that operates on an already-parsed `att1_tok_meta` struct.  It is
+defense-in-depth: the loader (`att1_tok_meta_parse()`) enforces all field
+constraints at load time, but the selection path has its own explicit checks
+so that unit tests can construct targeted bad structs without going through the
+loader.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `include/att1_tok_meta.h` | Added `att1_tok_meta_check_runtime()` declaration with full doc comment |
+| `src/tok_meta.c` | Implemented `att1_tok_meta_check_runtime()` |
+| `tools/att1-bench.c` | Updated `check_tokenizer_mode()` to call `att1_tok_meta_check_runtime()` for richer error messages |
+| `tests/test_tok_meta_select.c` | New 15-case unit test for `att1_tok_meta_check_runtime()` |
+| `Makefile` | Added `tok_meta_select` to `TEST_NAMES` |
+
+**`att1_tok_meta_check_runtime()` return codes:**
+
+| Return code | Condition |
+|-------------|----------|
+| `ATT1_OK` | All fields valid; tokenizer not yet implemented |
+| `ATT1_ERR_INVALID_ARG` | `meta == NULL` or `meta->present == 0` |
+| `ATT1_ERR_UNSUPPORTED` | `tokenizer_type == ATT1_TOK_TYPE_UNKNOWN` |
+| `ATT1_ERR_BAD_FORMAT` | schema_version mismatch, vocab mismatch, token ID out of range, bad enum, nonzero flags, or half-set asset fields |
+
+**Updated `check_tokenizer_mode()` error table:**
+
+| Mode | Precondition | Result |
+|------|-------------|--------|
+| `byte` (default) | — | OK; inference runs normally |
+| `metadata` | tok_meta absent | Hard error: `tokenizer metadata absent` |
+| `metadata` | `check_runtime` returns `UNSUPPORTED` | Hard error: `tokenizer type unsupported: <name>` |
+| `metadata` | `check_runtime` returns other error | Hard error: `tokenizer metadata incompatible with model` |
+| `metadata` | `check_runtime` returns `OK` | Hard error: `metadata tokenizer runtime not implemented yet` |
+| `external` | — | Hard error: `external tokenizer mode not implemented yet` |
+| other | — | Usage error; exit 1 |
+
+**`test_tok_meta_select.c` test cases (15):**
+1. `test_valid` — valid bpe_json meta, vocab matches → `ATT1_OK`
+2. `test_null_meta` — NULL pointer → error ≠ `ATT1_OK`
+3. `test_absent_meta` — `present=0` → error ≠ `ATT1_OK`
+4. `test_bad_schema_version` — `schema_version=0` → `ATT1_ERR_BAD_FORMAT`
+5. `test_unknown_type` — `tokenizer_type=UNKNOWN` → `ATT1_ERR_UNSUPPORTED`
+6. `test_bad_type` — `tokenizer_type=99` → `ATT1_ERR_BAD_FORMAT`
+7. `test_zero_vocab` — `vocab_size=0` → `ATT1_ERR_BAD_FORMAT`
+8. `test_vocab_mismatch` — meta says 16, model says 32 → `ATT1_ERR_BAD_FORMAT`
+9. `test_bos_out_of_range` — `bos=16` with `vocab=16` → `ATT1_ERR_BAD_FORMAT`
+10. `test_unk_out_of_range` — `unk=100` with `vocab=16` → `ATT1_ERR_BAD_FORMAT`
+11. `test_absent_ids_ok` — all IDs `-1` (absent) → `ATT1_OK`
+12. `test_bad_byte_fallback` — `byte_fallback=2` → `ATT1_ERR_BAD_FORMAT`
+13. `test_nonzero_flags` — `flags=1` → `ATT1_ERR_BAD_FORMAT`
+14. `test_sentpiece_type_ok` — SentencePiece type → `ATT1_OK` (recognized; not-impl handled by caller)
+15. `test_asset_half_set` — `asset_offset` nonzero, `asset_size` zero → `ATT1_ERR_BAD_FORMAT`
 
 `make test` passes (40 tests).  No `.att1` format change.  No backend change.
 
