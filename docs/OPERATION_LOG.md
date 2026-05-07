@@ -57,17 +57,10 @@ Milestone 36: Deterministic shard metadata fixture generation.
 - Milestone 37: Shard metadata reporting and trace integration — `att1_shard_meta_summarize()`, `att1-inspect` summary header, `att1-bench` `shard_meta=present/absent`, `tests/test_shard_meta_report.c` (4 cases).
 - Milestone 38: Shard metadata consistency validation — `att1_shard_meta_validate()`, `att1-inspect` violations block, `tests/test_shard_meta_consistency.c` (8 cases).
 - Milestone 39: Metadata-driven shard plan proposal — `att1_meta_plan_build()`, `att1_meta_plan_compare()`, `att1-inspect` plan block, `tests/test_shard_meta_plan.c` (5 cases). Advisory only; no inference or backend change. 36 tests pass.
+- Milestone 40: Opt-in metadata shard plan execution — `att1_shard_plan_mode` enum, `att1_shard_plan_from_meta()`, `shard_plan_mode` field in `att1_cluster_infer_config`, `--shard-plan runtime|metadata` CLI flag in `att1-bench`, `shard_plan=` key=value output, `tests/test_shard_meta_exec.c` (8 cases). No silent fallback. 37 tests pass.
+- Milestone 41: Backend matrix validation for shard plans — `tests/test_backend_matrix.c` extended to 16 entries (4 groups: single/dummy, cluster/dummy/runtime, cluster/shard_meta/runtime, cluster/shard_meta/metadata); 3 consistency groups cross-validate runtime vs metadata plans; `att1-bench` single mode now prints `shard_plan=runtime`; `tests/test_bench_smoke.c` checks `shard_plan=runtime` in both single and cluster output; `docs/shard_metadata.md` §13 added. `make test` passes (37 tests; backend_matrix 8/16 passed, 8 skipped on CPU-only build).
 
 ## Active Task
-
-Milestone 40: Opt-in metadata shard plan execution.
-- Added `att1_shard_plan_mode` enum and `att1_shard_plan_from_meta()` to `include/att1_shard.h` and `src/shard.c`.
-- Extended `att1_cluster_infer_config` with `shard_plan_mode` field (zero = runtime = default, backward-compatible).
-- `att1_cluster_infer_create()` branches on `shard_plan_mode`: METADATA path calls `att1_meta_plan_build()` + `att1_shard_plan_from_meta()`; RUNTIME path is unchanged. No silent fallback.
-- Added `--shard-plan runtime|metadata` CLI flag to `att1-bench`; prints `shard_plan=runtime|metadata` in key=value output.
-- Added `tests/test_shard_meta_exec.c` (8 cases).
-- Updated `docs/shard_metadata.md` §12.
-- `make test` passes (37 tests).
 
 ## Next Prompt for Codex
 

@@ -204,6 +204,7 @@ static int run_single(const att1_model *model,
     }
 
     printf("mode=single\n");
+    printf("shard_plan=runtime\n");
     printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);

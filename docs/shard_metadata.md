@@ -702,6 +702,59 @@ key=value output block (both `--mode single` and `--mode cluster`).
 
 ---
 
+## §13  Backend Matrix Validation for Shard Plans (Milestone 41)
+
+### Goal
+
+Extend the backend matrix regression harness to validate both runtime-generated
+and metadata-derived shard plans across all supported cluster backends.
+
+### Matrix Extension
+
+The harness (`tests/test_backend_matrix.c`) gains 8 new entries (16 total):
+
+| backend  | mode    | model        | tiles | shard_plan | CUDA required |
+|----------|---------|--------------|-------|------------|---------------|
+| cpu-f32  | cluster | shard_meta   | 1     | runtime    | no |
+| cpu-q8   | cluster | shard_meta   | 1     | runtime    | no |
+| cuda     | cluster | shard_meta   | 1     | runtime    | yes |
+| cuda-q8  | cluster | shard_meta   | 1     | runtime    | yes |
+| cpu-f32  | cluster | shard_meta   | 1     | metadata   | no |
+| cpu-q8   | cluster | shard_meta   | 1     | metadata   | no |
+| cuda     | cluster | shard_meta   | 1     | metadata   | yes |
+| cuda-q8  | cluster | shard_meta   | 1     | metadata   | yes |
+
+The existing 8 entries (single-mode dummy and cluster-mode dummy) are unchanged.
+
+### Consistency Groups
+
+Three consistency groups enforce `last_token` agreement across all passing
+entries in each group:
+
+| Group | Description | Entries |
+|-------|-------------|---------|
+| 0 | single mode, dummy model | 4 (2 skip on CPU-only) |
+| 1 | cluster mode, dummy model, runtime plan, 2 tiles | 4 (2 skip) |
+| 2 | cluster mode, shard_meta model, runtime + metadata, 1 tile | 8 (4 skip) |
+
+Group 2 cross-validates that runtime and metadata shard plans produce identical
+`last_token` on the same model and same tile layout.
+
+### bench smoke additions
+
+`tests/test_bench_smoke.c` now verifies `shard_plan=runtime` appears in both
+`--mode single` and `--mode cluster` bench output.
+
+### Invariants
+
+- Default `make` and `make test` remain CUDA-free.
+- `make CUDA=1` enables CUDA entries.
+- No silent fallback: `--shard-plan metadata` must succeed or the bench exits
+  non-zero; the matrix marks such entries as FAIL (not SKIP).
+- `.att1` format unchanged.
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)

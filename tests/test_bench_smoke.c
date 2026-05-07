@@ -86,6 +86,7 @@ static int check_bench_tools(void)
     if ((read_file("build/bench_single.txt", output, sizeof(output)) != 0) ||
         (strstr(output, "mode=single") == NULL) ||
         (strstr(output, "backend=cpu-f32") == NULL) ||
+        (strstr(output, "shard_plan=runtime") == NULL) ||
         (strstr(output, "tokens_decoded=") == NULL)) {
         return -1;
     }
@@ -93,6 +94,7 @@ static int check_bench_tools(void)
     if ((read_file("build/bench_cluster.txt", output, sizeof(output)) != 0) ||
         (strstr(output, "mode=cluster") == NULL) ||
         (strstr(output, "tiles=2") == NULL) ||
+        (strstr(output, "shard_plan=runtime") == NULL) ||
         (strstr(output, "fabric_packets_sent=") == NULL)) {
         return -1;
     }
