@@ -503,5 +503,6 @@ runtime fallback rules.
 | M65 | Public model acquisition and import instructions (documentation only) |
 | M66 | Public model compatibility scanner (`compiler/check_llama_compat.py`) |
 | M67 | BF16/F16 source dtype coercion in `load_safetensors.py`; `_coerce_bf16`/`_coerce_f16` helpers; `TensorData.coerced` field; compat scanner promotes BF16/F16 to warning; BF16 fixture + smoke check |
-| M68 | GQA support: `n_kv_heads` config field, converter, runtime attention |
-| M69 | SmolLM2-135M import and validation (first real public model) |
+| M68 | q8 conversion of BF16-source public model: `compare_att1_to_source.py` BF16 support; q8 smoke check (`check_q8_conversion`); manual validation workflow for public models; documented tolerance and token-divergence behaviour |
+| M69 | GQA support: `n_kv_heads` config field, converter, runtime attention |
+| M70 | SmolLM2-135M import and validation (first real public model) |

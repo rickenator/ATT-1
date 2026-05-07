@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 67: BF16/F16 source dtype coercion in load_safetensors.py.
+Milestone 68: q8 conversion of BF16-source public model.
 
 ## Hard Rules
 
@@ -86,12 +86,13 @@ Milestone 67: BF16/F16 source dtype coercion in load_safetensors.py.
 - Milestone 65: public model acquisition and import instructions — selected model `HuggingFaceTB/SmolLM2-135M` (Apache 2.0, single shard, ~270 MB BF16); local directory layout (`~/Models/SmolLM2-135M/`) documented; three download options (huggingface-cli, git lfs, manual) specified; no `.gitignore` update needed (models live outside repo); preflight validation commands for `scan_safetensors.py --check-llama --n-layers 30` and `scan_tokenizer.py` with expected output documented; disk/RAM expectations tabulated; failure triage table for 9 failure modes; next milestone M66 (converter compatibility scanner) identified; `docs/real_tiny_model_import.md` M65 section added; `docs/real_model_conversion.md` future milestone table updated (M65–M69); no C source change, no Makefile change, no `.att1` format change, no code change. `make test` passes (41 tests).
 - Milestone 66: public model compatibility scanner — added `compiler/check_llama_compat.py` (new Python script, no external deps beyond scan_safetensors/scan_tokenizer); validates model directory: config.json, model_type, all 6 required fields, GQA/MoE detection, safetensors tensor names/shapes/dtype, tokenizer vocab_size cross-check; produces human-readable and JSON compat reports with required_changes list and artifact size estimates; added `compiler/fixtures/m66_compat_fixture/` (config.json + tokenizer assets, no safetensors); `check_compat_scanner()` added to `tests/test_bench_smoke.c` (4 sub-checks: pass text, pass JSON, missing dir, missing safetensors); no C runtime change, no Makefile change, no `.att1` format change. `make test` passes (41 tests).
 - Milestone 67: BF16/F16 source dtype coercion in load_safetensors.py — added `_coerce_bf16()` (zero-extend top 16 bits of F32) and `_coerce_f16()` (manual IEEE 754 half-precision decode) helpers; `_READABLE_DTYPES` extended to `{F32,BF16,F16}`; `TensorData` gains `coerced` bool field; `expected_dtype="F32"` in `load_tensor()` now also accepts coercible source dtypes; `format_tensor_report()` shows `BF16->F32` / `F16->F32` for coerced tensors; `check_llama_compat.py` moves BF16/F16 from required_changes to warnings (automatic coercion implemented, truly unsupported dtypes still flagged); added `compiler/fixtures/make_m67_bf16_fixture.py` (generator, seed=67) and checked-in `compiler/fixtures/m67_bf16_llama_2l.safetensors` (21 tensors, 5 213 bytes, BF16); `check_bf16_coercion()` added to `tests/test_bench_smoke.c` (4 sub-checks: single tensor coercion display, --check-values 21 ok, BF16 fixture conversion, compat scanner compat: pass with no required_change); no C runtime change, no Makefile change, no `.att1` format change. `make test` passes (42 tests).
+- Milestone 68: q8 conversion of BF16-source public model — `compare_att1_to_source.py` `_load_st_tensor()` extended to coerce BF16/F16 source tensors to F32 via imported `_coerce_bf16`/`_coerce_f16` helpers, enabling BF16-source static and forward comparisons; `check_q8_conversion()` added to `tests/test_bench_smoke.c` (5 sub-checks: q8 conversion of BF16 fixture, att1-inspect q8 dtype fields, cpu-q8 single bench, cpu-q8 cluster bench with fabric-packets guard, compare_att1_to_source numpy-skippable result=pass); `docs/quantization.md` q8 public-model section added (workflow, tolerance table, token-divergence notes); `docs/real_tiny_model_import.md` M68 section added (manual validation workflow, tolerance table, SmolLM2-135M size estimates); milestone table updated (M68 q8 conversion, M69 GQA, M70 SmolLM2-135M); no C runtime change, no Makefile change, no `.att1` format change. `make test` passes (43 tests).
 
 ## Next Prompt for Codex
 
 ## Active Task
 
-Milestone 66 complete. Milestone 67 complete. Await Milestone 68 scope.
+Milestone 66 complete. Milestone 67 complete. Milestone 68 complete. Await Milestone 69 scope.
 
 ## Known Risks
 

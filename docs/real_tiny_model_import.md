@@ -1780,12 +1780,12 @@ The remaining blocker for SmolLM2-135M is GQA (M68):
 
 ```sh
 python3 compiler/check_llama_compat.py --model-dir ~/Models/SmolLM2-135M
-# Expected (after M67, before M68):
+# Expected (after M67, before M69 GQA):
 #   required_change: GQA: num_key_value_heads=3 ...
 #   compat: fail
 ```
 
-After M68 resolves GQA, the full conversion workflow will be:
+After M69 resolves GQA, the full conversion workflow will be:
 
 ```sh
 python3 compiler/convert_llama_to_att1.py \
@@ -1796,6 +1796,124 @@ python3 compiler/convert_llama_to_att1.py \
 ```
 
 `make test` passes (42 tests) after M67.  No C runtime changes, no
+Makefile changes, no `.att1` format changes.
+
+---
+
+### M68 — q8 conversion of BF16-source public model
+
+**Status:** complete.  `make test` passes (43 tests after M68).
+
+#### What changed
+
+| File | Change |
+|------|--------|
+| `compiler/compare_att1_to_source.py` | `_load_st_tensor()` extended to coerce BF16/F16 source tensors to F32 using `_coerce_bf16`/`_coerce_f16` from `load_safetensors.py`; BF16-source models now comparable without pre-conversion |
+| `tests/test_bench_smoke.c` | Added `check_q8_conversion()` as 16th smoke check |
+
+#### q8 conversion of the BF16 fixture (automated test)
+
+The M67 BF16 fixture (`compiler/fixtures/m67_bf16_llama_2l.safetensors`)
+is converted to a q8 `.att1` artifact and validated by `check_q8_conversion()`
+as part of `make test`:
+
+```
+python3 compiler/convert_llama_to_att1.py \
+    --safetensors compiler/fixtures/m67_bf16_llama_2l.safetensors \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --weight-format q8 \
+    --out build/m68_q8/model.att1
+```
+
+Checks performed:
+1. `att1-inspect`: `dtype_name=q8`, `quant=per-row-q8`, `tensor_count=21`
+2. `att1-bench --backend cpu-q8 --mode single`: exits 0, `backend=cpu-q8`, `last_token=`
+3. `att1-bench --backend cpu-q8 --mode cluster --tiles 2`: exits 0, `fabric_packets_sent` nonzero
+4. (numpy) `compare_att1_to_source.py`: `q8_status: pass`, `result: pass`
+
+#### Manual validation workflow for public models
+
+When a real BF16-source model (e.g. SmolLM2-135M) passes the compat scanner:
+
+```sh
+# Step 1 — compatibility check (BF16 now a warning, not a blocker)
+python3 compiler/check_llama_compat.py \
+    --model-dir ~/Models/SmolLM2-135M
+
+# Step 2 — f32 conversion (reference baseline)
+python3 compiler/convert_llama_to_att1.py \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --config ~/Models/SmolLM2-135M/config.json \
+    --out ~/Models/att1/SmolLM2-135M/model_f32.att1
+
+# Step 3 — q8 conversion
+python3 compiler/convert_llama_to_att1.py \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --config ~/Models/SmolLM2-135M/config.json \
+    --weight-format q8 \
+    --out ~/Models/att1/SmolLM2-135M/model_q8.att1
+
+# Step 4 — inspect both artifacts
+./build/att1-inspect ~/Models/att1/SmolLM2-135M/model_f32.att1
+./build/att1-inspect ~/Models/att1/SmolLM2-135M/model_q8.att1
+
+# Step 5 — bench f32 single (correctness reference)
+./build/att1-bench \
+    --model ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --tokenizer external --input-token-ids "1,2,3" \
+    --tokens 1 --mode single --backend cpu-f32
+
+# Step 6 — bench q8 single
+./build/att1-bench \
+    --model ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokenizer external --input-token-ids "1,2,3" \
+    --tokens 1 --mode single --backend cpu-q8
+
+# Step 7 — bench q8 cluster
+./build/att1-bench \
+    --model ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokenizer external --input-token-ids "1,2,3" \
+    --tokens 1 --mode cluster --tiles 2 --backend cpu-q8
+
+# Optional Step 8 — source comparison (numpy required; ~270 MB loaded)
+python3 compiler/compare_att1_to_source.py \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --config ~/Models/SmolLM2-135M/config.json \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --prompt-ids 1,2,3 \
+    --report
+```
+
+#### Expected tolerance and token divergence
+
+| Check | Expected range |
+|-------|---------------|
+| f32 static max\_abs\_error | < 1e-4 (BF16 source: essentially 0 — lossless coercion) |
+| q8 static max\_abs\_error | < 0.6 (per-row int8 symmetric quantisation) |
+| f32 vs q8 last\_token | Typically identical for small prompts; may diverge at argmax boundaries |
+| q8 cluster vs q8 single last\_token | Must be identical (deterministic tiling) |
+
+Token divergence between f32 and q8 is not a q8 defect when logits are
+within the documented tolerance. Greedy argmax is robust to small differences
+in most positions but can flip on near-tied candidates. Logit tolerance is the
+correctness contract; token sequences are secondary.
+
+For SmolLM2-135M (270 MB BF16, 135M params):
+- f32 artifact: ~540 MB on disk (4 bytes/param)
+- q8 artifact: ~154 MB on disk (1 byte/param weights + 4 bytes/row scale)
+- q8 reduces memory footprint ~3.5× vs f32
+
+These are the estimates from the compat scanner output. Actual sizes depend
+on the ratio of eligible projection tensors to f32-only norm/embedding tensors.
+
+#### Remaining blocker
+
+SmolLM2-135M still fails the compat scanner due to GQA (`n_kv_heads=3 ≠
+n_heads=9`). Once M69 adds GQA support, both the f32 and q8 conversion
+workflows above will work end-to-end.
+
+`make test` passes (43 tests) after M68.  No C runtime changes, no
 Makefile changes, no `.att1` format changes.
 
 ---

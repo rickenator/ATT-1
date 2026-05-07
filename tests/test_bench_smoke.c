@@ -1592,6 +1592,144 @@ static int check_bf16_coercion(void)
     return 0;
 }
 
+/*
+ * check_q8_conversion() — M68
+ *
+ * Python-skippable.  Validates the q8 conversion path using the checked-in
+ * BF16 fixture (compiler/fixtures/m67_bf16_llama_2l.safetensors):
+ *   1. Convert BF16 fixture → q8 .att1 (--weight-format q8).
+ *   2. att1-inspect: verify dtype_name=q8 appears in output.
+ *   3. att1-bench --backend cpu-q8 --mode single: exits 0, backend label.
+ *   4. att1-bench --backend cpu-q8 --mode cluster --tiles 2: exits 0,
+ *      fabric_packets_sent nonzero.
+ *   5. (numpy-skippable) compare_att1_to_source.py: static q8 error within
+ *      tolerance and forward-pass last_token matches f32.
+ */
+static int check_q8_conversion(void)
+{
+    char output[8192];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* Write token IDs file (vocab=16 in tiny fixture; 1,2,3 are all valid). */
+    {
+        FILE *fp = fopen("build/m68_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("q8_conversion: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n", fp);
+        fclose(fp);
+    }
+
+    /* 1. Convert BF16 fixture to q8 .att1. */
+    if (run_command(
+            "python3 compiler/convert_llama_to_att1.py"
+            " --safetensors compiler/fixtures/m67_bf16_llama_2l.safetensors"
+            " --config compiler/fixtures/tiny_llama_config.json"
+            " --weight-format q8"
+            " --out build/m68_q8/model.att1"
+            " > build/m68_convert.txt 2>&1") != 0) {
+        fputs("q8_conversion: q8 conversion failed\n", stderr);
+        return -1;
+    }
+
+    /* 2. att1-inspect: q8 tensors must appear. */
+    if (run_command(
+            "./build/att1-inspect build/m68_q8/model.att1"
+            " > build/m68_inspect.txt 2>&1") != 0) {
+        fputs("q8_conversion: att1-inspect failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m68_inspect.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "dtype_name=q8")   == NULL) ||
+        (strstr(output, "quant=per-row-q8") == NULL) ||
+        (strstr(output, "tensor_count=21")  == NULL)) {
+        fputs("q8_conversion: inspect output missing q8 fields\n", stderr);
+        return -1;
+    }
+
+    /* 3. cpu-q8 single-tile inference. */
+    if (run_command(
+            "./build/att1-bench"
+            " --model build/m68_q8/model.att1"
+            " --tokenizer external"
+            " --tokens-file build/m68_ids.txt"
+            " --tokens 1 --mode single --backend cpu-q8"
+            " > build/m68_q8_single.txt 2>&1") != 0) {
+        fputs("q8_conversion: cpu-q8 single failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m68_q8_single.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "mode=single")    == NULL) ||
+        (strstr(output, "backend=cpu-q8") == NULL) ||
+        (strstr(output, "last_token=")    == NULL)) {
+        fputs("q8_conversion: cpu-q8 single output unexpected\n", stderr);
+        return -1;
+    }
+
+    /* 4. cpu-q8 cluster inference. */
+    if (run_command(
+            "./build/att1-bench"
+            " --model build/m68_q8/model.att1"
+            " --tokenizer external"
+            " --tokens-file build/m68_ids.txt"
+            " --tokens 1 --mode cluster --tiles 2 --backend cpu-q8"
+            " > build/m68_q8_cluster.txt 2>&1") != 0) {
+        fputs("q8_conversion: cpu-q8 cluster failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m68_q8_cluster.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "mode=cluster")         == NULL) ||
+        (strstr(output, "backend=cpu-q8")       == NULL) ||
+        (strstr(output, "fabric_packets_sent=") == NULL)) {
+        fputs("q8_conversion: cpu-q8 cluster output unexpected\n", stderr);
+        return -1;
+    }
+    /* Cluster mode must have sent at least one fabric packet. */
+    if (strstr(output, "fabric_packets_sent=0") != NULL) {
+        fputs("q8_conversion: cpu-q8 cluster sent zero fabric packets\n", stderr);
+        return -1;
+    }
+
+    /* 5. Source comparison (numpy-skippable): static q8 error within
+     *    tolerance and forward-pass token matches. */
+    if (run_command("python3 -c 'import numpy' > /dev/null 2>&1") != 0) {
+        return 0; /* skip forward-pass comparison — numpy absent */
+    }
+    if (run_command(
+            "python3 compiler/compare_att1_to_source.py"
+            " --safetensors compiler/fixtures/m67_bf16_llama_2l.safetensors"
+            " --config compiler/fixtures/tiny_llama_config.json"
+            " --att1-f32 build/m67_f32/model.att1"
+            " --att1-q8 build/m68_q8/model.att1"
+            " --prompt-ids 1,2,3"
+            " --report"
+            " > build/m68_cmp.txt 2>&1") != 0) {
+        fputs("q8_conversion: source comparison failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m68_cmp.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "q8_status:           pass") == NULL) ||
+        (strstr(output, "result:              pass") == NULL)) {
+        fputs("q8_conversion: comparison result not pass\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1608,7 +1746,8 @@ int main(void)
         (check_source_comparison()        != 0) ||
         (check_m63_validation()           != 0) ||
         (check_compat_scanner()           != 0) ||
-        (check_bf16_coercion()            != 0)) {
+        (check_bf16_coercion()            != 0) ||
+        (check_q8_conversion()            != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

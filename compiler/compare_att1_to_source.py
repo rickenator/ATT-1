@@ -69,6 +69,7 @@ sys.path.insert(0, _THIS_DIR)
 from read_att1 import (  # noqa: E402
     read_att1_model, DTYPE_F32, DTYPE_Q8, Att1ReadError
 )
+from load_safetensors import _coerce_bf16, _coerce_f16  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Optional numpy (required for forward-pass comparison)
@@ -99,19 +100,29 @@ def _load_safetensors_header(path):
 
 
 def _load_st_tensor(path, hdr, data_offset, name):
-    """Return flat tuple[float] for an F32 tensor from a .safetensors file."""
+    """Return flat tuple[float] for an F32/BF16/F16 tensor from a .safetensors file.
+
+    BF16 and F16 tensors are coerced to F32 using the same helpers as
+    load_safetensors.py (M67), so BF16-source models (e.g. SmolLM2-135M)
+    are comparable without pre-converting the safetensors file.
+    """
     if name not in hdr:
         raise KeyError(f"tensor {name!r} not in safetensors header")
     t = hdr[name]
-    if t["dtype"] != "F32":
-        raise ValueError(f"tensor {name!r} has dtype {t['dtype']!r}, expected F32")
+    dtype = t["dtype"]
     b, e   = t["data_offsets"]
     nbytes = e - b
-    n      = nbytes // 4
     with open(path, "rb") as fh:
         fh.seek(data_offset + b)
         raw = fh.read(nbytes)
-    return struct.unpack(f"<{n}f", raw)
+    if dtype == "F32":
+        n = nbytes // 4
+        return struct.unpack(f"<{n}f", raw)
+    if dtype == "BF16":
+        return _coerce_bf16(raw)
+    if dtype == "F16":
+        return _coerce_f16(raw)
+    raise ValueError(f"tensor {name!r} has dtype {dtype!r}, expected F32/BF16/F16")
 
 
 # ---------------------------------------------------------------------------

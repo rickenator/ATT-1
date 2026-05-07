@@ -249,6 +249,63 @@ Token equivalence is only asserted for the deterministic tiny fixture.  For
 larger or future models, q8 logits may move an argmax boundary; numerical logit
 tolerances remain the correctness contract.
 
+## q8 conversion of BF16-source public models (M68)
+
+Milestone 68 extends the q8 conversion path to BF16-source `.safetensors`
+files.  The existing per-row q8 rules are unchanged; only the source dtype
+handling in the comparison harness is updated.
+
+### Source dtype handling
+
+`compiler/compare_att1_to_source.py` now accepts BF16 and F16 source tensors
+(coerced to F32 via `_coerce_bf16`/`_coerce_f16` from `load_safetensors.py`).
+The static comparison checks the ATT-1 f32/q8 values against these coerced
+float values; the error bounds are the same as for F32-source models.
+
+### q8 conversion workflow for public models
+
+```sh
+# Convert a BF16-source model to f32 and q8 ATT-1 artifacts.
+python3 compiler/convert_llama_to_att1.py \
+    --safetensors ~/Models/<model>/model.safetensors \
+    --config ~/Models/<model>/config.json \
+    --out ~/Models/att1/<model>/model_f32.att1
+
+python3 compiler/convert_llama_to_att1.py \
+    --safetensors ~/Models/<model>/model.safetensors \
+    --config ~/Models/<model>/config.json \
+    --weight-format q8 \
+    --out ~/Models/att1/<model>/model_q8.att1
+```
+
+The `--weight-format q8` flag quantises all eligible 2-D projection and output
+weight matrices using per-row symmetric int8 quantisation.  `tok_embeddings.weight`,
+RMSNorm weights, activations, KV cache entries, residuals, and logits remain
+float32.
+
+### Tolerance and token divergence for public models
+
+| Check | Expected range |
+|-------|---------------|
+| f32 static max\_abs\_error (BF16 source) | ≈ 0 (BF16→F32 coercion is lossless) |
+| q8 static max\_abs\_error | < 0.6 (per-row int8 symmetric; same tolerance as tiny fixture) |
+| f32 vs q8 last\_token | Typically identical; may diverge at argmax boundaries |
+| q8 cluster vs q8 single | Must be identical |
+
+Token divergence between f32 and q8 is not a q8 defect when logits are
+within the documented tolerance.  The correctness contract is the logit
+tolerance; token sequences are secondary for models larger than the
+deterministic tiny fixtures.
+
+### Validation
+
+`tests/test_bench_smoke.c` `check_q8_conversion()` (M68) validates:
+1. BF16 fixture → q8 artifact (`build/m68_q8/model.att1`)
+2. `att1-inspect`: `dtype_name=q8`, `quant=per-row-q8`
+3. `att1-bench --backend cpu-q8 --mode single`
+4. `att1-bench --backend cpu-q8 --mode cluster --tiles 2`
+5. `compare_att1_to_source.py`: `q8_status: pass`, `result: pass` (numpy-skippable)
+
 ## Ownership
 
 `att1_q8_matrix_alloc` allocates owned `values` and `scales` buffers.
