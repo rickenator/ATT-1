@@ -286,17 +286,20 @@ def scan_tensors(st_path: str, n_layers: int) -> tuple[dict, list, list]:
     bf16_present = "BF16" in dtypes_found
     f16_present  = "F16" in dtypes_found
 
+    coercible = {"BF16", "F16"}
     if bf16_present or f16_present:
-        dtype_list = sorted(non_f32)
-        changes.append(
-            f"source dtype {dtype_list}: BF16/F16 coercion to F32 required "
-            f"in load_safetensors.py (M67)"
+        # BF16/F16 coercion to F32 is automatic in load_safetensors.py (M67).
+        dtype_list = sorted(non_f32 & coercible)
+        warnings.append(
+            f"source dtype {dtype_list}: automatic BF16/F16\u2192F32 coercion "
+            f"applied by load_safetensors.py (M67)"
         )
-    elif non_f32:
-        # Something other than F32/BF16/F16 — flag as unsupported
+    truly_unsupported = non_f32 - coercible
+    if truly_unsupported:
+        # Something other than F32/BF16/F16 — flag as a required change.
         changes.append(
-            f"unsupported source dtype(s): {sorted(non_f32)}; "
-            f"only F32/BF16/F16 are supported or planned"
+            f"unsupported source dtype(s): {sorted(truly_unsupported)}; "
+            f"only F32/BF16/F16 are supported"
         )
 
     return scan, changes, warnings

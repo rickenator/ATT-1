@@ -1718,6 +1718,88 @@ changes, no `.att1` format changes.
 
 ---
 
+### M67 — BF16/F16 source dtype coercion in `load_safetensors.py`
+
+**Status:** complete.  `make test` passes (42 tests after M67).
+
+#### What changed
+
+| File | Change |
+|------|--------|
+| `compiler/load_safetensors.py` | Added `_coerce_bf16()` and `_coerce_f16()` helpers; `_READABLE_DTYPES` extended to `{"F32","BF16","F16"}`; `load_tensor()` coerces BF16/F16 to F32 values; `expected_dtype="F32"` now also accepts coercible source dtypes; `TensorData` gains `coerced` field; `format_tensor_report()` shows `BF16->F32` for coerced tensors |
+| `compiler/check_llama_compat.py` | BF16/F16 source dtype moved from `required_changes` to `warnings` (automatic coercion is now implemented); truly unsupported dtypes still flagged as required changes |
+| `compiler/fixtures/make_m67_bf16_fixture.py` | Generator for the BF16 seeded fixture (seed=67, same dimensions as tiny model) |
+| `compiler/fixtures/m67_bf16_llama_2l.safetensors` | Checked-in BF16 fixture (21 tensors, 5 213 bytes) |
+| `tests/test_bench_smoke.c` | Added `check_bf16_coercion()` as 15th smoke check |
+
+#### BF16 coercion mechanics
+
+BF16 is the top 16 bits of IEEE 754 float32.  Conversion to F32 is exact
+(no approximation): prepend two zero bytes to each LE BF16 word and
+reinterpret as an F32.  No rounding; subnormals, infinities, and NaN are
+preserved correctly.
+
+```python
+# BF16 -> F32 (Python standard library, no numpy)
+b0, b1 = raw[2*i], raw[2*i+1]     # little-endian BF16 bytes
+f32    = struct.unpack("<f", bytes([0, 0, b0, b1]))[0]
+```
+
+FP16 coercion uses a manual IEEE 754 half-precision decode (5-bit exponent,
+10-bit mantissa, bias 15) also from the standard library.
+
+#### Tensor report after M67
+
+`--tensor` output now shows `dtype: BF16->F32` when coercion was applied:
+
+```
+tensor: model.embed_tokens.weight
+dtype: BF16->F32
+shape: [16,8]
+nbytes: 256
+elements: 128
+values[0:8]: 0.151367 0.0771484 0.101562 ...
+load: ok
+```
+
+`--check-values` output is unchanged; BF16 tensors count towards `values_ok`.
+
+#### Compat scanner verdict after M67
+
+SmolLM2-135M now shows BF16 as a warning rather than a required change:
+
+```
+# required converter changes
+required_changes          none     ← BF16 coercion is automatic
+
+# warnings
+  warning: source dtype ['BF16']: automatic BF16/F16→F32 coercion applied ...
+```
+
+The remaining blocker for SmolLM2-135M is GQA (M68):
+
+```sh
+python3 compiler/check_llama_compat.py --model-dir ~/Models/SmolLM2-135M
+# Expected (after M67, before M68):
+#   required_change: GQA: num_key_value_heads=3 ...
+#   compat: fail
+```
+
+After M68 resolves GQA, the full conversion workflow will be:
+
+```sh
+python3 compiler/convert_llama_to_att1.py \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --config ~/Models/SmolLM2-135M/config.json \
+    --out ~/Models/att1/SmolLM2-135M/model_f32.att1
+./build/att1-inspect ~/Models/att1/SmolLM2-135M/model_f32.att1
+```
+
+`make test` passes (42 tests) after M67.  No C runtime changes, no
+Makefile changes, no `.att1` format changes.
+
+---
+
 ## Related Documents
 
 - [real_model_conversion.md](real_model_conversion.md) — existing converter

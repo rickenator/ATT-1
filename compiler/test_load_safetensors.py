@@ -162,16 +162,24 @@ def run_tests():
     )
 
     # ------------------------------------------------------------------
-    # 7. Unsupported dtype (BF16) → LoadError
+    # 7. BF16 tensor → coerced to F32 (M67; no longer raises LoadError)
     # ------------------------------------------------------------------
-    blob = _make_safetensors([("w", "BF16", [2, 2], b"\x00" * 8)])
+    # Encode 4 BF16 values: pack each float as F32 and take top 2 bytes.
+    bf16_values = [1.0, -0.5, 0.25, 2.0]
+    bf16_payload = b"".join(struct.pack("<f", v)[2:4] for v in bf16_values)
+    blob = _make_safetensors([("w", "BF16", [2, 2], bf16_payload)])
     path = _write_tmp(blob)
     try:
-        _raises(
-            "BF16 tensor → LoadError",
-            LoadError,
-            lambda: load_tensor(path, "w"),
-        )
+        td = load_tensor(path, "w")
+        _ok("BF16 tensor coercion: load ok (no LoadError)",  True)
+        _ok("BF16 tensor coercion: dtype field is 'BF16'",   td.dtype == "BF16")
+        _ok("BF16 tensor coercion: coerced flag is True",    td.coerced)
+        _ok("BF16 tensor coercion: 4 elements",              len(td.values) == 4)
+        # BF16 truncates mantissa; check round-trip accuracy to within 1%.
+        _ok("BF16 tensor coercion: values[0] ≈ 1.0",   abs(td.values[0] - 1.0)    < 0.01)
+        _ok("BF16 tensor coercion: values[1] ≈ -0.5",  abs(td.values[1] - (-0.5)) < 0.01)
+        _ok("BF16 tensor coercion: values[2] ≈ 0.25",  abs(td.values[2] - 0.25)   < 0.01)
+        _ok("BF16 tensor coercion: values[3] ≈ 2.0",   abs(td.values[3] - 2.0)    < 0.01)
     finally:
         os.unlink(path)
 

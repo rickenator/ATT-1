@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
-ATT-1 safetensors tensor reader (Milestone 47).
+ATT-1 safetensors tensor reader (Milestone 47 / M67 BF16 coercion).
 
 Reads tensor payload bytes from a .safetensors file after the M46 metadata
 scanner validates the header.  Uses Python standard library only (struct
 module); no numpy or external dependencies.
 
-Supported source dtypes (M47):
-    F32  — decoded as a flat tuple of Python floats (little-endian).
+Supported source dtypes (M47 + M67):
+    F32  — decoded directly as IEEE 754 float32.
+    BF16 — coerced to F32 by zero-extending the low 16 mantissa bits.
+           BF16 is the top 16 bits of F32; no information is manufactured.
+    F16  — coerced to F32 via IEEE 754 half-precision conversion.
+           Handles subnormals, infinities, and NaN correctly.
 
-Unsupported source dtypes (BF16, F16, I32, etc.) raise LoadError.
-Dtype coercion (BF16/F16 → F32) is deferred to M48.
+Returned TensorData.dtype always reflects the *source* dtype from the
+safetensors header ("BF16", "F16", "F32").  Callers see F32 float values
+regardless of source dtype.  Use TensorData.coerced=True to detect cases
+where coercion was applied.
 
 Usage:
     # load and display one tensor
@@ -52,21 +58,75 @@ from scan_safetensors import ScanError, scan_safetensors  # noqa: E402
 # Public types and exceptions
 # ---------------------------------------------------------------------------
 
-TensorData = namedtuple("TensorData", ["name", "dtype", "shape", "values", "nbytes"])
+TensorData = namedtuple("TensorData", ["name", "dtype", "shape", "values", "nbytes", "coerced"])
 """Immutable tensor payload returned by load_tensor().
 
-    name    str           — tensor name as found in the safetensors header
-    dtype   str           — safetensors dtype string, e.g. "F32"
-    shape   list[int]     — tensor dimensions
-    values  tuple[float]  — flat decoded values (row-major / C order)
-    nbytes  int           — raw byte count read from file
+    name     str           — tensor name as found in the safetensors header
+    dtype    str           — source dtype string from safetensors, e.g. "BF16"
+    shape    list[int]     — tensor dimensions
+    values   tuple[float]  — flat decoded values, always F32 floats (row-major)
+    nbytes   int           — raw byte count read from file (source size)
+    coerced  bool          — True if source dtype was BF16 or F16 (coerced to F32)
 """
 
-# Dtypes that load_tensor() can decode in this milestone.
-_READABLE_DTYPES = frozenset({"F32"})
+# Dtypes that load_tensor() can decode (F32 native; BF16/F16 coerced to F32).
+_READABLE_DTYPES = frozenset({"F32", "BF16", "F16"})
 
-# struct format character for each readable dtype (little-endian unpack).
+# struct format character for native dtypes (little-endian unpack).
 _STRUCT_FMT = {"F32": "f"}
+
+
+# ---------------------------------------------------------------------------
+# BF16 / F16 → F32 coercion helpers (Python standard library only)
+# ---------------------------------------------------------------------------
+
+def _coerce_bf16(raw: bytes) -> tuple:
+    """Decode BF16 payload bytes to a tuple of Python floats.
+
+    BF16 is identical to the top 16 bits of IEEE 754 float32.  Coercion:
+    zero-extend each 2-byte little-endian BF16 to 4 bytes and reinterpret
+    as float32.  This preserves sign, exponent, subnormals, inf, and NaN.
+    No information is introduced or discarded.
+
+    raw must have even length.
+    """
+    n      = len(raw) // 2
+    result = []
+    for i in range(n):
+        b0, b1 = raw[2 * i], raw[2 * i + 1]
+        # LE layout: b0 = bits[7:0], b1 = bits[15:8]
+        # F32 LE: [bits7:0, bits15:8, bits23:16, bits31:24]
+        # BF16 occupies the high half of F32, so prepend two zero bytes:
+        f32_bytes = bytes([0, 0, b0, b1])
+        result.append(struct.unpack("<f", f32_bytes)[0])
+    return tuple(result)
+
+
+def _coerce_f16(raw: bytes) -> tuple:
+    """Decode F16 payload bytes to a tuple of Python floats.
+
+    Implements IEEE 754 half-precision (5-bit exponent, 10-bit mantissa,
+    bias 15).  Handles subnormals, zeroes, infinities, and NaN correctly.
+
+    raw must have even length.
+    """
+    n      = len(raw) // 2
+    result = []
+    for i in range(n):
+        h     = struct.unpack_from("<H", raw, 2 * i)[0]
+        sign  = -1.0 if (h >> 15) else 1.0
+        exp5  = (h >> 10) & 0x1F
+        mant  = h & 0x3FF
+        if exp5 == 0:
+            # Zero or subnormal
+            f = sign * (mant / 1024.0) * (2.0 ** -14)
+        elif exp5 == 31:
+            # Infinity or NaN
+            f = float("nan") if mant != 0 else sign * float("inf")
+        else:
+            f = sign * (1.0 + mant / 1024.0) * (2.0 ** (exp5 - 15))
+        result.append(f)
+    return tuple(result)
 
 
 class LoadError(Exception):
@@ -119,14 +179,22 @@ def load_tensor(path: str, name: str,
     td    = index[name]
     dtype = td["dtype"]
 
-    # Caller-supplied dtype assertion (checked before readability gate).
-    if expected_dtype is not None and dtype != expected_dtype:
+    # Caller-supplied dtype assertion.
+    # When expected_dtype="F32" and the source is a coercible dtype (BF16/F16),
+    # do not raise: the returned values are F32 regardless of source encoding.
+    _coercible = frozenset({"BF16", "F16"})
+    _dtype_ok  = (
+        expected_dtype is None
+        or dtype == expected_dtype
+        or (expected_dtype == "F32" and dtype in _coercible)
+    )
+    if not _dtype_ok:
         raise LoadError(
             f"dtype mismatch for {name!r}: "
             f"expected {expected_dtype!r}, got {dtype!r}"
         )
 
-    # Readability gate — only F32 supported in M47.
+    # Readability gate — F32 native; BF16/F16 coerced to F32 (M67).
     if dtype not in _READABLE_DTYPES:
         raise LoadError(
             f"unsupported dtype {dtype!r} for tensor {name!r} "
@@ -155,10 +223,20 @@ def load_tensor(path: str, name: str,
             f"got {len(raw)}"
         )
 
-    # Decode: F32 = 4-byte little-endian IEEE 754 single.
-    fmt    = _STRUCT_FMT[dtype]
-    n      = nbytes // 4
-    values = struct.unpack(f"<{n}{fmt}", raw)
+    # Decode / coerce to F32 floats.
+    if dtype == "F32":
+        n      = nbytes // 4
+        values = struct.unpack(f"<{n}f", raw)
+        coerced = False
+    elif dtype == "BF16":
+        values  = _coerce_bf16(raw)
+        coerced = True
+    elif dtype == "F16":
+        values  = _coerce_f16(raw)
+        coerced = True
+    else:
+        # Should be unreachable given the _READABLE_DTYPES gate above.
+        raise LoadError(f"internal: unhandled dtype {dtype!r}")  # pragma: no cover
 
     return TensorData(
         name=name,
@@ -166,11 +244,14 @@ def load_tensor(path: str, name: str,
         shape=td["shape"],
         values=values,
         nbytes=nbytes,
+        coerced=coerced,
     )
 
 
 def load_all(path: str):
-    """Load all F32 tensors from a .safetensors file.
+    """Load all F32/BF16/F16 tensors from a .safetensors file.
+
+    BF16 and F16 tensors are coerced to F32 values automatically (M67).
 
     Returns:
         (loaded, skipped, errors) where:
@@ -203,15 +284,16 @@ def load_all(path: str):
 
 def format_tensor_report(td: TensorData, max_values: int = 8) -> str:
     """Render a human-readable report for one loaded tensor."""
-    shape_str = "[" + ",".join(str(d) for d in td.shape) + "]"
-    n         = len(td.values)
-    show      = td.values[:max_values]
-    vals_str  = " ".join(f"{v:.6g}" for v in show)
+    shape_str  = "[" + ",".join(str(d) for d in td.shape) + "]"
+    n          = len(td.values)
+    show       = td.values[:max_values]
+    vals_str   = " ".join(f"{v:.6g}" for v in show)
+    dtype_disp = f"{td.dtype}->F32" if td.coerced else td.dtype
     if n > max_values:
         vals_str += f" ... ({n - max_values} more)"
     lines = [
         f"tensor: {td.name}",
-        f"dtype: {td.dtype}",
+        f"dtype: {dtype_disp}",
         f"shape: {shape_str}",
         f"nbytes: {td.nbytes}",
         f"elements: {n}",

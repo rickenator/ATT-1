@@ -1500,6 +1500,98 @@ static int check_compat_scanner(void)
     return 0;
 }
 
+/*
+ * check_bf16_coercion() — M67
+ *
+ * Python-skippable.  Validates BF16→F32 coercion in load_safetensors.py and
+ * the updated compat scanner verdict using the checked-in BF16 fixture
+ * (compiler/fixtures/m67_bf16_llama_2l.safetensors, 21 tensors, BF16, seed=67):
+ *   1. Load a single BF16 tensor: dtype shows "BF16->F32", load: ok.
+ *   2. --check-values: all 21 tensors loadable (values_ok=21, skipped=0).
+ *   3. Convert BF16 fixture to .att1 via convert_llama_to_att1.py: exit 0.
+ *   4. Compat scanner: compat: pass, no required_change: line for BF16.
+ */
+static int check_bf16_coercion(void)
+{
+    char output[8192];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* 1. Load single BF16 tensor — coercion display "BF16->F32". */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/m67_bf16_llama_2l.safetensors"
+            " --tensor model.embed_tokens.weight"
+            " > build/bf16_load_embed.txt 2>&1") != 0) {
+        fputs("bf16_coercion: single tensor load failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/bf16_load_embed.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "dtype: BF16->F32") == NULL) ||
+        (strstr(output, "shape: [16,8]")    == NULL) ||
+        (strstr(output, "elements: 128")    == NULL) ||
+        (strstr(output, "load: ok")         == NULL)) {
+        fputs("bf16_coercion: single tensor report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    /* 2. --check-values: all 21 BF16 tensors must be loadable. */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/m67_bf16_llama_2l.safetensors"
+            " --check-values"
+            " > build/bf16_chkval.txt 2>&1") != 0) {
+        fputs("bf16_coercion: --check-values failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/bf16_chkval.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "values_ok=21")     == NULL) ||
+        (strstr(output, "values_skipped=0") == NULL) ||
+        (strstr(output, "check_values: ok") == NULL)) {
+        fputs("bf16_coercion: --check-values output unexpected\n", stderr);
+        return -1;
+    }
+
+    /* 3. Convert BF16 fixture to .att1: must succeed (exit 0). */
+    if (run_command(
+            "python3 compiler/convert_llama_to_att1.py"
+            " --safetensors compiler/fixtures/m67_bf16_llama_2l.safetensors"
+            " --config compiler/fixtures/tiny_llama_config.json"
+            " --out build/m67_f32/model.att1"
+            " > build/bf16_convert.txt 2>&1") != 0) {
+        fputs("bf16_coercion: conversion failed\n", stderr);
+        return -1;
+    }
+
+    /* 4. Compat scanner: BF16 is now a warning, not a required change.
+     *    Expect compat: pass and no "required_change:" line. */
+    if (run_command(
+            "python3 compiler/check_llama_compat.py"
+            " --model-dir compiler/fixtures/m66_compat_fixture"
+            " --safetensors compiler/fixtures/m67_bf16_llama_2l.safetensors"
+            " > build/bf16_compat.txt 2>&1") != 0) {
+        fputs("bf16_coercion: compat scan unexpectedly failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/bf16_compat.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "compat: pass")     == NULL) ||
+        (strstr(output, "required_change:") != NULL)) {
+        fputs("bf16_coercion: compat output unexpected\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -1515,7 +1607,8 @@ int main(void)
         (check_pretokenized_pipeline()    != 0) ||
         (check_source_comparison()        != 0) ||
         (check_m63_validation()           != 0) ||
-        (check_compat_scanner()           != 0)) {
+        (check_compat_scanner()           != 0) ||
+        (check_bf16_coercion()            != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
