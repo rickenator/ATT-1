@@ -456,9 +456,109 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 
 | Milestone | Goal |
 |-----------|------|
-| M74 | q4 format and schema doc update: dtype-3 wire layout, group_size encoding, hostile-input validation rules, `.att1` version decision |
+| M74 | q4 format and schema: `ATT1_MODEL_DTYPE_Q4=3` enum, nbytes formula + group_size validation in loader, `ATT1_ERR_UNSUPPORTED` from validate_decoder, `att1-inspect` q4 reporting, `test_quant_q4` (9 checks) |
 | M75 | CPU q4 packing and unpacking primitives: `att1_q4_pack_row()`, `att1_q4_unpack_row()`, standalone unit tests |
 | M76 | CPU q4 matmul prototype: `att1_matmul_q4xf32()` (dequantize-then-multiply), tests against f32 reference |
 | M77 | q4 `.att1` fixture: `--weight-format q4` converter output, dtype-3 loader support, `att1-inspect` q4 reporting, checked-in tiny q4 model |
 | M78 | CPU q4 single-tile inference: `--backend cpu-q4` in `att1-bench`, single-tile decode validated against cpu-f32 |
 | M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |
+
+---
+
+## q4 format and schema (M74)
+
+This section documents the q4 wire format decisions that were implemented in M74.
+No q4 runtime kernels or q4 inference are included; this is schema and loader only.
+
+### dtype wire value
+
+`ATT1_MODEL_DTYPE_Q4 = 3` is the third entry in the `att1_model_dtype` enum.
+Values 1 (f32) and 2 (q8) are unchanged.
+
+### group_size encoding in flags
+
+The group size for a q4 tensor is encoded in bits `[7:0]` of the existing
+`flags` field of the tensor descriptor (the field was previously always zero):
+
+| `flags & 0xFF` | Meaning |
+|---------------|---------|
+| `0` | Use default group size: 32 |
+| `16`–`128` (power of two) | Explicit group size |
+| Any other value | Invalid — loader returns error |
+
+Bits `[31:8]` of `flags` must be zero for q4 tensors; any non-zero upper bits
+are rejected by the loader.
+
+Constants defined in `include/att1_quant.h`:
+
+```c
+#define ATT1_Q4_GROUP_SIZE_DEFAULT 32u
+#define ATT1_Q4_GROUP_SIZE_MIN     16u
+#define ATT1_Q4_GROUP_SIZE_MAX     128u
+#define ATT1_Q4_FLAGS_GROUP_MASK   0xFFu
+```
+
+### Payload layout
+
+For a q4 tensor with shape `[rows, cols]`:
+
+```
+uint8  packed[rows * cols / 2]              -- low-nibble-first int4 pairs
+float32 scales[rows * (cols / group_size)]  -- one f32 scale per group
+```
+
+Total bytes = `rows*cols/2 + rows*(cols/group_size)*4`.
+
+Values are signed symmetric int4 in `[-7, 7]` (value `-8` is excluded).
+
+### `.att1` version decision
+
+No format version bump is required for q4 tensors.  The `flags` field existed
+in the v1 tensor descriptor and was always zero before M74; using bits `[7:0]`
+to encode group size is backward-compatible because v1 loaders that predate M74
+will reject dtype=3 tensors before reading `flags`.
+
+### Hostile-input validation rules (loader)
+
+The following checks are performed by `att1_tensor_nbytes_expected()` for q4 tensors:
+
+1. `tensor->ndims == 2` — q4 tensors must be 2-D.
+2. `(tensor->flags & ~ATT1_Q4_FLAGS_GROUP_MASK) == 0` — upper 24 bits of `flags` must be zero.
+3. Resolved `group_size` must be a power of two in `[ATT1_Q4_GROUP_SIZE_MIN, ATT1_Q4_GROUP_SIZE_MAX]`.
+4. `tensor->shape[1] % 2 == 0` — `cols` must be even (nibble packing).
+5. `tensor->shape[1] % group_size == 0` — `cols` must be divisible by `group_size`.
+6. All intermediate multiplications use overflow-safe `att1_u64_mul()`; on overflow the loader returns error.
+7. The loader cross-checks computed nbytes against the stored nbytes field; mismatch returns error.
+
+### Inference rejection
+
+`att1_model_view_validate_decoder()` scans all tensors and returns
+`ATT1_ERR_UNSUPPORTED` if any tensor has `dtype == ATT1_MODEL_DTYPE_Q4`.
+There is no silent fallback to q8 or f32.
+
+### `att1-inspect` q4 output
+
+For each q4 tensor, `att1-inspect` prints:
+
+```
+dtype_name=q4 quant=grouped-q4-g<G> q4_groups=<N> q4_packed_bytes=<P> q4_scale_bytes=<S>
+```
+
+where `G` is the resolved group size, `N = rows*(cols/G)`, `P = rows*cols/2`,
+and `S = N*4`.
+
+### Test coverage (`test_quant_q4`)
+
+Nine test cases in `tests/test_quant_q4.c`:
+
+| # | Name | What it checks |
+|---|------|---------------|
+| 1 | `test_q4_load_valid` | rows=4, cols=64, group_size=32 loads successfully |
+| 2 | `test_q4_valid_group_sizes` | group_size ∈ {0,16,32,64,128} with cols=128 all load |
+| 3 | `test_q4_bad_group_size` | group_size ∈ {1,3,7,15,48,100,129,200,255} all rejected |
+| 4 | `test_q4_bad_cols_alignment` | cols=48, group_size=32 (48 % 32 ≠ 0) rejected |
+| 5 | `test_q4_bad_nbytes` | correct shape, wrong nbytes in file rejected |
+| 6 | `test_q4_flags_reserved_bits` | flags with bit 8 set rejected |
+| 7 | `test_q4_inference_rejected` | load succeeds, `att1_model_view_validate_decoder()` returns `ATT1_ERR_UNSUPPORTED` |
+| 8 | `test_q4_inspect_output` | `att1-inspect` exits 0, output contains `dtype_name=q4`, `quant=grouped-q4-g32`, correct counts |
+| 9 | `test_existing_dtypes_unaffected` | existing f32 and q8 fixtures still load correctly |

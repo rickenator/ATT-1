@@ -15,6 +15,28 @@ typedef struct att1_quant_desc {
     uint32_t group_size;
 } att1_quant_desc;
 
+/*
+ * q4 wire-format constants (M74).
+ *
+ * Group size is encoded in the low byte of the tensor descriptor flags field
+ * (bits [7:0]).  A value of 0 means "use the default group size" (32).
+ * Valid non-zero values are powers of two in [ATT1_Q4_GROUP_SIZE_MIN,
+ * ATT1_Q4_GROUP_SIZE_MAX].  Bits [31:8] of flags must be zero for q4 tensors.
+ *
+ * Payload layout for a q4 tensor with shape [rows, cols]:
+ *   uint8  packed[rows * cols / 2]           -- low-nibble-first int4 pairs
+ *   float32 scales[rows * (cols / group_size)] -- one f32 scale per group
+ * Total: rows*cols/2 + rows*(cols/group_size)*4 bytes.
+ *
+ * Values are signed two's-complement int4, range [-7, 7].  -8 is excluded
+ * to maintain a symmetric range around zero.  Low nibble holds the even
+ * element, high nibble holds the odd element.
+ */
+#define ATT1_Q4_GROUP_SIZE_DEFAULT 32u
+#define ATT1_Q4_GROUP_SIZE_MIN     16u
+#define ATT1_Q4_GROUP_SIZE_MAX     128u
+#define ATT1_Q4_FLAGS_GROUP_MASK   0xFFu
+
 typedef struct att1_q8_matrix {
     size_t rows;
     size_t cols;

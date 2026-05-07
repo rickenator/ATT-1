@@ -172,9 +172,17 @@ att1_status_t att1_model_view_validate_decoder(const att1_model *model)
     const size_t head_dim = (model != NULL && model->config.n_heads != 0u) ?
         (model->config.d_model / model->config.n_heads) : 0u;
     att1_status_t status = ATT1_OK;
+    uint64_t i = 0u;
 
     if (model == NULL) {
         return ATT1_ERR_INVALID_ARG;
+    }
+
+    /* q4 inference is not yet implemented: reject any model containing q4 tensors. */
+    for (i = 0u; i < model->tensor_count; i++) {
+        if (model->tensors[i].dtype == ATT1_MODEL_DTYPE_Q4) {
+            return ATT1_ERR_UNSUPPORTED;
+        }
     }
 
     if ((model->config.vocab_size == 0u) ||

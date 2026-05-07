@@ -27,7 +27,8 @@ typedef struct att1_model_info {
 
 typedef enum att1_model_dtype {
     ATT1_MODEL_DTYPE_F32 = 1,
-    ATT1_MODEL_DTYPE_Q8 = 2
+    ATT1_MODEL_DTYPE_Q8  = 2,
+    ATT1_MODEL_DTYPE_Q4  = 3
 } att1_model_dtype;
 
 typedef struct att1_model_config {

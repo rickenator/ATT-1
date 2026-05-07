@@ -1,4 +1,5 @@
 #include "att1_model.h"
+#include "att1_quant.h"
 #include "att1_shard.h"
 #include "att1_shard_meta.h"
 #include "att1_tok_meta.h"
@@ -20,6 +21,7 @@ static const char *model_dtype_name(uint32_t dtype)
     switch (dtype) {
     case ATT1_MODEL_DTYPE_F32: return "f32";
     case ATT1_MODEL_DTYPE_Q8:  return "q8";
+    case ATT1_MODEL_DTYPE_Q4:  return "q4";
     default:                   return "unknown";
     }
 }
@@ -98,6 +100,21 @@ int main(int argc, char **argv)
             printf(" quant=per-row-q8 q8_values=%" PRIu64 " q8_scales=%" PRIu64,
                    rows * cols,
                    rows);
+        } else if (tensor->dtype == ATT1_MODEL_DTYPE_Q4) {
+            const uint64_t rows = tensor->shape[0];
+            const uint64_t cols = tensor->shape[1];
+            const uint32_t group_size_raw = tensor->flags & ATT1_Q4_FLAGS_GROUP_MASK;
+            const uint32_t group_size = (group_size_raw == 0u)
+                                        ? ATT1_Q4_GROUP_SIZE_DEFAULT
+                                        : group_size_raw;
+            const uint64_t n_groups = rows * (cols / (uint64_t)group_size);
+            const uint64_t packed_bytes = rows * cols / 2u;
+            const uint64_t scale_bytes  = n_groups * sizeof(float);
+            printf(" quant=grouped-q4-g%u"
+                   " q4_groups=%" PRIu64
+                   " q4_packed_bytes=%" PRIu64
+                   " q4_scale_bytes=%" PRIu64,
+                   group_size, n_groups, packed_bytes, scale_bytes);
         } else {
             printf(" quant=none");
         }

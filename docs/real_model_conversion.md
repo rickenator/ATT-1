@@ -619,7 +619,7 @@ not implemented, and BPE/SentencePiece parsing remains out of C.
 | M71 | Public tokenized end-to-end validation: local HF tokenizer IDs plus f32/q8 CPU and optional CUDA backend smoke report |
 | M72 | Larger-model scaling and placement report: `att1-size --config`, `--layers/--d-model/--heads/--d-ff/--vocab-size`, `--json`; per-category storage, KV-cache by context, AIMU tile plan, backend feasibility; `check_scaling_report()` smoke test |
 | M73 | q4 quantization planning: strategy document only; grouped int4 format spec, `.att1` format implications, converter and runtime plan, test plan, M74–M79 milestone split |
-| M74 | q4 format and schema doc update: dtype-3 wire layout, group_size encoding, hostile-input validation rules, `.att1` version decision |
+| M74 | q4 format and schema: `ATT1_MODEL_DTYPE_Q4=3` enum; `flags[7:0]` group_size encoding (0=default 32, powers-of-two in [16,128]); nbytes formula `rows*cols/2 + rows*(cols/group_size)*4` with overflow-safe validation in loader; `ATT1_ERR_UNSUPPORTED` from `att1_model_view_validate_decoder()` for any q4 tensor (no silent fallback); `att1-inspect` q4 reporting (`dtype_name=q4`, `quant=grouped-q4-g%u`, `q4_groups`, `q4_packed_bytes`, `q4_scale_bytes`); `tests/test_quant_q4.c` (9 checks); no `.att1` version bump; no q4 inference |
 | M75 | CPU q4 packing and unpacking primitives: `att1_q4_pack_row()`, `att1_q4_unpack_row()`, unit tests |
 | M76 | CPU q4 matmul prototype: `att1_matmul_q4xf32()` (dequantize-then-multiply), tests against f32 reference |
 | M77 | q4 `.att1` fixture: `--weight-format q4` converter output, dtype-3 loader, `att1-inspect` q4 reporting, checked-in tiny q4 model |

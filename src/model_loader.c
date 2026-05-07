@@ -1,4 +1,5 @@
 #include "att1_model.h"
+#include "att1_quant.h"
 #include "att1_tok_meta.h"
 
 #include <stdio.h>
@@ -88,6 +89,65 @@ static int att1_tensor_nbytes_expected(const att1_model_tensor *tensor,
         }
 
         *out_nbytes = value_bytes + scale_bytes;
+        return 0;
+    }
+
+    if (tensor->dtype == ATT1_MODEL_DTYPE_Q4) {
+        uint32_t group_size_raw = 0u;
+        uint32_t group_size = 0u;
+        uint64_t packed_bytes = 0u;
+        uint64_t n_groups_per_row = 0u;
+        uint64_t scale_bytes_per_row = 0u;
+        uint64_t scale_bytes = 0u;
+
+        if (tensor->ndims != 2u) {
+            return -1;
+        }
+
+        /* Upper flags bits must be zero for q4 tensors. */
+        if ((tensor->flags & ~ATT1_Q4_FLAGS_GROUP_MASK) != 0u) {
+            return -1;
+        }
+
+        group_size_raw = tensor->flags & ATT1_Q4_FLAGS_GROUP_MASK;
+        group_size = (group_size_raw == 0u) ? ATT1_Q4_GROUP_SIZE_DEFAULT
+                                            : group_size_raw;
+
+        /* Valid group sizes: powers of two in [ATT1_Q4_GROUP_SIZE_MIN, ATT1_Q4_GROUP_SIZE_MAX]. */
+        if ((group_size < ATT1_Q4_GROUP_SIZE_MIN) ||
+            (group_size > ATT1_Q4_GROUP_SIZE_MAX) ||
+            ((group_size & (group_size - 1u)) != 0u)) {
+            return -1;
+        }
+
+        /* cols must be even (nibble packing) and divisible by group_size. */
+        if ((tensor->shape[1] % 2u != 0u) ||
+            (tensor->shape[1] % group_size != 0u)) {
+            return -1;
+        }
+
+        /* packed_bytes = rows * cols / 2 */
+        if (att1_u64_mul(tensor->shape[0], tensor->shape[1] / 2u,
+                         &packed_bytes) != 0) {
+            return -1;
+        }
+
+        /* scale_bytes = rows * (cols / group_size) * sizeof(float) */
+        n_groups_per_row = tensor->shape[1] / (uint64_t)group_size;
+        if (att1_u64_mul(n_groups_per_row, (uint64_t)sizeof(float),
+                         &scale_bytes_per_row) != 0) {
+            return -1;
+        }
+        if (att1_u64_mul(tensor->shape[0], scale_bytes_per_row,
+                         &scale_bytes) != 0) {
+            return -1;
+        }
+
+        if (scale_bytes > (UINT64_MAX - packed_bytes)) {
+            return -1;
+        }
+
+        *out_nbytes = packed_bytes + scale_bytes;
         return 0;
     }
 
