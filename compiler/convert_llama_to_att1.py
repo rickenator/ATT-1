@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-ATT-1 LLaMA converter (Milestone 32 — deterministic stub emitter).
+ATT-1 LLaMA converter (Milestone 32 — deterministic stub emitter,
+                        Milestone 43 — shard metadata plan report).
 
 Validates a LLaMA-style config, resolves architecture fields to the ATT-1
 config schema, and emits a deterministic synthetic `.att1` model artifact
@@ -18,6 +19,18 @@ Usage:
 
     # short-form aliases
     python3 compiler/convert_llama_to_att1.py --config PATH/config.json --out OUT.att1
+
+    # emit artifact with shard metadata (2 tiles)
+    python3 compiler/convert_llama_to_att1.py --config PATH/config.json \\
+        --tiles 2 --shard-meta --out OUT.att1
+
+    # print human-readable shard plan report
+    python3 compiler/convert_llama_to_att1.py --config PATH/config.json \\
+        --tiles 2 --shard-meta --report
+
+    # emit JSON report to file
+    python3 compiler/convert_llama_to_att1.py --config PATH/config.json \\
+        --tiles 2 --shard-meta --report-json PATH/report.json
 
     # manual validation sequence after emission
     ./build/att1-inspect OUT.att1
@@ -324,6 +337,181 @@ def _build_shard_meta_blob(att1: dict, tensors: list[dict]) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Shard plan report (Milestone 43)
+# ---------------------------------------------------------------------------
+
+def build_shard_plan_report(arch: str,
+                             att1: dict,
+                             emit_shard_meta: bool,
+                             validation_errors: list[str]) -> dict:
+    """
+    Build a structured report dict describing the converter's shard plan.
+
+    The report is independent of artifact emission; it can be requested
+    on a dry run or alongside --output.
+    """
+    n_layers = att1["n_layers"]
+    n_tiles  = att1.get("n_tiles", 1)
+    n_tensors = 3 + n_layers * 9   # tok_embed + 9/layer + norm + output
+
+    # --- layer → tile assignment (same algorithm as C runtime) ---
+    if emit_shard_meta:
+        layer_assignment = _layer_tile_assignment(n_layers, n_tiles)
+    else:
+        layer_assignment = []
+
+    # --- per-tile layer lists ---
+    tiles_layers: dict[int, list[int]] = {t: [] for t in range(n_tiles)}
+    for layer_id, tile_id in enumerate(layer_assignment):
+        tiles_layers[tile_id].append(layer_id)
+
+    # --- tensor breakdown ---
+    tensor_names_plan = tensor_name_plan(att1)
+
+    def _tile_for(name: str) -> int | None:
+        """Return the tile_id for a tensor name when shard_meta is active."""
+        if not emit_shard_meta:
+            return None
+        if name.startswith("layers."):
+            rest = name[len("layers."):]
+            dot  = rest.find(".")
+            if dot > 0:
+                try:
+                    layer_id = int(rest[:dot])
+                    if layer_id < n_layers:
+                        return layer_assignment[layer_id]
+                except ValueError:
+                    pass
+        return 0   # non-layer tensors → tile 0
+
+    # Build per-tensor records
+    tensors_report = []
+    for name, shape in tensor_names_plan:
+        tile_id = _tile_for(name)
+        elem_count = 1
+        for s in shape:
+            elem_count *= s
+        tensors_report.append({
+            "name":   name,
+            "shape":  shape,
+            "dtype":  "f32",
+            "quant":  "none",
+            "tile_id": tile_id,
+            "bytes":  elem_count * 4,
+        })
+
+    # --- dtype / quant summary ---
+    dtype_f32_count = n_tensors   # all tensors are f32 in stub emitter
+    quant_none_count = n_tensors
+
+    # --- per-tile summary ---
+    tile_summaries = []
+    for tile_id in range(n_tiles):
+        owned = [t for t in tensors_report if t["tile_id"] == tile_id]
+        layer_ids = tiles_layers[tile_id] if emit_shard_meta else []
+        layer_range = (
+            f"{layer_ids[0]}-{layer_ids[-1]}"
+            if layer_ids
+            else "none"
+        )
+        tile_summaries.append({
+            "tile_id":      tile_id,
+            "aimu_id":      tile_id,
+            "tensor_count": len(owned),
+            "layer_ids":    layer_ids,
+            "layer_range":  layer_range,
+        })
+
+    # --- layer ownership summary ---
+    layer_summaries = []
+    for layer_id in range(n_layers):
+        tile_id = layer_assignment[layer_id] if emit_shard_meta else None
+        layer_summaries.append({
+            "layer_id": layer_id,
+            "tile_id":  tile_id,
+        })
+
+    return {
+        "schema_version":   1,
+        "source_arch":      arch,
+        "config": {
+            "vocab_size":  att1["vocab_size"],
+            "n_layers":    att1["n_layers"],
+            "n_heads":     att1["n_heads"],
+            "d_model":     att1["d_model"],
+            "d_ff":        att1["d_ff"],
+            "max_seq_len": att1["max_seq_len"],
+            "rope_dim":    att1["rope_dim"],
+            "rope_theta":  att1["rope_theta"],
+            "n_tiles":     att1["n_tiles"],
+        },
+        "tensor_count":     n_tensors,
+        "shard_meta":       "present" if emit_shard_meta else "absent",
+        "tile_count":       n_tiles,
+        "aimu_count":       n_tiles,
+        "dtype_f32_count":  dtype_f32_count,
+        "dtype_q8_count":   0,
+        "quant_none_count": quant_none_count,
+        "tensors":          tensors_report,
+        "tiles":            tile_summaries,
+        "layers":           layer_summaries,
+        "validation": {
+            "status": "ok" if not validation_errors else "failed",
+            "errors": validation_errors,
+        },
+    }
+
+
+def format_report_text(report: dict) -> str:
+    """Render the shard plan report as a human-readable text block."""
+    lines: list[str] = []
+    cfg = report["config"]
+
+    lines.append("ATT-1 shard metadata plan report")
+    lines.append(f"  schema_version  : {report['schema_version']}")
+    lines.append(f"  source_arch     : {report['source_arch']}")
+    lines.append("")
+    lines.append("config:")
+    lines.append(f"  vocab_size      : {cfg['vocab_size']}")
+    lines.append(f"  n_layers        : {cfg['n_layers']}")
+    lines.append(f"  n_heads         : {cfg['n_heads']}")
+    lines.append(f"  d_model         : {cfg['d_model']}")
+    lines.append(f"  d_ff            : {cfg['d_ff']}")
+    lines.append(f"  max_seq_len     : {cfg['max_seq_len']}")
+    lines.append(f"  rope_dim        : {cfg['rope_dim']}")
+    lines.append(f"  rope_theta      : {cfg['rope_theta']}")
+    lines.append(f"  n_tiles         : {cfg['n_tiles']}")
+    lines.append("")
+    lines.append("shard_meta:")
+    lines.append(f"  present         : {report['shard_meta']}")
+    lines.append(f"  tensor_count    : {report['tensor_count']}")
+    lines.append(f"  tile_count      : {report['tile_count']}")
+    lines.append(f"  aimu_count      : {report['aimu_count']}")
+    lines.append(f"  dtype_f32       : {report['dtype_f32_count']}")
+    lines.append(f"  dtype_q8        : {report['dtype_q8_count']}")
+    lines.append(f"  quant_none      : {report['quant_none_count']}")
+    lines.append("")
+    lines.append("tile ownership:")
+    for tile in report["tiles"]:
+        lines.append(
+            f"  tile[{tile['tile_id']}]  aimu={tile['aimu_id']}"
+            f"  tensors={tile['tensor_count']}"
+            f"  layers={tile['layer_range']}"
+        )
+    lines.append("")
+    lines.append("layer assignment:")
+    for layer in report["layers"]:
+        tile_str = str(layer["tile_id"]) if layer["tile_id"] is not None else "n/a"
+        lines.append(f"  layer[{layer['layer_id']}] → tile {tile_str}")
+    lines.append("")
+    lines.append("validation:")
+    lines.append(f"  status          : {report['validation']['status']}")
+    for err in report["validation"]["errors"]:
+        lines.append(f"  error           : {err}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # .att1 binary builder
 # ---------------------------------------------------------------------------
 
@@ -475,6 +663,10 @@ def main() -> None:
                         help="Number of tiles for shard metadata (default: 1)")
     parser.add_argument("--shard-meta", action="store_true",
                         help="Emit optional shard metadata section")
+    parser.add_argument("--report", action="store_true",
+                        help="Print human-readable shard plan report to stdout")
+    parser.add_argument("--report-json", metavar="PATH", default=None,
+                        help="Write JSON shard plan report to PATH")
     parser.add_argument("--show-tensors", action="store_true",
                         help="Print planned tensor names and shapes")
     args = parser.parse_args()
@@ -534,16 +726,31 @@ def main() -> None:
             shape_str = " \u00d7 ".join(str(s) for s in shape)
             print(f"  {name:<50} {shape_str}")
 
+    # --- shard plan report ---
+    if args.report or args.report_json:
+        report = build_shard_plan_report(arch, att1, args.shard_meta, errors)
+        if args.report:
+            print()
+            print(format_report_text(report))
+        if args.report_json:
+            rj_dir = os.path.dirname(args.report_json)
+            if rj_dir:
+                os.makedirs(rj_dir, exist_ok=True)
+            with open(args.report_json, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+                f.write("\n")
+            print(f"wrote report \u2192 {args.report_json}")
+
     if output_path:
         print()
         emit_att1(att1, output_path, emit_shard_meta=args.shard_meta)
-        print("note: tensor data is deterministic synthetic values — not real weights")
+        print("note: tensor data is deterministic synthetic values \u2014 not real weights")
         if args.shard_meta:
             n_tensors = 3 + att1["n_layers"] * 9
-            print(f"note: shard metadata section: {n_tensors} records × {_SHARD_REC_SZ} bytes")
+            print(f"note: shard metadata section: {n_tensors} records \u00d7 {_SHARD_REC_SZ} bytes")
     else:
         print()
-        print("note: dry run — pass --output PATH to emit a .att1 artifact")
+        print("note: dry run \u2014 pass --output PATH to emit a .att1 artifact")
 
 
 if __name__ == "__main__":

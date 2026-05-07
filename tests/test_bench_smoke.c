@@ -186,6 +186,77 @@ static int check_bench_tools(void)
     return 0;
 }
 
+static int check_converter_report(void)
+{
+    /* Skip gracefully when Python 3 is not available — converter tooling is
+     * Python-only and not required by the default make test path. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* --- text report --- */
+    if (run_command(
+            "python3 compiler/convert_llama_to_att1.py"
+            " --config compiler/fixtures/tiny_llama_config.json"
+            " --tiles 2 --shard-meta --report"
+            " > build/converter_report.txt 2>&1") != 0) {
+        return -1;
+    }
+
+    {
+        char rpt[8192];
+        if (read_file("build/converter_report.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "ATT-1 shard metadata plan report") == NULL) ||
+            (strstr(rpt, "source_arch     : llama")           == NULL) ||
+            (strstr(rpt, "tensor_count    : 21")              == NULL) ||
+            (strstr(rpt, "present")                           == NULL) ||
+            (strstr(rpt, "tile_count      : 2")               == NULL) ||
+            (strstr(rpt, "aimu_count      : 2")               == NULL) ||
+            (strstr(rpt, "dtype_f32       : 21")              == NULL) ||
+            (strstr(rpt, "tile[0]")                           == NULL) ||
+            (strstr(rpt, "tile[1]")                           == NULL) ||
+            (strstr(rpt, "layer[0]")                          == NULL) ||
+            (strstr(rpt, "layer[1]")                          == NULL) ||
+            (strstr(rpt, "status          : ok")              == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- JSON report --- */
+    if (run_command(
+            "python3 compiler/convert_llama_to_att1.py"
+            " --config compiler/fixtures/tiny_llama_config.json"
+            " --tiles 2 --shard-meta --report-json build/converter_report.json"
+            " > /dev/null 2>&1") != 0) {
+        return -1;
+    }
+
+    {
+        char rpt[8192];
+        if (read_file("build/converter_report.json", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "\"schema_version\"") == NULL) ||
+            (strstr(rpt, "\"source_arch\"")    == NULL) ||
+            (strstr(rpt, "\"llama\"")           == NULL) ||
+            (strstr(rpt, "\"tensor_count\"")   == NULL) ||
+            (strstr(rpt, ": 21")               == NULL) ||
+            (strstr(rpt, "\"shard_meta\"")     == NULL) ||
+            (strstr(rpt, "\"present\"")        == NULL) ||
+            (strstr(rpt, "\"tile_count\"")     == NULL) ||
+            (strstr(rpt, "\"tiles\"")           == NULL) ||
+            (strstr(rpt, "\"layers\"")          == NULL) ||
+            (strstr(rpt, "\"status\"")          == NULL) ||
+            (strstr(rpt, "\"ok\"")              == NULL)) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int check_size_tools(void)
 {
     char output[4096];
@@ -239,7 +310,9 @@ static int check_size_tools(void)
 
 int main(void)
 {
-    if ((check_bench_tools() != 0) || (check_size_tools() != 0)) {
+    if ((check_bench_tools()       != 0) ||
+        (check_size_tools()        != 0) ||
+        (check_converter_report()  != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

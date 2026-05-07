@@ -61,6 +61,8 @@ Milestone 36: Deterministic shard metadata fixture generation.
 - Milestone 41: Backend matrix validation for shard plans — `tests/test_backend_matrix.c` extended to 16 entries (4 groups: single/dummy, cluster/dummy/runtime, cluster/shard_meta/runtime, cluster/shard_meta/metadata); 3 consistency groups cross-validate runtime vs metadata plans; `att1-bench` single mode now prints `shard_plan=runtime`; `tests/test_bench_smoke.c` checks `shard_plan=runtime` in both single and cluster output; `docs/shard_metadata.md` §13 added. `make test` passes (37 tests; backend_matrix 8/16 passed, 8 skipped on CPU-only build).
 - Milestone 42: Converter stub with shard metadata — `compiler/convert_llama_to_att1.py` extended with `--tiles N` and `--shard-meta` flags; `models/converted_stub_meta/model.att1` (2-tile, 21 shard_meta records, layer 0 → tile 0, layer 1 → tile 1) checked in; `tests/test_backend_matrix.c` extended to 24 entries with group 3 cross-validating runtime vs metadata on the 2-tile stub; `docs/real_model_conversion.md` and `docs/shard_metadata.md` §14 updated. `make test` passes (37 tests; backend_matrix 12/24 passed, 12 skipped on CPU-only build).
 
+- Milestone 43: Converter shard metadata plan report — `compiler/convert_llama_to_att1.py` extended with `--report` (human-readable stdout) and `--report-json PATH` flags; `build_shard_plan_report()` and `format_report_text()` added; `tests/test_bench_smoke.c` `check_converter_report()` added (Python-skippable smoke test); `docs/real_model_conversion.md` §Shard plan report added; `docs/shard_metadata.md` §15 added. No `.att1` format change. No C source change. `make test` passes (37 tests).
+
 ## Active Task
 
 ## Next Prompt for Codex

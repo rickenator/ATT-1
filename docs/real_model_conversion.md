@@ -274,3 +274,59 @@ python3 compiler/convert_llama_to_att1.py \
 
 The fixture `models/converted_stub_meta/model.att1` is checked into the
 repository; no Python is required for `make test`.
+
+---
+
+## Shard plan report (Milestone 43)
+
+`compiler/convert_llama_to_att1.py` gains two new reporting flags that work
+with or without `--output` (dry-run compatible):
+
+| Flag | Description |
+|------|-------------|
+| `--report` | Print a human-readable shard plan report to stdout |
+| `--report-json PATH` | Write a JSON shard plan report to PATH |
+
+Both flags are independent; they can be combined with `--shard-meta`,
+`--tiles`, and `--output` in any combination.
+
+### Report contents
+
+| Section | Fields |
+|---------|--------|
+| Config summary | `vocab_size`, `n_layers`, `n_heads`, `d_model`, `d_ff`, `max_seq_len`, `rope_dim`, `rope_theta`, `n_tiles` |
+| Shard metadata | `present`/`absent`, `tensor_count`, `tile_count`, `aimu_count` |
+| Dtype summary | `dtype_f32`, `dtype_q8`, `quant_none` |
+| Tile ownership | per-tile: `tile_id`, `aimu_id`, `tensor_count`, `layer_range` |
+| Layer assignment | per-layer: `layer_id` → `tile_id` |
+| Validation | `status` (`ok`/`failed`), error list |
+| Tensors (JSON only) | per-tensor: `name`, `shape`, `dtype`, `quant`, `tile_id`, `bytes` |
+
+### Example usage
+
+```bash
+# Human-readable report (dry run — no artifact emitted)
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --tiles 2 --shard-meta --report
+
+# JSON report written to file
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --tiles 2 --shard-meta --report-json build/my_report.json
+
+# Emit artifact and print report in one pass
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/tiny_llama_config.json \
+    --tiles 2 --shard-meta --report \
+    --out models/converted_stub_meta/model.att1
+```
+
+### Smoke test
+
+`tests/test_bench_smoke.c` includes `check_converter_report()` which:
+1. Invokes `--report` and verifies key fields in the text output.
+2. Invokes `--report-json` and verifies the JSON structure.
+
+The check is skipped (not failed) when `python3` is absent from `$PATH`,
+preserving the Python-free `make test` guarantee.
