@@ -490,4 +490,9 @@ runtime fallback rules.
 | M52 | Tokenizer scanner/parser skeleton |
 | M53 | Tokenizer fixture import |
 | M54 | Optional `.att1` tokenizer metadata section |
-| M55 | Runtime tokenizer selection |
+| M55 | Runtime tokenizer selection plan (documentation only) |
+| M56 | Tokenizer selection CLI stub |
+| M57 | Metadata tokenizer validation path |
+| M58 | External tokenizer preprocessing mode |
+| M59 | BPE tokenizer parser prototype |
+| M60 | Tokenizer-aware converted model validation |

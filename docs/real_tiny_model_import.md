@@ -498,8 +498,12 @@ runtime tokenizer selection are part of M50.
 | M51 | Tokenizer metadata schema: document fields, binary/sidecar options, versioning, and hostile-input validation rules |
 | M52 | Tokenizer scanner/parser skeleton under `compiler/`; inventory assets and report tokenizer type without runtime integration |
 | M54 | Optional `.att1` tokenizer metadata section; C parser, loader detection, inspect reporting, Python fixture generator. ✅ |
-| M54 | Optional `.att1` tokenizer metadata section; loader/inspect reporting only, no default runtime selection |
-| M55 | Runtime tokenizer selection; opt-in real tokenizer path while byte tokenizer remains available for tests |
+| M55 | Runtime tokenizer selection plan: modes, CLI policy, compatibility checks, failure policy, and milestone split. ✅ |
+| M56 | Tokenizer selection CLI stub; byte wired; metadata/external stub-fail. |
+| M57 | Metadata tokenizer validation path; no BPE parser yet. |
+| M58 | External tokenizer preprocessing mode. |
+| M59 | BPE tokenizer parser prototype (if chosen). |
+| M60 | Tokenizer-aware converted model validation. |
 
 ### M51 — tokenizer metadata schema
 
@@ -687,6 +691,29 @@ load unchanged; `tok_meta.present` is `0` for them.
 
 `make test` passes (40 tests).  No inference behavior change.  No C tokenizer
 parser added.
+
+### M55 — runtime tokenizer selection plan (complete)
+
+**Goal:** Define how ATT-1 will select between byte-level tokenization and
+metadata-declared tokenization, without implementing any runtime tokenizer
+parser.  Documentation-only.  No C source, Makefile, or `.att1` format changes.
+No inference behavior change.
+
+See `docs/tokenizer_metadata.md` §M55 for the full spec.  Summary:
+
+- Byte tokenizer remains the sole active runtime path.
+- Three future modes: `byte` (default), `metadata`, `external`.
+- Future `--tokenizer byte|metadata|external` CLI flag (M56 stub).
+- `--tokenizer metadata` without a present, valid, supported tok_meta is a
+  hard error — no silent fallback.
+- Compatibility checks before metadata mode: vocab_size match, special token
+  ID range, normalization/pretokenizer support, asset hash match.
+- Testing strategy: byte baseline unchanged; metadata selection tests precede
+  implementation; golden prompt-to-ID fixtures required before M60.
+- Milestone split: M56 CLI stub → M57 validation path → M58 external mode →
+  M59 BPE parser → M60 tokenizer-aware model validation.
+
+`make test` passes (40 tests).  No code changes.
 
 1. **Single vs multi-shard safetensors:** Initial target is single-file
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is
