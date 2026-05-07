@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 69: public model source comparison report.
+Milestone 70: public model backend smoke validation.
 
 ## Hard Rules
 
@@ -88,12 +88,13 @@ Milestone 69: public model source comparison report.
 - Milestone 67: BF16/F16 source dtype coercion in load_safetensors.py — added `_coerce_bf16()` (zero-extend top 16 bits of F32) and `_coerce_f16()` (manual IEEE 754 half-precision decode) helpers; `_READABLE_DTYPES` extended to `{F32,BF16,F16}`; `TensorData` gains `coerced` bool field; `expected_dtype="F32"` in `load_tensor()` now also accepts coercible source dtypes; `format_tensor_report()` shows `BF16->F32` / `F16->F32` for coerced tensors; `check_llama_compat.py` moves BF16/F16 from required_changes to warnings (automatic coercion implemented, truly unsupported dtypes still flagged); added `compiler/fixtures/make_m67_bf16_fixture.py` (generator, seed=67) and checked-in `compiler/fixtures/m67_bf16_llama_2l.safetensors` (21 tensors, 5 213 bytes, BF16); `check_bf16_coercion()` added to `tests/test_bench_smoke.c` (4 sub-checks: single tensor coercion display, --check-values 21 ok, BF16 fixture conversion, compat scanner compat: pass with no required_change); no C runtime change, no Makefile change, no `.att1` format change. `make test` passes (42 tests).
 - Milestone 68: q8 conversion of BF16-source public model — `compare_att1_to_source.py` `_load_st_tensor()` extended to coerce BF16/F16 source tensors to F32 via imported `_coerce_bf16`/`_coerce_f16` helpers, enabling BF16-source static and forward comparisons; `check_q8_conversion()` added to `tests/test_bench_smoke.c` (5 sub-checks: q8 conversion of BF16 fixture, att1-inspect q8 dtype fields, cpu-q8 single bench, cpu-q8 cluster bench with fabric-packets guard, compare_att1_to_source numpy-skippable result=pass); `docs/quantization.md` q8 public-model section added (workflow, tolerance table, token-divergence notes); `docs/real_tiny_model_import.md` M68 section added (manual validation workflow, tolerance table, SmolLM2-135M size estimates); milestone table updated (M68 q8 conversion, M69 GQA, M70 SmolLM2-135M); no C runtime change, no Makefile change, no `.att1` format change. `make test` passes (43 tests).
 - Milestone 69: public model source comparison report — `compiler/compare_att1_to_source.py` now accepts `--model-dir` for local source model directories, resolves local `config.json`/`model.safetensors`, accepts explicit external f32/q8 `.att1` artifact paths, rejects URL-like paths, adds source-safetensors numpy reference loading, supports GQA-shaped K/V tensors in the Python reference only, adds `--q8-backend`, and reports `source_model_path`, dtype/backend, prompt IDs, logits shape, static max_abs/max_rel errors, tolerances, next-token result, and pass/fail status; `tests/test_bench_smoke.c` extends the existing Python/numpy-skippable source-comparison smoke with a local model-dir report check; `docs/real_model_conversion.md`, `docs/real_tiny_model_import.md`, and `docs/quantization.md` document manual public-model validation commands using paths outside Git. No C runtime change, no Makefile change, no `.att1` format change, no q4, no tokenizer parser in C, and no online runtime dependency. `make clean`, `make`, and `make test` pass on CPU build.
+- Milestone 70: public model backend smoke validation — added `compiler/validate_public_backends.py`, a stdlib-only manual validator that runs local external f32/q8 `.att1` artifacts through `att1-bench` with a local token IDs file across CPU f32/q8 single and cluster paths plus optional CUDA/cuda-q8 single and cluster paths; report rows include artifact path, backend, mode, shard plan, generated-token count, last token, token timing, and status; unsupported/unavailable CUDA rows are reported as `unsupported` and do not fail validation; `tests/test_bench_smoke.c` adds `check_public_backend_smoke()` under existing Python-skippable smoke behavior using checked-in tiny artifacts; `docs/real_model_conversion.md` and `docs/real_tiny_model_import.md` document manual commands. No C runtime change, no Makefile change, no `.att1` format change, no q4, no C tokenizer parser, no online runtime dependency, and no public artifacts committed. `make clean`, `make`, and `make test` pass on CPU build.
 
 ## Next Prompt for Codex
 
 ## Active Task
 
-Milestone 69 implementation complete; ready for diff review and commit.
+Milestone 70 implementation complete; ready for diff review and commit.
 
 ## Known Risks
 

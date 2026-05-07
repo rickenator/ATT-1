@@ -513,6 +513,47 @@ f32/q8 artifacts against that local source reference.  q8 next-token
 divergence remains a warning when static tensor error is within tolerance,
 because near-tied logits can flip greedy argmax under quantisation.
 
+## Public backend smoke validation (Milestone 70)
+
+M70 adds a manual backend smoke driver for locally converted public artifacts:
+`compiler/validate_public_backends.py`.  It is Python tooling only and wraps
+the existing C11 `att1-bench` binary.  Runtime code, the `.att1` binary format,
+q4, and C tokenizer parsing are unchanged.
+
+The validator requires local external paths for the source model directory,
+converted f32 artifact, converted q8 artifact, and a token IDs file:
+
+```sh
+# Optional: create an external token IDs file from the local tokenizer.
+python3 compiler/tokenize_hf.py \
+    --tokenizer ~/Models/SmolLM2-135M \
+    --text "The answer is" \
+    --out ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --add-special-tokens true
+
+# Run backend smoke validation.
+python3 compiler/validate_public_backends.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 1 \
+    --tiles 2 \
+    --report-json ~/Models/att1/SmolLM2-135M/backend_smoke.json
+```
+
+The validator runs:
+
+| Artifact | Required CPU paths | Optional CUDA paths |
+|----------|--------------------|---------------------|
+| f32 | `cpu-f32` single, `cpu-f32` cluster | `cuda` single, `cuda` cluster |
+| q8 | `cpu-q8` single, `cpu-q8` cluster | `cuda-q8` single, `cuda-q8` cluster |
+
+Each report row includes artifact path, backend, mode, shard plan,
+generated-token count, last token, total token timing, and pass/fail status.
+CUDA rows that report unsupported or unavailable are marked `unsupported` and
+do not fail the validation; CPU rows must pass.
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -541,5 +582,6 @@ because near-tied logits can flip greedy argmax under quantisation.
 | M67 | BF16/F16 source dtype coercion in `load_safetensors.py`; `_coerce_bf16`/`_coerce_f16` helpers; `TensorData.coerced` field; compat scanner promotes BF16/F16 to warning; BF16 fixture + smoke check |
 | M68 | q8 conversion of BF16-source public model: `compare_att1_to_source.py` BF16 support; q8 smoke check (`check_q8_conversion`); manual validation workflow for public models; documented tolerance and token-divergence behaviour |
 | M69 | Public model source comparison report: `--model-dir`, external f32/q8 artifact paths, source-safetensors numpy reference, richer pass/fail report fields |
-| M70 | GQA support: `n_kv_heads` config field, converter, runtime attention |
-| M71 | SmolLM2-135M import and validation (first real public model) |
+| M70 | Public backend smoke validation: local f32/q8 artifacts across CPU single/cluster and optional CUDA single/cluster paths |
+| M71 | GQA support: `n_kv_heads` config field, converter, runtime attention |
+| M72 | SmolLM2-135M import and validation (first real public model) |

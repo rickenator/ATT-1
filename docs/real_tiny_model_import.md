@@ -1977,6 +1977,69 @@ documented tolerance.
 
 ---
 
+### M70 — public model backend smoke validation
+
+**Status:** complete.  This milestone adds lightweight manual tooling to run
+local converted public f32/q8 ATT-1 artifacts through supported backend paths.
+It does not add public weights, generated public `.att1` artifacts, online
+runtime dependencies, q4, tokenizer parsing in C, or a binary format change.
+
+#### New tool
+
+| File | Purpose |
+|------|---------|
+| `compiler/validate_public_backends.py` | Runs `build/att1-bench` against local f32/q8 artifacts using a local token IDs file and prints a concise pass/fail report |
+
+#### Manual validation command
+
+Use local paths outside the Git tree:
+
+```sh
+# Create a token IDs file from the local tokenizer, or provide one manually.
+python3 compiler/tokenize_hf.py \
+    --tokenizer ~/Models/SmolLM2-135M \
+    --text "The answer is" \
+    --out ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --add-special-tokens true
+
+# Validate f32/q8 artifacts across backend smoke paths.
+python3 compiler/validate_public_backends.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 1 \
+    --tiles 2 \
+    --report-json ~/Models/att1/SmolLM2-135M/backend_smoke.json
+```
+
+Paths exercised:
+
+| Artifact | Backend | Mode | Required |
+|----------|---------|------|----------|
+| f32 | `cpu-f32` | single | yes |
+| f32 | `cpu-f32` | cluster | yes |
+| f32 | `cuda` | single | CUDA host only |
+| f32 | `cuda` | cluster | CUDA host only |
+| q8 | `cpu-q8` | single | yes |
+| q8 | `cpu-q8` | cluster | yes |
+| q8 | `cuda-q8` | single | CUDA host only |
+| q8 | `cuda-q8` | cluster | CUDA host only |
+
+Each `run:` line reports artifact path, backend, mode, shard plan,
+`generated_tokens`, `last_token`, `token_time_us_total`, and status.  CUDA
+rows with unavailable or unsupported CUDA are reported as `status=unsupported`
+and do not fail the validation; CPU rows must pass.
+
+#### Test coverage
+
+`tests/test_bench_smoke.c` adds `check_public_backend_smoke()`, a
+Python-skippable check that runs the M70 validator against checked-in tiny f32
+and q8 artifacts.  It verifies the report shape and JSON output while allowing
+CUDA rows to be either pass or unsupported.
+
+---
+
 ## Related Documents
 
 - [real_model_conversion.md](real_model_conversion.md) — existing converter
