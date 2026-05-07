@@ -3,6 +3,20 @@
 This document describes the AIMU (Application-specific Inference Memory Unit)
 concept that motivates the ATT-1 artifact format and C11 runtime prototype.
 
+## AIMU
+
+**AIMU** — pronounced **EYE-mew** — stands for **Application-specific Inference Memory Unit**.
+
+An AIMU is a programmable near-memory tensor-tile execution unit. In the current software prototype, a cluster node or shard simulates an AIMU. In future silicon, an AIMU would own a tensor tile, execute local inference operations, validate tile metadata, and communicate intermediate results through the inference fabric.
+
+In the current ATT-1 software prototype, a cluster node or shard simulates an AIMU. In future silicon, an AIMU would own tensor memory directly, execute local inference operations near that data, validate tile metadata, and exchange only the necessary intermediate results through the inference fabric.
+
+The central idea is simple:
+
+> Move computation to the tensor tile, rather than repeatedly moving tensor data to distant compute units.
+
+This makes the cluster backend more than a distributed runtime experiment. It is a software model for an AIMU-style inference fabric.
+
 ---
 
 ## 1. Core Concept

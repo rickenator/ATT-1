@@ -235,6 +235,21 @@ att1_status_t att1_model_load(const char *path, att1_model *model)
         return ATT1_ERR_BAD_FORMAT;
     }
 
+    /* Shard metadata must not overlap the descriptor table or data section. */
+    if (shard_size != 0u) {
+        if ((shard_offset < desc_offset + desc_bytes) &&
+            (desc_offset < shard_offset + shard_size)) {
+            free(data);
+            return ATT1_ERR_BAD_FORMAT;
+        }
+
+        if ((shard_offset < data_offset + data_size) &&
+            (data_offset < shard_offset + shard_size)) {
+            free(data);
+            return ATT1_ERR_BAD_FORMAT;
+        }
+    }
+
     if (tensor_count > (uint64_t)SIZE_MAX / sizeof(*model->tensors)) {
         free(data);
         return ATT1_ERR_OOM;
@@ -279,6 +294,20 @@ att1_status_t att1_model_load(const char *path, att1_model *model)
         model->tensors[i].data = &data[data_offset + model->tensors[i].offset];
     }
 
+    if (shard_size != 0u) {
+        const att1_status_t meta_rc = att1_shard_meta_parse(
+            &data[shard_offset],
+            shard_size,
+            tensor_count,
+            model->tensors,
+            &model->shard_meta);
+
+        if (meta_rc != ATT1_OK) {
+            att1_model_free(model);
+            return meta_rc;
+        }
+    }
+
     return ATT1_OK;
 }
 
@@ -289,6 +318,7 @@ void att1_model_free(att1_model *model)
     }
 
     free(model->tensors);
+    att1_shard_meta_free(&model->shard_meta);
     free(model->file_data);
     memset(model, 0, sizeof(*model));
 }

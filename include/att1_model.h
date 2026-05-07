@@ -2,6 +2,7 @@
 #define ATT1_MODEL_H
 
 #include "att1_status.h"
+#include "att1_shard_meta.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -55,6 +56,7 @@ typedef struct att1_model {
     att1_model_tensor *tensors;
     unsigned char *file_data;
     size_t file_size;
+    att1_shard_meta shard_meta;
 } att1_model;
 
 /*

@@ -358,6 +358,52 @@ The stub emitter in Milestone 32 omits shard metadata entirely
 
 ---
 
+## 7. Implementation Status (Milestone 35)
+
+**C parser skeleton is in place** (`src/shard_meta.c`, `include/att1_shard_meta.h`).
+
+The loader (`src/model_loader.c`) now:
+- Detects and bounds-checks an optional shard metadata section.
+- Verifies the section does not overlap the descriptor table or data section.
+- Calls `att1_shard_meta_parse()` when `shard_metadata_size != 0`.
+- Populates `att1_model.shard_meta` on success; returns `ATT1_ERR_BAD_FORMAT`
+  on any violation.
+- Frees parsed records in `att1_model_free()`.
+
+Validation rules implemented:
+
+| Rule | Status |
+|------|--------|
+| 1. section_size == tensor_count × 120 | ✅ |
+| 2. tensor_id sequence 0..N-1 in order | ✅ |
+| 3. tile_id unassigned accepted at load time | ✅ |
+| 4. byte_offset + nbytes overflow check | deferred |
+| 5. shape cross-validation vs tensor descriptor | ✅ |
+| 6. dtype in {1, 2} | ✅ |
+| 7. quantization in {0, 1} | ✅ |
+| 8. replication_policy in {0, 1, 2} | ✅ |
+| 9. reduction_behavior in {0, 1, 2, 3} | ✅ |
+| 10. _reserved == 0 | ✅ |
+| 11. dependency_graph acyclic | deferred |
+| 12. checksum verification when nonzero | deferred (CRC-64 TBD) |
+| 13. section non-overlap with desc/data | ✅ |
+
+**Not yet implemented**: AIMU placement enforcement, checksum verification,
+acyclic graph check, byte_offset capacity validation.  These are deferred to
+the milestone that introduces AIMU silicon targets.
+
+Test coverage added in `tests/test_shard_meta.c` (8 test cases):
+- No metadata section
+- Valid tiny metadata section (1 record)
+- Bad bounds (shard_size extends past EOF)
+- Truncated records (section_size not a multiple of 120)
+- Bad record count (section_size implies wrong number of records)
+- Invalid tensor_id order
+- Invalid dtype code
+- Non-zero _reserved field
+
+---
+
 ## Related Documents
 
 - [model_format.md](model_format.md) — current `.att1` binary format (version 1)
