@@ -280,22 +280,54 @@ human-readable tensor inventory, without loading any tensor data.
 - No changes to C source, Makefile, or `.att1` format.
 - `make test` passes (39 tests).
 
-### M47 — safetensors tensor reader
+### M47 — safetensors tensor reader (complete)
 
-**Goal:** Load actual tensor data from `.safetensors`, apply dtype conversion
-and transposition, and produce a validated numpy array per tensor.
+**Goal:** Load actual tensor payload bytes from a `.safetensors` file, decode
+F32 values, and return a deterministic Python data structure — using Python
+standard library only (no numpy, no external dependencies).
 
-**Scope:**
-- Extends the M46 scanner with `load_tensor(path, name) -> np.ndarray`.
-- Dtype coercion: `bfloat16 → float32`, `float16 → float32`, `float32` pass
-  through.  All other dtypes are errors.
-- Endianness: safetensors is always little-endian.
-- No external libraries beyond `numpy` and Python `struct`/`mmap`; no
-  `safetensors` PyPI package dependency.
-- Applies shape and transposition rules from the tensor mapping table above.
-- Validates every per-tensor `nbytes = product(shape) * element_size` against
-  the safetensors byte range.
-- No changes to C source or Makefile.
+**Implementation:**
+
+- **`compiler/load_safetensors.py`** — new module + CLI built on the M46
+  scanner.  Public API:
+  - `LoadError(Exception)` — raised for all load-level failures.
+  - `TensorData` namedtuple — `name`, `dtype`, `shape`, `values`
+    (tuple of float, row-major), `nbytes`.
+  - `load_tensor(path, name, expected_dtype=None, expected_shape=None)`
+    — validates dtype and shape, reads payload bytes from the file's data
+    region, decodes as little-endian F32 via `struct.unpack`.  Raises
+    `ScanError` (propagated from M46) or `LoadError`.
+  - `load_all(path)` — loads all readable tensors; returns
+    `(loaded, skipped, errors)`.
+  - `format_tensor_report(td, max_values=8)` — one-tensor human output.
+  - `format_summary(loaded, skipped, errors)` — multi-tensor summary.
+
+  Supported dtype: F32 only (M47).  BF16/F16 coercion deferred to M48.
+
+  CLI flags: `--tensor NAME`, `--expected-dtype DTYPE`,
+  `--expected-shape DIM,...`, `--summary`, `--check-values`.
+  Exit codes: 0 = success, 1 = scan/load error, 2 = NaN/Inf found.
+
+  Error conditions:
+  - Tensor name not found → `LoadError`.
+  - `expected_dtype` mismatch → `LoadError`.
+  - Unsupported dtype (BF16, F16, etc.) → `LoadError`.
+  - `expected_shape` mismatch → `LoadError`.
+  - Payload bytes shorter than declared → `LoadError` (defensive).
+  - Truncated file (offsets exceed data region) → `ScanError` (M46).
+
+- **`compiler/test_load_safetensors.py`** — self-contained Python test (10
+  checks): embed/q\_proj/gate\_proj/norm/lm\_head loads; expected\_dtype
+  mismatch; expected\_shape mismatch; BF16 unsupported dtype; truncated file;
+  known non-zero value decode.  Outputs `self_test: ok` on success.
+
+- **`tests/test_bench_smoke.c`** — `check_tensor_reader()` added
+  (Python-skippable): loads embed (dtype/shape/elements), q\_proj (elements),
+  gate\_proj (elements), norm.weight (elements), `--check-values` (21 tensors
+  finite), `compiler/test_load_safetensors.py` self-test.
+
+- No changes to C source (other than `test_bench_smoke.c`), Makefile, or
+  `.att1` format.  `make test` passes (39 tests).
 
 ### M48 — real f32 converted tiny model
 

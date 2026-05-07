@@ -308,6 +308,129 @@ static int check_size_tools(void)
     return 0;
 }
 
+static int check_tensor_reader(void)
+{
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* --- token embedding tensor --- */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " --tensor model.embed_tokens.weight"
+            " > build/load_embed.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/load_embed.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "load: ok")      == NULL) ||
+            (strstr(rpt, "dtype: F32")    == NULL) ||
+            (strstr(rpt, "shape: [16,8]") == NULL) ||
+            (strstr(rpt, "elements: 128") == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- attention projection tensor --- */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " --tensor model.layers.0.self_attn.q_proj.weight"
+            " > build/load_qproj.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/load_qproj.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "load: ok")     == NULL) ||
+            (strstr(rpt, "elements: 64") == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- FFN tensor --- */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " --tensor model.layers.0.mlp.gate_proj.weight"
+            " > build/load_gate.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/load_gate.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "load: ok")      == NULL) ||
+            (strstr(rpt, "elements: 128") == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- final norm tensor --- */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " --tensor model.norm.weight"
+            " > build/load_norm.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/load_norm.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "load: ok")    == NULL) ||
+            (strstr(rpt, "elements: 8") == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- check-values: all 21 tensors finite --- */
+    if (run_command(
+            "python3 compiler/load_safetensors.py"
+            " compiler/fixtures/tiny_llama_2l.safetensors"
+            " --check-values"
+            " > build/load_chkval.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/load_chkval.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "values_ok=21")     == NULL) ||
+            (strstr(rpt, "check_values: ok") == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- error-case self-test --- */
+    if (run_command(
+            "python3 compiler/test_load_safetensors.py"
+            " > build/load_selftest.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/load_selftest.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if (strstr(rpt, "self_test: ok") == NULL) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int check_scanner(void)
 {
     /* Skip gracefully when Python 3 is not available. */
@@ -366,7 +489,8 @@ int main(void)
     if ((check_bench_tools()       != 0) ||
         (check_size_tools()        != 0) ||
         (check_converter_report()  != 0) ||
-        (check_scanner()           != 0)) {
+        (check_scanner()           != 0) ||
+        (check_tensor_reader()     != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
