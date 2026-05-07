@@ -484,13 +484,143 @@ static int check_scanner(void)
     return 0;
 }
 
+static int check_tokenizer_scanner(void)
+{
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* --- basic scan of tiny tokenizer fixture --- */
+    if (run_command(
+            "python3 compiler/scan_tokenizer.py"
+            " compiler/fixtures/tiny_tokenizer"
+            " > build/tok_scan.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/tok_scan.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "tokenizer_type=bpe_json") == NULL) ||
+            (strstr(rpt, "vocab_size=16")           == NULL) ||
+            (strstr(rpt, "bos_id=1")                == NULL) ||
+            (strstr(rpt, "eos_id=2")                == NULL) ||
+            (strstr(rpt, "scan: ok")                == NULL)) {
+            return -1;
+        }
+    }
+
+    /* --- cross-check vocab_size against model config --- */
+    if (run_command(
+            "python3 compiler/scan_tokenizer.py"
+            " compiler/fixtures/tiny_tokenizer"
+            " --config compiler/fixtures/tiny_llama/config.json"
+            " > build/tok_config_check.txt 2>&1") != 0) {
+        return -1;
+    }
+    {
+        char rpt[4096];
+        if (read_file("build/tok_config_check.txt", rpt, sizeof(rpt)) != 0) {
+            return -1;
+        }
+        if ((strstr(rpt, "vocab_size_match=yes") == NULL) ||
+            (strstr(rpt, "scan: ok")             == NULL)) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int check_tokenizer_import_report(void)
+{
+    char rpt[8192];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* --- human-readable import report --- */
+    if (run_command(
+            "python3 compiler/scan_tokenizer.py"
+            " compiler/fixtures/tiny_tokenizer"
+            " --report"
+            " --model-config compiler/fixtures/tiny_llama/config.json"
+            " > build/tok_import_report.txt 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/tok_import_report.txt", rpt, sizeof(rpt)) != 0) {
+        return -1;
+    }
+    if ((strstr(rpt, "tokenizer_type=bpe_json")    == NULL) ||
+        (strstr(rpt, "vocab_size=16")               == NULL) ||
+        (strstr(rpt, "bos_id=1")                    == NULL) ||
+        (strstr(rpt, "eos_id=2")                    == NULL) ||
+        (strstr(rpt, "vocab_size_match=yes")         == NULL) ||
+        (strstr(rpt, "import_ready=yes")             == NULL) ||
+        (strstr(rpt, "canonical_hash=")              == NULL) ||
+        (strstr(rpt, "unsupported_fields=none")      == NULL) ||
+        (strstr(rpt, "report: ok")                   == NULL)) {
+        return -1;
+    }
+
+    /* --- JSON import report written to file --- */
+    if (run_command(
+            "python3 compiler/scan_tokenizer.py"
+            " compiler/fixtures/tiny_tokenizer"
+            " --report-json build/tok_import_report.json"
+            " --model-config compiler/fixtures/tiny_llama/config.json"
+            " > /dev/null 2>&1") != 0) {
+        return -1;
+    }
+    if (read_file("build/tok_import_report.json", rpt, sizeof(rpt)) != 0) {
+        return -1;
+    }
+    if ((strstr(rpt, "\"tokenizer_type\"")   == NULL) ||
+        (strstr(rpt, "\"bpe_json\"")         == NULL) ||
+        (strstr(rpt, "\"vocab_size\"")       == NULL) ||
+        (strstr(rpt, "\"import_ready\"")     == NULL) ||
+        (strstr(rpt, "\"canonical_hash\"")   == NULL) ||
+        (strstr(rpt, "\"unsupported_fields\"") == NULL)) {
+        return -1;
+    }
+
+    /* --- mismatch: tokenizer vocab_size=16, config says 32 --- */
+    if (run_command(
+            "printf '{\"vocab_size\":32}'"
+            " > build/tok_mismatch_config.json") != 0) {
+        return -1;
+    }
+    /* exit code 2 expected on vocab_size mismatch; ignore it */
+    run_command(
+        "python3 compiler/scan_tokenizer.py"
+        " compiler/fixtures/tiny_tokenizer"
+        " --report"
+        " --model-config build/tok_mismatch_config.json"
+        " > build/tok_mismatch.txt 2>&1");
+    if (read_file("build/tok_mismatch.txt", rpt, sizeof(rpt)) != 0) {
+        return -1;
+    }
+    if ((strstr(rpt, "vocab_size_match=no") == NULL) ||
+        (strstr(rpt, "import_ready=no")     == NULL)) {
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
-    if ((check_bench_tools()       != 0) ||
-        (check_size_tools()        != 0) ||
-        (check_converter_report()  != 0) ||
-        (check_scanner()           != 0) ||
-        (check_tensor_reader()     != 0)) {
+    if ((check_bench_tools()              != 0) ||
+        (check_size_tools()               != 0) ||
+        (check_converter_report()         != 0) ||
+        (check_scanner()                  != 0) ||
+        (check_tensor_reader()            != 0) ||
+        (check_tokenizer_scanner()        != 0) ||
+        (check_tokenizer_import_report()  != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

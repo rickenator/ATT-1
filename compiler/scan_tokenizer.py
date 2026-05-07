@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""
-ATT-1 tokenizer asset scanner (Milestone 52).
+"""ATT-1 tokenizer asset scanner and import-report generator (Milestone 52/53).
 
 Scans a directory for tokenizer asset files, parses available metadata,
 and reports tokenizer type, vocabulary size, special-token IDs, byte-fallback
 status, normalization/pretokenizer info, and per-file checksums.
+Also produces a deterministic tokenizer import report (text or JSON) that
+records import readiness, unsupported fields, and a canonical asset hash.
 
 No external dependencies.  Does not import or execute tokenizer logic.
 Does not modify any files.
@@ -35,6 +36,15 @@ Usage:
     # suppress per-asset detail
     python3 compiler/scan_tokenizer.py path/to/tokenizer/dir --no-detail
 
+    # tokenizer import report (human-readable)
+    python3 compiler/scan_tokenizer.py path/to/tokenizer/dir \
+        --report --model-config compiler/fixtures/tiny_llama/config.json
+
+    # tokenizer import report (JSON to file)
+    python3 compiler/scan_tokenizer.py path/to/tokenizer/dir \
+        --report-json build/tok_import_report.json \
+        --model-config compiler/fixtures/tiny_llama/config.json
+
 Exit codes:
     0  scan ok (no fatal errors; warnings may appear)
     1  fatal scan error (file unreadable, malformed JSON, etc.)
@@ -56,6 +66,15 @@ _ASSET_NAMES = [
     "tokenizer_config.json",
     "special_tokens_map.json",
     "tokenizer.model",
+]
+
+# Canonical ordering for the composite asset hash (M51 schema).
+# Missing/absent files are skipped; present files are hashed in this order.
+_CANONICAL_HASH_ORDER = [
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
 ]
 
 # ---------------------------------------------------------------------------
@@ -108,6 +127,29 @@ def _load_json_file(path: str) -> dict:
             f"{type(data).__name__}"
         )
     return data
+
+
+def _canonical_asset_hash(dirpath: str, assets: dict) -> str:
+    """Return a SHA-256 hex digest over all present asset files.
+
+    Files are processed in *_CANONICAL_HASH_ORDER*; absent/skipped files are
+    omitted so the hash is deterministic for a given set of present assets.
+    """
+    h = hashlib.sha256()
+    for fname in _CANONICAL_HASH_ORDER:
+        status = assets.get(fname, "absent")
+        if status in ("present", "unsupported"):
+            fpath = os.path.join(dirpath, fname)
+            try:
+                with open(fpath, "rb") as fh:
+                    while True:
+                        chunk = fh.read(65536)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+            except OSError:
+                pass
+    return h.hexdigest()
 
 
 def _resolve_special_token_id(token_str, vocab: dict) -> int:
@@ -354,6 +396,128 @@ def scan_tokenizer_dir(dirpath: str, config_path: str = None) -> dict:
     }
 
 
+def build_import_report(result: dict) -> dict:
+    """Extend a scan result dict with import-readiness fields.
+
+    Returns a new dict that includes all keys from *result* plus:
+        import_ready      bool   True when the tokenizer is ready to import
+        unsupported_fields list[str]  fields/assets detected but not yet supported
+        canonical_hash    str    SHA-256 over present asset files (canonical order)
+    """
+    unsupported: list = []
+
+    # tokenizer.model is present but binary SentencePiece not yet supported
+    if result["assets"].get("tokenizer.model") == "unsupported":
+        unsupported.append("tokenizer.model")
+
+    # unknown tokenizer type means we could not classify the source
+    if result["tokenizer_type"] == "unknown":
+        unsupported.append("tokenizer_type")
+
+    # sentencepiece type is detected but not yet importable
+    if result["tokenizer_type"] == "sentencepiece":
+        unsupported.append("tokenizer_type=sentencepiece")
+
+    # normalizer types other than null/none are noted for future support
+    if result["normalizer"] and result["normalizer"].lower() not in ("none",):
+        unsupported.append(f"normalizer={result['normalizer']}")
+
+    import_ready = (
+        len(result["errors"]) == 0
+        and result["vocab_size_match"] is not False
+        and result["tokenizer_type"] not in ("unknown", "sentencepiece")
+        and not unsupported
+    )
+
+    canonical_hash = _canonical_asset_hash(result["dir"], result["assets"])
+
+    report = dict(result)
+    report["import_ready"]       = import_ready
+    report["unsupported_fields"] = unsupported
+    report["canonical_hash"]     = canonical_hash
+    return report
+
+
+def format_import_report(result: dict, show_detail: bool = True) -> str:
+    """Render a human-readable tokenizer import report."""
+    lines = ["# ATT-1 tokenizer import report"]
+    lines.append(f"tokenizer_dir={result['dir']}")
+    lines.append(f"tokenizer_type={result['tokenizer_type']}")
+    lines.append(
+        f"vocab_size={result['vocab_size'] if result['vocab_size'] is not None else 'unknown'}"
+    )
+    lines.append(f"bos_id={result['bos_id']}")
+    lines.append(f"eos_id={result['eos_id']}")
+    lines.append(f"pad_id={result['pad_id']}")
+    lines.append(f"unk_id={result['unk_id']}")
+    lines.append(
+        f"byte_fallback={'true' if result['byte_fallback'] else ('false' if result['byte_fallback'] is False else 'unknown')}"
+    )
+    lines.append(
+        f"normalizer={result['normalizer'] if result['normalizer'] else 'none'}"
+    )
+    lines.append(
+        f"pretokenizer={result['pretokenizer'] if result['pretokenizer'] else 'none'}"
+    )
+    lines.append(f"canonical_hash={result.get('canonical_hash', 'none')}")
+
+    lines.append("")
+    lines.append("# compatibility")
+    if result["config_vocab_size"] is not None:
+        lines.append(f"config_vocab_size={result['config_vocab_size']}")
+        if result["vocab_size_match"] is True:
+            lines.append("vocab_size_match=yes")
+        elif result["vocab_size_match"] is False:
+            lines.append("vocab_size_match=no")
+    else:
+        lines.append("config_vocab_size=none")
+    lines.append(
+        f"import_ready={'yes' if result.get('import_ready') else 'no'}"
+    )
+
+    lines.append("")
+    lines.append("# unsupported fields")
+    unsup = result.get("unsupported_fields", [])
+    if unsup:
+        for f in unsup:
+            lines.append(f"  unsupported: {f}")
+    else:
+        lines.append("unsupported_fields=none")
+
+    if show_detail:
+        lines.append("")
+        lines.append("# assets")
+        for fname in _ASSET_NAMES:
+            status = result["assets"].get(fname, "absent")
+            h      = result["asset_hashes"].get(fname, "")
+            if h:
+                lines.append(f"  {fname:<40} {status}  sha256={h[:16]}\u2026")
+            else:
+                lines.append(f"  {fname:<40} {status}")
+
+    if result["errors"]:
+        lines.append("")
+        for err in result["errors"]:
+            lines.append(f"  error: {err}")
+
+    if result["warnings"]:
+        lines.append("")
+        for w in result["warnings"]:
+            lines.append(f"  warning: {w}")
+
+    lines.append("")
+    n_errors = len(result["errors"])
+    if n_errors:
+        lines.append(f"report: {n_errors} error(s)")
+    else:
+        lines.append("report: ok")
+
+    if result["vocab_size_match"] is False:
+        lines.append("vocab_mismatch: fatal")
+
+    return "\n".join(lines)
+
+
 def format_tokenizer_report(result: dict, show_detail: bool = True) -> str:
     """Render a human-readable tokenizer scan report."""
     lines = []
@@ -424,7 +588,7 @@ def format_tokenizer_report(result: dict, show_detail: bool = True) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ATT-1 tokenizer asset scanner (M52)",
+        description="ATT-1 tokenizer asset scanner / import-report generator (M52/53)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -436,8 +600,20 @@ def main():
         help="Path to model config.json for vocab_size cross-check",
     )
     parser.add_argument(
+        "--model-config", metavar="PATH", default=None, dest="model_config",
+        help="Alias for --config",
+    )
+    parser.add_argument(
         "--json", action="store_true", dest="output_json",
-        help="Write JSON to stdout instead of human-readable text",
+        help="Write JSON scan result to stdout",
+    )
+    parser.add_argument(
+        "--report", action="store_true",
+        help="Print human-readable tokenizer import report to stdout",
+    )
+    parser.add_argument(
+        "--report-json", metavar="PATH", default=None, dest="report_json",
+        help="Write JSON import report to PATH",
     )
     parser.add_argument(
         "--no-detail", action="store_true",
@@ -445,16 +621,41 @@ def main():
     )
     args = parser.parse_args()
 
+    # --model-config is a friendly alias for --config
+    config_path = args.model_config or args.config
+
     try:
-        result = scan_tokenizer_dir(args.dirpath, config_path=args.config)
+        result = scan_tokenizer_dir(args.dirpath, config_path=config_path)
     except TokenizerScanError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if args.output_json:
-        print(json.dumps(result, indent=2))
+    # Build import report when either report flag is used
+    use_import_report = args.report or (args.report_json is not None)
+    if use_import_report:
+        report = build_import_report(result)
     else:
+        report = result
+
+    # Write JSON report to file if requested
+    if args.report_json is not None:
+        try:
+            with open(args.report_json, "w", encoding="utf-8") as fh:
+                json.dump(report, fh, indent=2)
+                fh.write("\n")
+        except OSError as exc:
+            print(f"error: could not write report: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Stdout output: import report, JSON scan, or default scan
+    if args.report:
+        print(format_import_report(report, show_detail=not args.no_detail))
+    elif args.output_json:
+        print(json.dumps(result, indent=2))
+    elif not args.report_json:
+        # no stdout flag and no --report-json: print default scan
         print(format_tokenizer_report(result, show_detail=not args.no_detail))
+    # If only --report-json was given: no stdout output (file only)
 
     if result["errors"]:
         sys.exit(1)

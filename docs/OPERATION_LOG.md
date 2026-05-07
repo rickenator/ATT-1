@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 52: tokenizer scanner/parser skeleton.
+Milestone 53: tokenizer fixture import report.
 
 ## Hard Rules
 
@@ -71,10 +71,11 @@ Milestone 52: tokenizer scanner/parser skeleton.
 - Milestone 50: tokenizer import plan — documentation-only plan added to `docs/real_tiny_model_import.md` and summarized in `docs/real_model_conversion.md`; current byte-level tokenizer remains the runtime default and real tokenizer import starts converter-side first; expected assets are `tokenizer.json`, future `tokenizer.model`, `tokenizer_config.json`, and `special_tokens_map.json`; plan covers token ID stability, `vocab_size` agreement across config/embeddings/lm_head/tokenizer vocab, BOS/EOS/PAD/UNK handling, byte-fallback behavior, validation risks, and M51-M55 follow-on split. No C source change. No Makefile change. No `.att1` format change. No tokenizer parser implementation. No new dependencies. `make clean && make && make test` passes.
 - Milestone 51: tokenizer metadata schema — `docs/tokenizer_metadata.md` added as the optional future tokenizer metadata schema; `docs/real_tiny_model_import.md` and `docs/real_model_conversion.md` cross-reference it. Schema version 1 covers tokenizer type (`byte`, `bpe_json`, `sentencepiece`, `unknown`), `vocab_size`, BOS/EOS/PAD/UNK IDs, byte fallback, normalization and pretokenizer policies, tokenizer asset hash, reserved future embedded asset offset/size fields, compatibility checks against model config and tensor vocab dimensions, hostile-input validation, and runtime fallback rules. Metadata remains optional; existing byte-level tokenizer remains default; no parser, SentencePiece import, dependency, Makefile, C source, `.att1` format, or inference behavior changes. Validation: `make clean && make && make test` passes.
 - Milestone 52: tokenizer asset scanner — `compiler/scan_tokenizer.py` added (module + CLI: `scan_tokenizer_dir()`, `format_tokenizer_report()`; `TokenizerScanError`; discovers and parses `tokenizer.json`/`tokenizer_config.json`/`special_tokens_map.json`; detects `tokenizer.model` as unsupported; reports `tokenizer_type`, `vocab_size`, `bos_id`, `eos_id`, `pad_id`, `unk_id`, `byte_fallback`, `normalizer`, `pretokenizer`, SHA-256 per-asset; cross-checks `vocab_size` against `--config`; exit codes 0/1/2); `compiler/fixtures/tiny_tokenizer/tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json` (16-token BPE fixture, BOS=1, EOS=2, UNK=0) added; `tests/test_bench_smoke.c` `check_tokenizer_scanner()` added (Python-skippable, asserts `tokenizer_type=bpe_json`, `vocab_size=16`, `bos_id=1`, `eos_id=2`, `scan: ok`, `vocab_size_match=yes`); `docs/real_tiny_model_import.md` §M52 added. No C source change (other than smoke test). No Makefile change. No `.att1` format change. `make test` passes (39 tests).
+- Milestone 53: tokenizer fixture import report — `compiler/scan_tokenizer.py` extended with `build_import_report()` (adds `import_ready`, `unsupported_fields`, `canonical_hash` to scan result), `format_import_report()` (sectioned human-readable report), `--report` (stdout import report), `--report-json PATH` (JSON import report to file), `--model-config PATH` (alias for `--config`); `_canonical_asset_hash()` added (SHA-256 over present asset files in canonical order: tokenizer.json, tokenizer.model, tokenizer_config.json, special_tokens_map.json); `tests/test_bench_smoke.c` `check_tokenizer_import_report()` added (Python-skippable: asserts `import_ready=yes`, `canonical_hash=`, `unsupported_fields=none`, `report: ok` on text report; asserts JSON keys on file report; asserts `vocab_size_match=no` and `import_ready=no` on mismatch); `docs/tokenizer_metadata.md` canonical hash section and M53 milestone status added; `docs/real_tiny_model_import.md` §M53 added. No C source change (other than smoke test). No Makefile change. No `.att1` format change. `make test` passes (39 tests).
 
 ## Active Task
 
-Milestone 51 complete. Await Milestone 52 scope.
+Milestone 53 complete. Await Milestone 54 scope.
 
 ## Next Prompt for Codex
 

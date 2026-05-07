@@ -571,9 +571,69 @@ without implementing a tokenizer or modifying runtime behavior.
 - No C source change (other than `test_bench_smoke.c`), no Makefile change,
   no `.att1` format change.  `make test` passes (39 tests).
 
----
+### M53 — tokenizer fixture import report (complete)
 
-## Open questions (to resolve before M46)
+**Goal:** Extend the M52 tokenizer scanner to produce a deterministic
+human-readable and JSON tokenizer import report — including import readiness,
+unsupported-field listing, and a canonical composite asset hash — without
+embedding tokenizer metadata into `.att1` and without changing runtime behavior.
+
+**New public API in `compiler/scan_tokenizer.py`:**
+
+- `build_import_report(result: dict) -> dict` — extends a `scan_tokenizer_dir`
+  result with three additional keys:
+  - `import_ready` (`bool`) — `True` when no scan errors, no vocab_size
+    mismatch, tokenizer type is `bpe_json`, and no unsupported fields are
+    present.
+  - `unsupported_fields` (`list[str]`) — names every detected-but-unsupported
+    item: `tokenizer.model` (binary SentencePiece), `tokenizer_type` (unknown),
+    `tokenizer_type=sentencepiece`, or non-null normalizer types.
+  - `canonical_hash` (`str`) — SHA-256 hex digest of all present asset files
+    concatenated in canonical order (`tokenizer.json`, `tokenizer.model`,
+    `tokenizer_config.json`, `special_tokens_map.json`); absent files are
+    skipped.  Deterministic for a given set of present assets.
+
+- `format_import_report(result: dict, show_detail: bool = True) -> str` —
+  human-readable import report with sections: header fields, `# compatibility`,
+  `# unsupported fields`, `# assets`, errors/warnings, and `report: ok`.
+
+**New CLI flags:**
+
+| Flag | Meaning |
+|------|---------|
+| `--report` | Print human-readable import report to stdout |
+| `--report-json PATH` | Write JSON import report to `PATH` (no stdout output when used alone) |
+| `--model-config PATH` | Alias for `--config` (friendly name) |
+
+Both `--report` and `--report-json PATH` can be combined: text goes to stdout,
+JSON goes to the file.
+
+**Determinism guarantees:**
+- `canonical_hash` is identical for identical asset file contents.
+- Field ordering in text and JSON output is fixed.
+- Two invocations on the same fixture produce byte-identical reports.
+
+**Error/edge-case behavior (unchanged from M52):**
+- Directory not found → `TokenizerScanError` → exit 1.
+- `tokenizer.json` malformed → exit 1.
+- `tokenizer.model` present → `unsupported_fields=[tokenizer.model]`,
+  `import_ready=no`, exit 1.
+- `vocab_size` mismatch → `import_ready=no`, `vocab_size_match=no`, exit 2.
+
+**`tests/test_bench_smoke.c`** — `check_tokenizer_import_report()` added
+(Python-skippable, wired into `main()`):
+1. Runs `--report --model-config ...` → asserts `tokenizer_type=bpe_json`,
+   `vocab_size=16`, `bos_id=1`, `eos_id=2`, `vocab_size_match=yes`,
+   `import_ready=yes`, `canonical_hash=`, `unsupported_fields=none`,
+   `report: ok`.
+2. Runs `--report-json build/tok_import_report.json` → asserts JSON contains
+   `"tokenizer_type"`, `"bpe_json"`, `"import_ready"`, `"canonical_hash"`,
+   `"unsupported_fields"`.
+3. Creates a mismatched config (`vocab_size=32`) → asserts `vocab_size_match=no`
+   and `import_ready=no`.
+
+No C source change (other than `test_bench_smoke.c`), no Makefile change,
+no `.att1` format change.  `make test` passes (39 tests).
 
 1. **Single vs multi-shard safetensors:** Initial target is single-file
    `model.safetensors`.  Multi-shard (`model-00001-of-00002.safetensors`) is

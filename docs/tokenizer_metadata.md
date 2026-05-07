@@ -203,7 +203,23 @@ real tokenizer is explicitly requested.
 
 | Milestone | Goal |
 |-----------|------|
-| M52 | Tokenizer scanner/parser skeleton under `compiler/`; inventory tokenizer assets and report this schema. |
-| M53 | Tokenizer fixture import with checked-in tiny metadata fixture and golden prompt-to-ID cases. |
+| M52 | Tokenizer scanner/parser skeleton under `compiler/`; inventory tokenizer assets and report this schema. ✅ |
+| M53 | Deterministic tokenizer import report (`--report`, `--report-json PATH`, `--model-config PATH`); import readiness, unsupported-field listing, canonical composite asset hash. ✅ |
 | M54 | Optional `.att1` tokenizer metadata section; loader and inspect reporting only. |
 | M55 | Runtime tokenizer selection with byte tokenizer kept available for tests. |
+
+## Canonical Asset Hash (M53)
+
+The composite hash defined in the _Asset Hash_ section above is implemented by
+`_canonical_asset_hash()` in `compiler/scan_tokenizer.py`.  The hash input
+concatenates the raw bytes of each present file in this order:
+
+1. `tokenizer.json`
+2. `tokenizer.model`
+3. `tokenizer_config.json`
+4. `special_tokens_map.json`
+
+Absent files are skipped.  The digest is SHA-256 (32 bytes, hex-encoded).
+The hash is stable for a given set of present asset files and is reported as
+`canonical_hash=<hex>` in the import report and as `"canonical_hash": "<hex>"`
+in the JSON report.
