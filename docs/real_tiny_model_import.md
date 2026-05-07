@@ -507,6 +507,7 @@ runtime tokenizer selection are part of M50.
 | M61 | Source-model comparison harness: Python harness validates ATT-1 f32/q8 artifacts against source safetensors; static tensor mapping with transpose rules; numpy LLaMA forward pass; next-token match; m61 fixture with seeded random weights. ✅ |
 | M62 | Source comparison report integration: `--report`, `--report-json`, `--tokens-file`, `--backend`, `max_rel_error`, `logits_shape`; structured JSON result dict; hard fail on bad report path; smoke test extended. ✅ |
 | M63 | Larger tiny-model fixture and validation: vocab=64, d_model=32, d_ff=64, n_heads=4, n_layers=2; seeded safetensors; f32+q8 models; all four bench modes validated; source comparison passes. ✅ |
+| M64 | Public small-model import candidate selection: five candidates evaluated (SmolLM2-135M recommended); shared BF16 blocker documented; GQA format+runtime+converter requirements documented; prerequisite milestone plan M65–M67. ✅ |
 
 ### M51 — tokenizer metadata schema
 
@@ -1007,6 +1008,293 @@ model where each matrix product accumulates more terms.
    model is approximately 256 KB as f32.  Safe to check in.  A 2-layer,
    d_model=256, vocab_size=32000 model is approximately 60 MB — too large.
    The first real fixture should use a synthetic tiny vocab.
+
+---
+
+### M64 — public small-model import candidate selection (complete)
+
+**Goal:** Identify and document a suitable small public LLaMA-style model for
+the next real ATT-1 conversion milestone.  Documentation and planning only.
+No C source changes, Makefile changes, `.att1` format changes, or new
+converter logic.
+
+#### Candidate summary
+
+| # | Model | Params | Attn | f32 | q8 | License | Shards | Verdict |
+|---|-------|--------|------|-----|----|---------|--------|---------|
+| A | `HuggingFaceTB/SmolLM2-135M` | 135 M | GQA 3:1 | ~540 MB | ~135 MB | Apache 2.0 | 1 | **Recommended** |
+| B | `HuggingFaceTB/SmolLM2-360M` | 360 M | GQA 3:1 | ~1.4 GB | ~360 MB | Apache 2.0 | 1 | Alternate |
+| C | `openlm-research/open_llama_3b_v2` | 3.4 B | MHA | ~13.5 GB | ~3.4 GB | Apache 2.0 | 2+ | No-GQA alt |
+| D | `Qwen/Qwen2-0.5B` | 494 M | GQA 7:1 | ~1.9 GB | ~490 MB | Apache 2.0 | 1 | Arch gap |
+| E | `meta-llama/Llama-3.2-1B` | 1.24 B | GQA 4:1 | ~4.9 GB | ~1.24 GB | Llama 3.2 | 1 | Licensed |
+
+#### Shared blocker (all candidates)
+
+All five models store weights as **bfloat16** in their HF safetensors files.
+The current `compiler/load_safetensors.py` raises `LoadError` for any non-F32
+dtype.  BF16→F32 coercion must be added to the tensor reader before any public
+model can be converted.  This is a **Python-only change** — no C, Makefile, or
+`.att1` format changes required.
+
+#### Candidate A — SmolLM2-135M (recommended)
+
+| Config field | Value |
+|-------------|-------|
+| HF repo | `HuggingFaceTB/SmolLM2-135M` |
+| model_type | `llama` |
+| vocab_size | 49152 |
+| hidden_size (d_model) | 576 |
+| intermediate_size (d_ff) | 1536 |
+| num_hidden_layers (n_layers) | 30 |
+| num_attention_heads (n_heads) | 9 |
+| num_key_value_heads (n_kv_heads) | 3 |
+| head_dim | 64 |
+| max_position_embeddings | 2048 |
+| rope_theta | 10000.0 |
+| Source dtype | bfloat16 |
+| Tokenizer | BPE JSON, vocab=49152 |
+| License | Apache 2.0 |
+| Safetensors | Single shard (~270 MB BF16) |
+
+**Tensor naming:** Identical to HF LLaMA conventions used by the existing
+converter.  A 30-layer model has 1 + 30×9 + 2 = **273 tensors** total.
+All 21 mapping rules in the current converter apply without modification.
+
+**Config field resolution:** All fields resolve through the existing
+`FIELD_ALIASES` and `ROPE_THETA_KEYS` maps in `convert_llama_to_att1.py`.
+No converter config-reading changes are needed.
+
+**Known incompatibilities:**
+
+1. **BF16 source** — shared blocker; requires BF16→F32 coercion in
+   `compiler/load_safetensors.py` (Python only, no C/format change).
+
+2. **GQA (n_kv_heads=3, n_heads=9).** The K and V projection weights have
+   source shape `[n_kv_heads × head_dim, d_model]` = `[192, 576]` rather
+   than the full MHA shape `[576, 576]`.  After the standard ATT-1 transpose
+   these become `[d_model, n_kv × head_dim]` = `[576, 192]`.
+
+   Supporting GQA requires three coordinated changes:
+
+   a. **Format change** — add a `n_kv_heads` field to `att1_model_config`.
+      The field is a `uint32_t` appended after `shard_count`, increasing
+      `ATT1_MODEL_CONFIG_SIZE` from 36 to 40 bytes.  A new format version
+      (v3) is required.  Old v1/v2 models load as full MHA
+      (`n_kv_heads = n_heads`).
+
+   b. **Converter change** — read `num_key_value_heads` from `config.json`;
+      accept and transpose wk/wv tensors with shape
+      `[d_model, n_kv × head_dim]`; write `n_kv_heads` into the new config
+      field.
+
+   c. **Runtime attention change** — `src/attention.c` reads `n_kv_heads`
+      from `att1_model_config`; for each query head group, reads the
+      corresponding shared K/V head.
+
+3. **Tokenizer** — external token IDs via `--tokenizer external` are the
+   correct path.  Raw byte IDs 0–255 are in-range for vocab_size=49152 but
+   are not semantically meaningful without the BPE tokenizer.
+
+**Pros:** smallest available Apache 2.0 LLaMA-style model; single shard;
+~540 MB f32 artifact; standard tensor naming; `model_type="llama"` already
+in `SUPPORTED_ARCH`.
+
+**Cons:** GQA requires format change + C runtime change + converter change;
+BF16 source requires minor Python extension; 49152-token vocab makes the
+output weight alone ~108 MB f32.
+
+**Local requirements (SmolLM2-135M):**
+
+| Step | Peak RAM | Disk |
+|------|---------|------|
+| Download source safetensors | — | ~270 MB (BF16) |
+| Conversion (numpy in-memory) | ~1.5 GB | — |
+| f32 `.att1` artifact | — | ~540 MB |
+| q8 `.att1` artifact | — | ~135 MB |
+| att1-bench inference | ~600 MB | — |
+
+#### Candidate B — SmolLM2-360M
+
+| Config field | Value |
+|-------------|-------|
+| HF repo | `HuggingFaceTB/SmolLM2-360M` |
+| vocab_size | 49152 |
+| d_model | 960 |
+| d_ff | 2560 |
+| n_layers | 32 |
+| n_heads | 15 |
+| n_kv_heads | 5 |
+| head_dim | 64 |
+| License | Apache 2.0 |
+| Safetensors | Single shard |
+
+Same architecture family as Candidate A; identical blockers (BF16, GQA 3:1).
+Produces 1 + 32×9 + 2 = 291 tensors.  Prefer A unless 360 M parameter scale
+is specifically needed.
+
+#### Candidate C — Open-LLaMA 3B v2 (no-GQA alternative)
+
+| Config field | Value |
+|-------------|-------|
+| HF repo | `openlm-research/open_llama_3b_v2` |
+| model_type | `llama` |
+| vocab_size | 32000 |
+| d_model | 3200 |
+| d_ff | 8640 |
+| n_layers | 26 |
+| n_heads | 32 |
+| n_kv_heads | 32 (full MHA) |
+| head_dim | 100 |
+| rope_theta | 10000.0 |
+| Source dtype | bfloat16 |
+| License | Apache 2.0 |
+| Safetensors | Multi-shard (~7 GB BF16 source) |
+
+**Known incompatibilities:**
+
+1. **BF16 source** — shared blocker.
+2. **Multi-shard safetensors** — weights are split across multiple shards
+   referenced by `model.safetensors.index.json`.  The current scanner, reader,
+   and converter handle single-file safetensors only.  Multi-shard support
+   requires reading the index file and loading tensors from multiple shards;
+   this is a Python-only converter extension, but it is not yet implemented.
+3. **Large artifact** — ~13.5 GB f32; requires ~15 GB free RAM to convert and
+   ~14 GB free disk for the resulting artifact.  Not suitable for checking in.
+
+**Pros:** Full MHA — zero runtime or format changes once BF16 coercion and
+multi-shard reader are added; standard HF LLaMA naming; Apache 2.0.
+
+**Cons:** Multi-shard support not yet implemented; very large artifact;
+impractical for CI or portable local testing.
+
+#### Candidate D — Qwen2-0.5B
+
+| Config field | Value |
+|-------------|-------|
+| HF repo | `Qwen/Qwen2-0.5B` |
+| model_type | `qwen2` |
+| vocab_size | 151936 |
+| d_model | 896 |
+| d_ff | 4864 |
+| n_layers | 24 |
+| n_heads | 14 |
+| n_kv_heads | 2 |
+| head_dim | 64 |
+| rope_theta | 1000000.0 |
+| License | Apache 2.0 |
+| Safetensors | Single shard |
+
+**Known incompatibilities:**
+
+1. **BF16 source** — shared blocker.
+2. **GQA (7:1 ratio)** — same C/format blockers as Candidate A, but a more
+   aggressive grouping ratio.
+3. **`model_type = "qwen2"`** — not in the current converter's `SUPPORTED_ARCH`
+   set; requires adding `"qwen2"` (a trivial Python change) after verifying
+   that no undocumented architecture differences exist.
+4. **`rope_theta = 1000000.0`** — non-default value; already handled by the
+   converter's `rope_theta` config resolution (`--rope-theta` override or
+   direct config field reading).
+5. **Very large vocabulary (151936)** — the output weight tensor is
+   `[896, 151936]` ≈ 137 M elements × 4 bytes ≈ 548 MB f32, larger than all
+   other model parameters combined.
+
+Not recommended as first target due to the architecture-type gap, extreme
+vocab size, and aggressive GQA ratio.
+
+#### Candidate E — Llama-3.2-1B
+
+| Config field | Value |
+|-------------|-------|
+| HF repo | `meta-llama/Llama-3.2-1B` |
+| model_type | `llama` |
+| vocab_size | 128256 |
+| d_model | 2048 |
+| d_ff | 8192 |
+| n_layers | 16 |
+| n_heads | 32 |
+| n_kv_heads | 8 |
+| head_dim | 64 |
+| rope_theta | 500000.0 |
+| License | Llama 3.2 Community License |
+| Safetensors | Single shard |
+
+**Known incompatibilities:**
+
+1. **BF16 source** — shared blocker.
+2. **GQA (4:1 ratio)** — same blockers as Candidates A, B, D.
+3. **Gated license** — requires accepting Meta's Llama 3.2 Community License
+   on HuggingFace Hub.  Permissive for non-commercial research and product
+   development under 700 M monthly active users, but less open than
+   Apache 2.0.  Adds friction to a fully open reference workflow.
+4. **Large vocab (128256)** — output weight ~1 GB f32 alone.
+
+Not recommended as first target; license friction and large size are
+unnecessary complications at this stage.
+
+#### Recommended candidate and prerequisite milestone plan
+
+**Primary recommendation: Candidate A (SmolLM2-135M)** — smallest available
+model with Apache 2.0 licensing, standard HF LLaMA tensor naming, and a
+single-shard safetensors distribution.  It is the most practical target for
+exercising the full ATT-1 conversion and validation pipeline on a real public
+model.
+
+Prerequisite milestones before conversion:
+
+| Milestone | Goal | Scope |
+|-----------|------|-------|
+| M65 | BF16/F16 source dtype coercion | Extend `load_safetensors.py` to upcast BF16/F16 payloads to F32; Python only; validate with a synthetic BF16 fixture |
+| M66 | GQA support | Add `n_kv_heads` to `att1_model_config` (format version bump); extend converter; update `src/attention.c` runtime |
+| M67 | SmolLM2-135M import and validation | Full pipeline: scan → coerce BF16 → convert f32/q8 → inspect → source comparison → bench smoke |
+
+**Immediate no-GQA-change alternative:** Candidate C (Open-LLaMA-3B-v2)
+needs only BF16 coercion (M65, Python) and a multi-shard safetensors reader
+extension (Python converter) before conversion.  No C or format changes.  The
+practical blocker is size (~15 GB RAM and disk).
+
+#### Validation plan (SmolLM2-135M, post-M66)
+
+1. **Scan:** `python3 compiler/scan_safetensors.py model.safetensors --check-llama --n-layers 30`  
+   Expect: `tensor_count=273`, `llama_check: ok`, `llama_missing: 0`.
+
+2. **Read tensors:** `python3 compiler/load_safetensors.py model.safetensors --check-values`  
+   BF16 coercion active; all 273 values finite after upcast.
+
+3. **Convert f32:**
+   ```sh
+   python3 compiler/convert_llama_to_att1.py \
+       --safetensors model.safetensors --config config.json \
+       --out models/smollm2_135m_f32/model.att1
+   ```
+   Expect: `wrote ~540 MB`.
+
+4. **Inspect:** `./build/att1-inspect models/smollm2_135m_f32/model.att1`  
+   Verify: `vocab_size=49152`, `n_heads=9`, `n_kv_heads=3`, `d_model=576`,
+   `tensor_count=273`.
+
+5. **Source comparison:**
+   ```sh
+   python3 compiler/compare_att1_to_source.py \
+       --safetensors model.safetensors --config config.json \
+       --att1-f32 models/smollm2_135m_f32/model.att1 \
+       --prompt-ids 1,2,3 --report
+   ```
+   Expect: f32 `max_abs_error ≈ 0`, `forward_match=yes`, `result=pass`.
+
+6. **Convert q8:**
+   ```sh
+   python3 compiler/convert_llama_to_att1.py \
+       --safetensors model.safetensors --config config.json \
+       --weight-format q8 \
+       --out models/smollm2_135m_q8/model.att1
+   ```
+   Expect: projection tensors as dtype-2.
+
+7. **Backend matrix smoke:** `att1-bench --tokenizer external --input-token-ids "1,2,3"`
+   in single and cluster (tiles=2) modes with cpu-f32 and cpu-q8 backends.
+
+`make test` passes (41 tests) after M64.  No code changes; documentation only.
 
 ---
 

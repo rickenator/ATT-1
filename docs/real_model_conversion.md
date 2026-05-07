@@ -496,3 +496,10 @@ runtime fallback rules.
 | M58 | External tokenizer preprocessing mode |
 | M59 | BPE tokenizer parser prototype |
 | M60 | Tokenizer-aware converted model validation |
+| M61 | Source-model comparison harness (Python; numpy forward pass vs ATT-1 bench) |
+| M62 | Source comparison report integration (`--report`, `--report-json`, `--backend`) |
+| M63 | Larger tiny-model fixture (vocab=64, d_model=32) and validation |
+| M64 | Public small-model import candidate selection (documentation only) |
+| M65 | BF16/F16 source dtype coercion in `load_safetensors.py` |
+| M66 | GQA support: `n_kv_heads` config field, converter, runtime attention |
+| M67 | SmolLM2-135M import and validation (first real public model) |
