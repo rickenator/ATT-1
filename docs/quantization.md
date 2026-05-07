@@ -461,7 +461,7 @@ q4 conversion output is deferred to M77.  M73 specifies the strategy only.
 | M76 | CPU q4 matmul prototype: `att1_q4_matrix` struct, `att1_quantize_q4_per_group()`, `att1_matmul_q4xf32()` (dequantize-then-multiply, activations stay float32); `test_matmul_q4` (8 checks) |
 | M77 | q4 `.att1` fixture: `compiler/make_q4_fixture.py` deterministic generator, `models/q4_tiny/model.att1` (54 132 bytes, 21 tensors, d_model=32, d_ff=64), `att1-inspect` `inference_status=q4_unsupported` note, `test_quant_q4_fixture` (8 checks) |
 | M78 | CPU q4 single-tile inference: `att1_infer_create_q4()`, `cpu-q4` backend, q4 attention + transformer block + output projection; `test_infer_q4` (7 checks); no CUDA q4, no q4 cluster |
-| M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |
+| M79 | CPU q4 cluster inference: `att1_cluster_infer_create_q4()`, zero-copy q4 layer views, q4 transformer-block decode path, q4 output projection via `att1_matmul_q4xf32()` directly; `test_cluster_infer_q4` (8 checks); no CUDA q4, `ATT1_SHARD_PLAN_METADATA` unsupported for q4 |
 
 ---
 
@@ -834,4 +834,51 @@ Seven test cases in `tests/test_infer_q4.c`:
 | 5 | `q4_fixture_rejected_by_create` | `att1_infer_create()` (f32/q8 path) on q4 fixture returns error |
 | 6 | `q4_position_advances` | After 4 decode steps, `att1_infer_position()` == 4 |
 | 7 | `f32_path_unchanged` | Dummy model + `att1_infer_create()` still decodes OK |
+
+---
+
+## CPU q4 cluster inference (M79)
+
+`att1_cluster_infer_create_q4()` extends the existing layer-sharded cluster path to run
+all matmuls in q4 using the same `cpu-q4` backend and zero-copy weight views introduced
+in M78.
+
+### Design constraints
+
+* **Zero-copy views only.** Q4 weights are never re-quantized at runtime. The model must
+  contain Q4 tensors (validated by `att1_model_view_validate_decoder_q4()`).
+* **No metadata shard plan.** `ATT1_SHARD_PLAN_METADATA` returns `ATT1_ERR_UNSUPPORTED`.
+  Use `ATT1_SHARD_PLAN_RUNTIME` (the default) which distributes layers evenly.
+* **No silent q8 fallback.** `cpu-q4` backend has `matmul_q8xf32=NULL`; the q4 cluster
+  decode path calls `att1_matmul_q4xf32()` directly.
+* **No CUDA q4 cluster.** Only `cpu-q4` is supported.
+
+### New API
+
+```c
+att1_status_t att1_cluster_infer_create_q4(
+    const att1_model *model,
+    const att1_cluster_infer_config *config,
+    att1_cluster_infer_t **out_infer);
+```
+
+Internally:
+- Calls `att1_model_view_validate_decoder_q4(model)`.
+- Builds a `ATT1_SHARD_PLAN_RUNTIME` shard plan (fails fast for metadata).
+- Creates the fabric, KV caches, and buffers identically to `att1_cluster_infer_create`.
+- Creates a `cpu-q4` backend via `att1_backend_cpu_q4_create()`.
+- Calls `cluster_prepare_q4()` to load zero-copy layer views.
+
+### Test coverage (`tests/test_cluster_infer_q4.c`)
+
+| # | Name | What it checks |
+|---|------|----------------|
+| 1 | `q4_cluster_create_and_decode` | Load q4 fixture, create q4 cluster, decode 1 token returns `ATT1_OK` |
+| 2 | `q4_cluster_backend_name` | `att1_backend_cpu_q4_create()` produces backend named `"cpu-q4"` |
+| 3 | `q4_cluster_logit_count` | After decode, `att1_cluster_infer_logits()` count == 256 |
+| 4 | `q4_cluster_f32_model_rejected` | `att1_cluster_infer_create_q4()` on f32 dummy model returns error |
+| 5 | `q4_cluster_f32_path_unchanged` | Dummy model + `att1_cluster_infer_create()` still decodes OK |
+| 6 | `q4_cluster_position_advances` | After 1 decode step, `att1_cluster_infer_position()` == 1 |
+| 7 | `q4_cluster_fabric_packets_nonzero` | Tile 0 `activations_received > 0` after decode |
+| 8 | `q4_cluster_metadata_plan_rejected` | `ATT1_SHARD_PLAN_METADATA` config returns error |
 

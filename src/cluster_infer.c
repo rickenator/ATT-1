@@ -4,6 +4,7 @@
 #include "att1_fabric.h"
 #include "att1_kv_cache.h"
 #include "att1_model_view.h"
+#include "att1_quant.h"
 #include "att1_sampler.h"
 #include "att1_transformer_block.h"
 
@@ -23,6 +24,18 @@ typedef struct att1_cluster_q8_layer {
     att1_q8_matrix w_down;
 } att1_cluster_q8_layer;
 
+typedef struct att1_cluster_q4_layer {
+    const float *attention_norm;
+    const float *ffn_norm;
+    att1_q4_matrix wq;
+    att1_q4_matrix wk;
+    att1_q4_matrix wv;
+    att1_q4_matrix wo;
+    att1_q4_matrix w_gate;
+    att1_q4_matrix w_up;
+    att1_q4_matrix w_down;
+} att1_cluster_q4_layer;
+
 struct att1_cluster_infer {
     const att1_model *model;
     att1_shard_plan shard_plan;
@@ -39,6 +52,10 @@ struct att1_cluster_infer {
     att1_q8_matrix q8_output_weight;
     int q8_owned;
     int q8_ready;
+    att1_cluster_q4_layer *q4_layers;
+    const float *q4_output_norm;
+    att1_q4_matrix q4_output_weight;
+    int q4_ready;
     att1_trace_t *trace;
     att1_cluster_tile_counters *tile_counters;
     size_t position;
@@ -59,6 +76,25 @@ static int cluster_backend_supports_q8(const att1_backend *backend)
            (backend->ops->alloc != NULL) &&
            (backend->ops->free != NULL) &&
            (backend->ops->matmul_q8xf32 != NULL) &&
+           (backend->ops->rmsnorm_f32 != NULL) &&
+           (backend->ops->softmax_f32 != NULL) &&
+           (backend->ops->rope_f32 != NULL) &&
+           (backend->ops->ffn_swiglu_f32 != NULL);
+}
+
+static int cluster_backend_is_q4(const att1_backend *backend)
+{
+    return (backend != NULL) &&
+           (backend->ops != NULL) &&
+           (backend->ops->name != NULL) &&
+           (strcmp(backend->ops->name, "cpu-q4") == 0);
+}
+
+static int cluster_backend_supports_q4(const att1_backend *backend)
+{
+    return cluster_backend_is_q4(backend) &&
+           (backend->ops->alloc != NULL) &&
+           (backend->ops->free != NULL) &&
            (backend->ops->rmsnorm_f32 != NULL) &&
            (backend->ops->softmax_f32 != NULL) &&
            (backend->ops->rope_f32 != NULL) &&
@@ -105,6 +141,19 @@ static void cluster_release_q8(att1_cluster_infer_t *infer)
     infer->q8_output_norm = NULL;
     infer->q8_owned = 0;
     infer->q8_ready = 0;
+}
+
+static void cluster_release_q4(att1_cluster_infer_t *infer)
+{
+    if (infer == NULL) {
+        return;
+    }
+
+    free(infer->q4_layers);
+    infer->q4_layers = NULL;
+    infer->q4_output_norm = NULL;
+    memset(&infer->q4_output_weight, 0, sizeof(infer->q4_output_weight));
+    infer->q4_ready = 0;
 }
 
 static int cluster_plan_complete(const att1_cluster_infer_t *infer)
@@ -208,6 +257,7 @@ static void cluster_release_members(att1_cluster_infer_t *infer)
     free(infer->logits);
     att1_backend_destroy(infer->backend);
     cluster_release_q8(infer);
+    cluster_release_q4(infer);
     free(infer->tile_counters);
     memset(infer, 0, sizeof(*infer));
 }
@@ -443,6 +493,89 @@ static att1_status_t cluster_prepare_q8(att1_cluster_infer_t *infer)
     return cluster_prepare_runtime_q8(infer);
 }
 
+/* ── q4 zero-copy layer loading ─────────────────────────────────────────── */
+
+static att1_status_t cluster_prepare_q4(att1_cluster_infer_t *infer)
+{
+    const att1_model *model = NULL;
+    uint64_t d_model = 0u;
+    uint64_t d_ff = 0u;
+    uint32_t layer = 0u;
+    att1_status_t status = ATT1_OK;
+    char name[ATT1_MODEL_NAME_SIZE];
+
+    if ((infer == NULL) || (infer->model == NULL)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    if (infer->q4_ready) {
+        return ATT1_OK;
+    }
+
+    cluster_release_q4(infer);
+    model   = infer->model;
+    d_model = model->config.d_model;
+    d_ff    = model->config.d_ff;
+
+    infer->q4_layers = calloc(model->config.n_layers, sizeof(*infer->q4_layers));
+    if (infer->q4_layers == NULL) {
+        return ATT1_ERR_OOM;
+    }
+
+    for (layer = 0u; layer < model->config.n_layers; layer++) {
+        att1_cluster_q4_layer *q4 = &infer->q4_layers[layer];
+
+#define LOAD_Q4_L(member, suffix, rows, cols) \
+        do { \
+            const int w = snprintf(name, sizeof(name), "layers.%u.%s", layer, (suffix)); \
+            if ((w < 0) || ((size_t)w >= sizeof(name))) { \
+                cluster_release_q4(infer); return ATT1_ERR_INVALID_ARG; \
+            } \
+            status = att1_model_view_tensor_q4(model, name, (rows), (cols), &q4->member); \
+            if (status != ATT1_OK) { cluster_release_q4(infer); return status; } \
+        } while (0)
+
+#define LOAD_F32_L(ptr, suffix, nd, d0, d1) \
+        do { \
+            const int w = snprintf(name, sizeof(name), "layers.%u.%s", layer, (suffix)); \
+            if ((w < 0) || ((size_t)w >= sizeof(name))) { \
+                cluster_release_q4(infer); return ATT1_ERR_INVALID_ARG; \
+            } \
+            status = att1_model_view_tensor_f32(model, name, (nd), (d0), (d1), &(ptr)); \
+            if (status != ATT1_OK) { cluster_release_q4(infer); return status; } \
+        } while (0)
+
+        LOAD_F32_L(q4->attention_norm, "attention_norm.weight", 1u, d_model, 1u);
+        LOAD_Q4_L(wq,     "attention.wq.weight", d_model, d_model);
+        LOAD_Q4_L(wk,     "attention.wk.weight", d_model, d_model);
+        LOAD_Q4_L(wv,     "attention.wv.weight", d_model, d_model);
+        LOAD_Q4_L(wo,     "attention.wo.weight", d_model, d_model);
+        LOAD_F32_L(q4->ffn_norm, "ffn_norm.weight", 1u, d_model, 1u);
+        LOAD_Q4_L(w_gate, "ffn.w_gate.weight", d_ff,    d_model);
+        LOAD_Q4_L(w_up,   "ffn.w_up.weight",   d_ff,    d_model);
+        LOAD_Q4_L(w_down, "ffn.w_down.weight",  d_model, d_ff);
+
+#undef LOAD_Q4_L
+#undef LOAD_F32_L
+    }
+
+    status = att1_model_view_output_norm(model, &infer->q4_output_norm);
+    if (status != ATT1_OK) {
+        cluster_release_q4(infer);
+        return status;
+    }
+
+    status = att1_model_view_tensor_q4(model, "output.weight",
+                                       model->config.vocab_size, d_model,
+                                       &infer->q4_output_weight);
+    if (status != ATT1_OK) {
+        cluster_release_q4(infer);
+        return status;
+    }
+
+    infer->q4_ready = 1;
+    return ATT1_OK;
+}
+
 att1_status_t att1_cluster_infer_create(
     const att1_model *model,
     const att1_cluster_infer_config *config,
@@ -583,6 +716,129 @@ att1_status_t att1_cluster_infer_create(
     return ATT1_OK;
 }
 
+att1_status_t att1_cluster_infer_create_q4(
+    const att1_model *model,
+    const att1_cluster_infer_config *config,
+    att1_cluster_infer_t **out_infer)
+{
+    att1_cluster_infer_t *infer = NULL;
+    att1_fabric_bus_config fabric_config;
+    size_t tile_count = 0u;
+    size_t queue_capacity = 0u;
+    size_t max_payload_bytes = 0u;
+    size_t required_payload_bytes = 0u;
+    uint32_t layer = 0u;
+    size_t tile = 0u;
+    const size_t head_dim = (model != NULL && model->config.n_heads != 0u) ?
+        (model->config.d_model / model->config.n_heads) : 0u;
+    att1_status_t status = ATT1_OK;
+
+    if ((out_infer == NULL) || (config == NULL)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    *out_infer = NULL;
+
+    /* Validate model has required q4 tensors. */
+    status = att1_model_view_validate_decoder_q4(model);
+    if (status != ATT1_OK) {
+        return status;
+    }
+
+    if ((config->tile_count == 0u) ||
+        (config->tile_count > (size_t)(UINT32_MAX - 1u))) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    /* Metadata shard plan with q4 is not supported yet — fail clearly. */
+    if (config->shard_plan_mode == ATT1_SHARD_PLAN_METADATA) {
+        return ATT1_ERR_UNSUPPORTED;
+    }
+
+    tile_count = config->tile_count;
+    queue_capacity = config->fabric_queue_capacity != 0u ?
+        config->fabric_queue_capacity : 4u;
+    required_payload_bytes = model->config.vocab_size > model->config.d_model ?
+        ((size_t)model->config.vocab_size * sizeof(float)) :
+        ((size_t)model->config.d_model * sizeof(float));
+    max_payload_bytes = config->fabric_max_payload_bytes != 0u ?
+        config->fabric_max_payload_bytes : required_payload_bytes;
+    if (max_payload_bytes < required_payload_bytes) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    infer = calloc(1u, sizeof(*infer));
+    if (infer == NULL) {
+        return ATT1_ERR_OOM;
+    }
+
+    infer->model = model;
+    infer->host_tile_id = (uint32_t)tile_count;
+
+    status = att1_shard_plan_build(&infer->shard_plan, model, tile_count);
+    if (status != ATT1_OK) {
+        cluster_release_members(infer);
+        free(infer);
+        return status;
+    }
+
+    fabric_config.tile_count = tile_count + 1u;
+    fabric_config.queue_capacity = queue_capacity;
+    fabric_config.max_payload_bytes = max_payload_bytes;
+    status = (att1_status_t)att1_fabric_create(&infer->fabric, &fabric_config);
+    if (status != ATT1_OK) {
+        cluster_release_members(infer);
+        free(infer);
+        return status;
+    }
+
+    infer->layer_kv = calloc(model->config.n_layers, sizeof(*infer->layer_kv));
+    infer->hidden = calloc(model->config.d_model, sizeof(float));
+    infer->next_hidden = calloc(model->config.d_model, sizeof(float));
+    infer->norm = calloc(model->config.d_model, sizeof(float));
+    infer->logits = calloc(model->config.vocab_size, sizeof(float));
+    infer->tile_counters = calloc(tile_count, sizeof(*infer->tile_counters));
+    status = att1_backend_cpu_q4_create(&infer->backend);
+    if ((infer->layer_kv == NULL) ||
+        (infer->hidden == NULL) ||
+        (infer->next_hidden == NULL) ||
+        (infer->norm == NULL) ||
+        (infer->logits == NULL) ||
+        (infer->tile_counters == NULL) ||
+        (status != ATT1_OK)) {
+        cluster_release_members(infer);
+        free(infer);
+        return status == ATT1_OK ? ATT1_ERR_OOM : status;
+    }
+
+    for (layer = 0u; layer < model->config.n_layers; layer++) {
+        if (att1_kv_cache_init(&infer->layer_kv[layer],
+                               model->config.max_seq_len,
+                               model->config.n_heads,
+                               head_dim) != 0) {
+            cluster_release_members(infer);
+            free(infer);
+            return ATT1_ERR_OOM;
+        }
+    }
+
+    for (tile = 0u; tile < tile_count; tile++) {
+        const att1_layer_shard *shard = &infer->shard_plan.tiles[tile];
+        infer->tile_counters[tile].layer_start = shard->layer_start;
+        infer->tile_counters[tile].layer_end = shard->layer_end;
+    }
+
+    /* Load zero-copy q4 weight views. */
+    status = cluster_prepare_q4(infer);
+    if (status != ATT1_OK) {
+        cluster_release_members(infer);
+        free(infer);
+        return status;
+    }
+
+    *out_infer = infer;
+    return ATT1_OK;
+}
+
 void att1_cluster_infer_destroy(att1_cluster_infer_t *infer)
 {
     if (infer == NULL) {
@@ -603,6 +859,7 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     const float *output_weight = NULL;
     att1_transformer_block_config block_config;
     int use_q8 = 0;
+    int use_q4 = 0;
     size_t d_model_bytes = 0u;
     size_t logits_bytes = 0u;
     size_t tile = 0u;
@@ -616,6 +873,7 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
 
     model = infer->model;
     use_q8 = cluster_backend_is_q8(infer->backend);
+    use_q4 = cluster_backend_is_q4(infer->backend);
     if ((token_id >= model->config.vocab_size) ||
         (infer->position >= model->config.max_seq_len)) {
         return ATT1_ERR_INVALID_ARG;
@@ -637,7 +895,12 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
     if (status != ATT1_OK) {
         return status;
     }
-    if (use_q8) {
+    if (use_q4) {
+        if (!infer->q4_ready || !cluster_backend_supports_q4(infer->backend)) {
+            return ATT1_ERR_STATE;
+        }
+        output_norm = infer->q4_output_norm;
+    } else if (use_q8) {
         if (!infer->q8_ready || !cluster_backend_supports_q8(infer->backend)) {
             return ATT1_ERR_STATE;
         }
@@ -701,7 +964,31 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
                 layer_start_us = att1_trace_now_us();
             }
 
-            if (use_q8) {
+            if (use_q4) {
+                att1_transformer_block_q4_weights weights;
+                const att1_cluster_q4_layer *q4 = &infer->q4_layers[layer];
+
+                weights.attention_norm = q4->attention_norm;
+                weights.ffn_norm = q4->ffn_norm;
+                weights.wq = &q4->wq;
+                weights.wk = &q4->wk;
+                weights.wv = &q4->wv;
+                weights.wo = &q4->wo;
+                weights.w_gate = &q4->w_gate;
+                weights.w_up = &q4->w_up;
+                weights.w_down = &q4->w_down;
+
+                if (att1_transformer_block_forward_backend_q4(
+                        infer->next_hidden,
+                        &infer->layer_kv[layer],
+                        infer->hidden,
+                        &weights,
+                        &block_config,
+                        infer->position,
+                        infer->backend) != 0) {
+                    return ATT1_ERR_STATE;
+                }
+            } else if (use_q8) {
                 att1_transformer_block_q8_weights weights;
                 const att1_cluster_q8_layer *q8 = &infer->q8_layers[layer];
 
@@ -786,7 +1073,15 @@ att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,
                 return ATT1_ERR_STATE;
             }
 
-            if (use_q8) {
+            if (use_q4) {
+                if (att1_matmul_q4xf32(infer->logits,
+                                       infer->norm,
+                                       1u,
+                                       model->config.d_model,
+                                       &infer->q4_output_weight) != 0) {
+                    return ATT1_ERR_STATE;
+                }
+            } else if (use_q8) {
                 if (infer->backend->ops->matmul_q8xf32(infer->backend,
                                                        infer->logits,
                                                        infer->norm,
@@ -985,7 +1280,15 @@ att1_status_t att1_cluster_infer_set_backend(att1_cluster_infer_t *infer,
         return ATT1_ERR_INVALID_ARG;
     }
 
-    if (cluster_backend_is_q8(backend)) {
+    if (cluster_backend_is_q4(backend)) {
+        if (!cluster_backend_supports_q4(backend)) {
+            return ATT1_ERR_UNSUPPORTED;
+        }
+        status = cluster_prepare_q4(infer);
+        if (status != ATT1_OK) {
+            return status;
+        }
+    } else if (cluster_backend_is_q8(backend)) {
         if (!cluster_backend_supports_q8(backend)) {
             return ATT1_ERR_UNSUPPORTED;
         }

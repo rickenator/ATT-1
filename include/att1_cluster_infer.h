@@ -40,6 +40,19 @@ att1_status_t att1_cluster_infer_create(
     const att1_cluster_infer_config *config,
     att1_cluster_infer_t **out_infer);
 
+/*
+ * Create a q4 cluster inference context.
+ *
+ * Requires a model whose weight tensors have dtype Q4 (e.g. produced by the
+ * q4 quantiser). The context uses a cpu-q4 backend and zero-copy views into
+ * model memory. ATT1_SHARD_PLAN_METADATA is not supported — use
+ * ATT1_SHARD_PLAN_RUNTIME (the default).
+ */
+att1_status_t att1_cluster_infer_create_q4(
+    const att1_model *model,
+    const att1_cluster_infer_config *config,
+    att1_cluster_infer_t **out_infer);
+
 void att1_cluster_infer_destroy(att1_cluster_infer_t *infer);
 
 att1_status_t att1_cluster_infer_decode_token(att1_cluster_infer_t *infer,

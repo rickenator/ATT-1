@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 78: CPU q4 single-tile inference integration.
+Milestone 79: CPU q4 cluster inference integration.
 
 ## Hard Rules
 
@@ -98,12 +98,13 @@ Milestone 78: CPU q4 single-tile inference integration.
 - Milestone 73: q4 quantization planning — documentation-only; `docs/quantization.md` extended with full q4 planning section covering: motivation (memory reduction, larger local/public models, AIMU storage efficiency), candidate schemes comparison (per-row symmetric int4, grouped int4, GPTQ/AWQ as non-goal, MXFP4 as non-goal), recommended format specification (deterministic grouped int4, group size 32 or 64, float32 scale per group, symmetric no-zero-point, signed [-7,7], low-nibble-first byte packing, payload layout formula), `.att1` format implications (`DTYPE_Q4=3` reserved, group_size metadata, alignment/padding rules, hostile-input validation requirements, versioning decision deferred to M74), converter implications (`--weight-format q4` plan, `--q4-group-size` flag, determinism requirement, BF16 source compatibility), runtime/backend implications (CPU q4 dequantize-then-multiply first, CUDA q4 later, no cluster until single-tile validated, activations and KV cache remain f32), test plan (hand-checkable packing, zero row, saturation, tolerance, inspect/load/reject), M74–M79 milestone split; `docs/real_model_conversion.md` milestone table updated (M73 q4 planning, M74–M79 q4 implementation, M80 GQA, M81 SmolLM2-135M); no C source change, no Makefile change, no `.att1` format change, no q4 runtime/converter implementation. `make test` passes.
 
 - Milestone 78: CPU q4 single-tile inference integration — `att1_infer_create_q4()` added; `cpu-q4` backend (`src/backend_cpu_q4.c`) registered with `matmul_q8xf32=NULL` to prevent silent q8 fallback; zero-copy q4 weight views via `att1_model_view_tensor_q4()` and `att1_model_view_validate_decoder_q4()`; q4 attention forward (`att1_attention_forward_backend_q4()`) and transformer block forward (`att1_transformer_block_forward_backend_q4()`) added calling `att1_matmul_q4xf32()` directly; q4 output projection in `att1_infer_decode_token()`; `tests/test_infer_q4.c` added (7 cases: create and decode, backend name, logit count, f32-model rejection, q4 rejected by f32 create, position advance, f32 path unchanged); `models/q4_tiny/model.att1` fixture shapes corrected (non-square weight matrices stored with output rows first); no CUDA q4, no q4 cluster, no q4 converter CLI flag. `make test` passes (53 tests).
+- Milestone 79: CPU q4 cluster inference integration — `att1_cluster_infer_create_q4()` added to `src/cluster_infer.c` and declared in `include/att1_cluster_infer.h`; `att1_cluster_q4_layer` typedef mirrors q8 counterpart; `cluster_prepare_q4()` performs zero-copy views via `att1_model_view_tensor_q4()` and `att1_model_view_output_norm()`; `att1_cluster_infer_decode_token()` has a `use_q4` branch calling `att1_transformer_block_forward_backend_q4()` in the layer loop and `att1_matmul_q4xf32()` directly for output projection; `att1_cluster_infer_set_backend()` updated to call `cluster_prepare_q4()` when a `cpu-q4` backend is supplied; `ATT1_SHARD_PLAN_METADATA` returns `ATT1_ERR_UNSUPPORTED` for q4 cluster (no runtime-quantize path needed since q4 is always file-loaded); `tests/test_cluster_infer_q4.c` added (8 cases: create and decode, backend name, logit count, f32-model rejected, f32 path unchanged, position advances, fabric packets nonzero, metadata plan rejected); no CUDA q4, no q4 converter CLI flag. `make test` passes (61 tests).
 
 ## Next Prompt for Codex
 
 ## Active Task
 
-Milestone 78 implementation complete; ready for diff review and commit.
+Milestone 79 implementation complete; ready for diff review and commit.
 
 ## Known Risks
 
