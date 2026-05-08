@@ -830,3 +830,143 @@ Synthetic/non-executable presets generate a warning entry.
 - The emitter uses architectural estimates, not measured tensor sizes;
   it does not read or write `.att1` model files.
 - No cross-tile tensor slicing (all placements are full-tensor, layer-wise).
+
+---
+
+## 11. Placement Proposal Tool (Milestone 101)
+
+`compiler/propose_tensor_placement.py` reads an M98/M100 placement report JSON
+and produces an advisory remediation report.  It does not modify the report or
+any `.att1` binary artifact.
+
+### 11.1 Usage
+
+```
+python3 compiler/propose_tensor_placement.py \
+    --report PATH [--report-json PATH]
+```
+
+| Option | Description |
+|---|---|
+| `--report PATH` | Required. Path to M98/M100 placement report JSON. |
+| `--report-json PATH` | Optional. Write machine-readable advisory JSON to PATH. |
+
+### 11.2 Exit Codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Analysis complete; advisory status is `ok` or `warn`. |
+| `1` | Analysis complete; advisory status is `fail` — actionable failures found. |
+| `2` | Report could not be parsed (malformed JSON, missing required field, or file not found). |
+
+### 11.3 Detection Categories
+
+The tool detects the following conditions and maps each to a
+`[trigger]` tag in the output:
+
+| Trigger | Condition |
+|---|---|
+| `capacity-fail` | One or more tiles have `capacity_status = FAIL`. |
+| `capacity-warn` | One or more tiles have `capacity_status = WARN` (no FAIL). |
+| `bandwidth-fail` | One or more tiles have `bandwidth_status = FAIL`. |
+| `bandwidth-warn` | One or more tiles have `bandwidth_status = WARN` (no FAIL). |
+| `kv-pressure` | KV bytes exceed 20% (warn) or 40% (fail) of tile memory. |
+| `logits-traffic` | Logits traffic is heavy and bandwidth is constrained. |
+| `load-imbalance` | Tile utilization spread exceeds 20% of the mean. |
+| `oversized-tensor` | A single tensor's `packed_bytes` exceeds tile memory. |
+| `q4-alignment` | Q4 group alignment warnings present in source report. |
+| `model-note` | Report contains synthetic/non-executable model notes. |
+
+### 11.4 Proposal Types
+
+For each detected condition the tool proposes one or more of:
+
+- **Increase tile count** — required minimum tile count estimated as
+  `ceil(total_model_bytes / (tile_memory_bytes × 0.8))`.
+- **Increase tile memory** — required per-tile memory estimated as
+  `ceil(total_model_bytes / tile_count / 0.8)` MiB.
+- **Convert dtype** — f32 → q8 (~4× reduction) or q4 (~8× reduction);
+  q8 → q4 (~2× reduction); q4 already minimal.
+- **Split lm_head** — vocab split to distribute logit projection memory.
+- **Split tok_embeddings** — embedding split to reduce tile 0 pressure.
+- **Redistribute layers** — rebalance layer ranges when utilization is uneven.
+- **Reduce context length** — halving context reduces KV bytes by ~50%.
+- **Reduce session count** — each session multiplies KV bytes linearly.
+- **Increase fabric bandwidth** — with specific `fabric_gib_sec` estimate.
+- **Switch to head-wise placement** — keeps QKV traffic tile-local.
+
+Each proposal is tagged with its trigger and includes a detail string with
+current and recommended values where applicable.
+
+### 11.5 Advisory Status Levels
+
+| Status | Meaning |
+|---|---|
+| `ok` | No capacity/bandwidth FAIL; no major remediation required. |
+| `warn` | WARN-level issues only; minor remediation suggested. |
+| `fail` | One or more tiles FAIL or a critical issue detected. |
+
+### 11.6 Human-Readable Output
+
+```
+advisory: fail
+proposal_count: 6
+next_action: Add more tiles (current 8, minimum 9) or increase tile_memory_mib to at least 17466 MiB.
+
+Proposals:
+  [capacity-fail]  Increase tile count: current 8, recommended minimum 9
+  [capacity-fail]  Increase tile memory: current 16384 MiB per tile, recommended minimum 17466 MiB
+  [capacity-fail]  Split lm_head across all tiles to distribute logit projection memory.
+  [capacity-fail]  Split tok_embeddings across tiles to reduce tile 0 memory pressure.
+  [kv-pressure]  Excessive KV cache pressure: 56.2% of tile memory is KV; reduce context length or session count
+  [model-note]  Report contains synthetic/non-executable model notes: validate with a real .att1 artifact before production use
+```
+
+### 11.7 JSON Output Format
+
+When `--report-json PATH` is used:
+
+```json
+{
+  "status": "fail",
+  "proposal_count": 6,
+  "next_action": "Add more tiles ...",
+  "analysis": {
+    "total_model_bytes": 135291068416,
+    "total_kv_bytes": 75161927680,
+    "tile_count": 8,
+    "tile_memory_mib": 16384,
+    "capacity_fail_tiles": 8,
+    "capacity_warn_tiles": 0,
+    "bandwidth_fail_tiles": 0,
+    "bandwidth_warn_tiles": 0,
+    "max_utilization_pct": 106.7,
+    "min_utilization_pct": 104.5,
+    "mean_utilization_pct": 105.3,
+    "imbalanced_tiles": false,
+    "kv_pressure_max_frac": 0.5618,
+    "logits_heavy": false,
+    "oversized_tensor_count": 0,
+    "has_synthetic_note": true,
+    "q4_alignment_issues": false,
+    "dtype": "q4"
+  },
+  "proposals": [
+    {
+      "trigger": "capacity-fail",
+      "action": "Increase tile count",
+      "detail": "current 8, recommended minimum 9"
+    }
+  ]
+}
+```
+
+### 11.8 Non-Goals for M101
+
+- No execution scheduling change.
+- No binary format change.
+- No CUDA change.
+- No q4/q8/f32 tolerance or behavior change.
+- Proposals are advisory only; the tool does not modify the placement report
+  or generate a new one.
+- No automatic remediation or placement rebalancing.

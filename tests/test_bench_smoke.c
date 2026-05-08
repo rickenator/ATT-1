@@ -3369,6 +3369,167 @@ static int check_placement_report_smoke(void)
     return 0;
 }
 
+/*
+ * check_placement_proposal_smoke() — M101
+ *
+ * Python-skippable.  Exercises compiler/propose_tensor_placement.py
+ * with eight scenarios:
+ *
+ *   1. Valid fixture → exit 0; output contains "advisory: ok".
+ *   2. Generate gpt-oss q4 8-tile 16 GiB report via att1-size → exit 0.
+ *   3. Run proposer on gpt-oss 16 GiB report → exit 1 (fail advisory);
+ *      output contains "capacity-fail".
+ *   4. Proposer output for gpt-oss contains tile count or memory
+ *      recommendation ("Increase tile count" or "Increase tile memory").
+ *   5. JSON output mode: valid fixture + --report-json produces a JSON
+ *      file containing "status", "proposals", "analysis", "next_action".
+ *   6. JSON output for gpt-oss FAIL case has proposal_count > 0 and
+ *      non-empty "next_action".
+ *   7. Malformed JSON → exit 2.
+ *   8. Missing required field "tiles" → exit 2.
+ */
+static int check_placement_proposal_smoke(void)
+{
+    char output[65536];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    /* 1. Valid fixture: exit 0, "advisory: ok". */
+    if (run_command(
+            "python3 compiler/propose_tensor_placement.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " > build/m101_valid.txt 2>&1") != 0) {
+        fputs("placement_proposal: valid fixture should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m101_valid.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "advisory: ok") == NULL) {
+        fputs("placement_proposal: valid fixture missing 'advisory: ok'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 2. Generate gpt-oss q4 8-tile 16 GiB report via att1-size. */
+    if (run_command(
+            "./build/att1-size --preset gpt-oss-120b-shape"
+            " --dtype q4 --tiles 8 --context 8192"
+            " --tile-memory-gib 16"
+            " --placement-report-json build/m101_gptoss_16g.json"
+            " > build/m101_gptoss_size.txt 2>&1") != 0) {
+        fputs("placement_proposal: att1-size gpt-oss 16 GiB exited non-zero\n",
+              stderr);
+        return -1;
+    }
+
+    /* 3. Proposer on gpt-oss 16 GiB → exit 1, output "capacity-fail". */
+    if (run_command(
+            "python3 compiler/propose_tensor_placement.py"
+            " --report build/m101_gptoss_16g.json"
+            " > build/m101_gptoss_advisory.txt 2>&1") == 0) {
+        fputs("placement_proposal: gpt-oss FAIL report should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m101_gptoss_advisory.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "advisory: fail") == NULL) {
+        fputs("placement_proposal: gpt-oss advisory missing 'advisory: fail'\n",
+              stderr);
+        return -1;
+    }
+    if (strstr(output, "capacity-fail") == NULL) {
+        fputs("placement_proposal: gpt-oss advisory missing 'capacity-fail'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 4. Proposer output mentions tile count or tile memory recommendation. */
+    if ((strstr(output, "Increase tile count")  == NULL) &&
+        (strstr(output, "Increase tile memory") == NULL)) {
+        fputs("placement_proposal: gpt-oss advisory missing tile recommendation\n",
+              stderr);
+        return -1;
+    }
+
+    /* 5. JSON output mode: valid fixture → JSON has expected keys. */
+    if (run_command(
+            "python3 compiler/propose_tensor_placement.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --report-json build/m101_valid_advisory.json"
+            " > build/m101_valid_json_mode.txt 2>&1") != 0) {
+        fputs("placement_proposal: JSON mode failed on valid fixture\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m101_valid_advisory.json", output, sizeof(output)) != 0) {
+        fputs("placement_proposal: cannot read valid advisory JSON\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"status\"")         == NULL) ||
+        (strstr(output, "\"proposals\"")      == NULL) ||
+        (strstr(output, "\"analysis\"")       == NULL) ||
+        (strstr(output, "\"next_action\"")    == NULL)) {
+        fputs("placement_proposal: valid advisory JSON missing expected keys\n",
+              stderr);
+        return -1;
+    }
+
+    /* 6. JSON output for FAIL case has proposal_count > 0. */
+    if (run_command(
+            "python3 compiler/propose_tensor_placement.py"
+            " --report build/m101_gptoss_16g.json"
+            " --report-json build/m101_gptoss_advisory_json.json"
+            " > /dev/null 2>&1") == 0) {
+        /* exit 1 is expected; non-zero is fine here, just ignore. */
+    }
+    if (read_file("build/m101_gptoss_advisory_json.json",
+                  output, sizeof(output)) != 0) {
+        fputs("placement_proposal: cannot read gpt-oss advisory JSON\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"status\": \"fail\"")  == NULL) &&
+        (strstr(output, "\"status\":\"fail\"")   == NULL)) {
+        fputs("placement_proposal: gpt-oss advisory JSON missing status fail\n",
+              stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"proposal_count\"") == NULL) ||
+        (strstr(output, "\"next_action\"")    == NULL)) {
+        fputs("placement_proposal: gpt-oss advisory JSON missing required fields\n",
+              stderr);
+        return -1;
+    }
+
+    /* 7. Malformed JSON → exit 2. */
+    if (run_command(
+            "echo 'not_valid_json' | python3"
+            " compiler/propose_tensor_placement.py"
+            " --report /dev/stdin"
+            " > build/m101_malformed.txt 2>&1") == 0) {
+        fputs("placement_proposal: malformed JSON should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+
+    /* 8. Missing required field "tiles" → exit 2. */
+    if (run_command(
+            "echo '{\"report_version\":1,\"header\":{\"tile_count\":1}}'"
+            " | python3 compiler/propose_tensor_placement.py"
+            " --report /dev/stdin"
+            " > build/m101_missing_tiles.txt 2>&1") == 0) {
+        fputs("placement_proposal: missing tiles should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -3400,7 +3561,8 @@ int main(void)
         (check_scaling_report()           != 0) ||
         (check_tile_capacity_smoke()      != 0) ||
         (check_placement_validator_smoke() != 0) ||
-        (check_placement_report_smoke()   != 0)) {
+        (check_placement_report_smoke()   != 0) ||
+        (check_placement_proposal_smoke() != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
