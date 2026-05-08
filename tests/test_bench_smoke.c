@@ -2820,6 +2820,119 @@ static int check_trace_diff_smoke(void)
     return 0;
 }
 
+/*
+ * check_prefill_decode_split_smoke() — M95
+ *
+ * Verifies that att1-bench output contains prefill/decode split fields in
+ * three scenarios:
+ *
+ *   1. Byte-tokenizer single mode: prompt_tokens=3 (3 bytes in "abc"),
+ *      decode_tokens=2 (2 generated), all split fields present.
+ *
+ *   2. External tokenizer single mode: prompt_tokens=3 (3 IDs),
+ *      decode_tokens=1 (1 generated), field values consistent.
+ *
+ *   3. Cluster mode: prefill_fabric_packets and decode_fabric_packets
+ *      are present in the output (nonzero expected for prefill phase).
+ */
+static int check_prefill_decode_split_smoke(void)
+{
+    char output[16384];
+
+    /* ── 1. Byte-tokenizer single mode ─────────────────────────────── */
+    if (run_command(
+            "./build/att1-bench"
+            " --model models/dummy/model.att1"
+            " --prompt abc --tokens 2 --mode single --backend cpu-f32"
+            " > build/m95_byte_single.txt 2>&1") != 0) {
+        fputs("prefill_decode: byte single run failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m95_byte_single.txt", output, sizeof(output)) != 0) {
+        fputs("prefill_decode: cannot read byte single output\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "prompt_tokens=3")          == NULL) ||
+        (strstr(output, "decode_tokens=2")           == NULL) ||
+        (strstr(output, "prefill_time_us_total=")    == NULL) ||
+        (strstr(output, "decode_time_us_total=")     == NULL) ||
+        (strstr(output, "prefill_kv_appends=")       == NULL) ||
+        (strstr(output, "decode_kv_appends=")        == NULL) ||
+        (strstr(output, "prefill_kv_reads=")         == NULL) ||
+        (strstr(output, "decode_kv_reads=")          == NULL) ||
+        (strstr(output, "prefill_logits_bytes=")     == NULL) ||
+        (strstr(output, "decode_logits_bytes=")      == NULL)) {
+        fputs("prefill_decode: byte single missing split fields\n", stderr);
+        return -1;
+    }
+
+    /* ── 2. External tokenizer: prompt_tokens matches input count ───── */
+    {
+        FILE *fp = fopen("build/m95_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("prefill_decode: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n", fp);
+        fclose(fp);
+    }
+
+    if (run_command(
+            "./build/att1-bench"
+            " --model models/real_tiny_f32/model.att1"
+            " --tokens 1 --mode single --backend cpu-f32"
+            " --tokenizer external --tokens-file build/m95_ids.txt"
+            " > build/m95_ext_single.txt 2>&1") != 0) {
+        fputs("prefill_decode: external single run failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m95_ext_single.txt", output, sizeof(output)) != 0) {
+        fputs("prefill_decode: cannot read external single output\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "prompt_tokens=3") == NULL) ||
+        (strstr(output, "decode_tokens=1") == NULL)) {
+        fputs("prefill_decode: external prompt/decode token count wrong\n",
+              stderr);
+        return -1;
+    }
+
+    /* ── 3. Cluster mode: fabric split fields present ───────────────── */
+    if (run_command(
+            "./build/att1-bench"
+            " --model models/real_tiny_f32/model.att1"
+            " --tokens 1 --mode cluster --tiles 2 --backend cpu-f32"
+            " --tokenizer external --tokens-file build/m95_ids.txt"
+            " > build/m95_cluster.txt 2>&1") != 0) {
+        fputs("prefill_decode: cluster run failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m95_cluster.txt", output, sizeof(output)) != 0) {
+        fputs("prefill_decode: cannot read cluster output\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "prefill_fabric_packets=") == NULL) ||
+        (strstr(output, "decode_fabric_packets=")  == NULL)) {
+        fputs("prefill_decode: cluster missing fabric split fields\n", stderr);
+        return -1;
+    }
+
+    /* Prefill phase must have sent at least one fabric packet (3 tokens × 2 tiles). */
+    if (strstr(output, "prefill_fabric_packets=0\n") != NULL) {
+        fputs("prefill_decode: cluster prefill_fabric_packets is zero\n",
+              stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -2845,6 +2958,7 @@ int main(void)
         (check_public_q4_cuda_smoke()     != 0) ||
         (check_backend_comparison_smoke() != 0) ||
         (check_trace_diff_smoke()         != 0) ||
+        (check_prefill_decode_split_smoke() != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0)) {

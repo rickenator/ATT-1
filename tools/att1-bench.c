@@ -224,6 +224,50 @@ static void print_counters(const att1_trace_t *trace)
 }
 
 /*
+ * print_prefill_decode_split() — M95
+ *
+ * Prints prefill vs decode phase breakdown fields.  pre is a counter snapshot
+ * taken immediately after the last prefill token was fed; tot is a snapshot
+ * taken after all decode tokens have been generated.  Decode counters are
+ * computed as (tot - pre) for each field.
+ *
+ * fabric_packets fields are only printed when is_cluster is non-zero.
+ */
+static void print_prefill_decode_split(const att1_trace_counters *pre,
+                                       const att1_trace_counters *tot,
+                                       size_t decode_count,
+                                       int is_cluster)
+{
+    printf("decode_tokens=%zu\n", decode_count);
+    printf("prefill_time_us_total=%llu\n",
+           (unsigned long long)pre->token_time_us_total);
+    printf("decode_time_us_total=%llu\n",
+           (unsigned long long)(tot->token_time_us_total -
+                                pre->token_time_us_total));
+    printf("prefill_kv_appends=%llu\n",
+           (unsigned long long)pre->kv_appends);
+    printf("decode_kv_appends=%llu\n",
+           (unsigned long long)(tot->kv_appends - pre->kv_appends));
+    printf("prefill_kv_reads=%llu\n",
+           (unsigned long long)(pre->kv_key_reads + pre->kv_value_reads));
+    printf("decode_kv_reads=%llu\n",
+           (unsigned long long)((tot->kv_key_reads  - pre->kv_key_reads) +
+                                (tot->kv_value_reads - pre->kv_value_reads)));
+    printf("prefill_logits_bytes=%llu\n",
+           (unsigned long long)pre->logits_bytes_produced);
+    printf("decode_logits_bytes=%llu\n",
+           (unsigned long long)(tot->logits_bytes_produced -
+                                pre->logits_bytes_produced));
+    if (is_cluster) {
+        printf("prefill_fabric_packets=%llu\n",
+               (unsigned long long)pre->fabric_packets_sent);
+        printf("decode_fabric_packets=%llu\n",
+               (unsigned long long)(tot->fabric_packets_sent -
+                                    pre->fabric_packets_sent));
+    }
+}
+
+/*
  * run_single_external() runs single-tile inference using pre-tokenized input.
  *
  * ext_ids[0..ext_count-1] are fed via att1_infer_decode_token() as the
@@ -245,6 +289,8 @@ static int run_single_external(const att1_model *model,
     size_t produced = 0u;
     size_t run_tokens = 0u;
     size_t capacity = 0u;
+    att1_trace_counters snap_prefill = {0};
+    att1_trace_counters snap_total = {0};
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
                 ((strcmp(backend_name, "cpu-q4") == 0) ||
@@ -309,7 +355,7 @@ static int run_single_external(const att1_model *model,
         goto cleanup;
     }
 
-    /* feed external prompt IDs one by one */
+    /* prefill: feed external prompt IDs one by one */
     for (i = 0u; i < ext_count; i++) {
         uint32_t next = 0u;
         if (att1_infer_decode_token(infer, ext_ids[i], &next) != ATT1_OK) {
@@ -318,7 +364,10 @@ static int run_single_external(const att1_model *model,
         token = next;
     }
 
-    /* generate run_tokens output tokens */
+    /* snapshot at prefill/decode boundary */
+    (void)att1_trace_snapshot(trace, &snap_prefill);
+
+    /* decode: generate run_tokens output tokens */
     for (produced = 0u; produced < run_tokens; produced++) {
         uint32_t next = 0u;
         tokens[produced] = token;
@@ -341,7 +390,9 @@ static int run_single_external(const att1_model *model,
     if (produced > 0u) {
         printf("last_token=%u\n", tokens[produced - 1u]);
     }
+    (void)att1_trace_snapshot(trace, &snap_total);
     print_counters(trace);
+    print_prefill_decode_split(&snap_prefill, &snap_total, produced, 0);
     rc = 0;
 
 cleanup:
@@ -376,6 +427,8 @@ static int run_cluster_external(const att1_model      *model,
     size_t produced = 0u;
     size_t run_tokens = 0u;
     size_t capacity = 0u;
+    att1_trace_counters snap_prefill = {0};
+    att1_trace_counters snap_total = {0};
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
                 ((strcmp(backend_name, "cpu-q4") == 0) ||
@@ -454,7 +507,7 @@ static int run_cluster_external(const att1_model      *model,
         goto cleanup;
     }
 
-    /* feed external prompt IDs one by one */
+    /* prefill: feed external prompt IDs one by one */
     for (i = 0u; i < ext_count; i++) {
         uint32_t next = 0u;
         if (att1_cluster_infer_decode_token(infer, ext_ids[i], &next) != ATT1_OK) {
@@ -463,7 +516,10 @@ static int run_cluster_external(const att1_model      *model,
         token = next;
     }
 
-    /* generate run_tokens output tokens */
+    /* snapshot at prefill/decode boundary */
+    (void)att1_trace_snapshot(trace, &snap_prefill);
+
+    /* decode: generate run_tokens output tokens */
     for (produced = 0u; produced < run_tokens; produced++) {
         uint32_t next = 0u;
         tokens[produced] = token;
@@ -488,7 +544,9 @@ static int run_cluster_external(const att1_model      *model,
     if (produced > 0u) {
         printf("last_token=%u\n", tokens[produced - 1u]);
     }
+    (void)att1_trace_snapshot(trace, &snap_total);
     print_counters(trace);
+    print_prefill_decode_split(&snap_prefill, &snap_total, produced, 1);
     rc = 0;
 
 cleanup:
@@ -510,9 +568,13 @@ static int run_single(const att1_model *model,
     att1_trace_t *trace = NULL;
     att1_backend *backend = NULL;
     uint32_t *tokens = NULL;
+    uint32_t token = 0u;
+    size_t i = 0u;
     size_t out_count = 0u;
     size_t run_tokens = benchmark_token_count(model, prompt_bytes, max_tokens);
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
+    att1_trace_counters snap_prefill = {0};
+    att1_trace_counters snap_total = {0};
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
                 ((strcmp(backend_name, "cpu-q4") == 0) ||
@@ -563,28 +625,48 @@ static int run_single(const att1_model *model,
         }
     }
 
-    if ((att1_infer_set_trace(infer, trace) != ATT1_OK) ||
-        (att1_infer_generate(infer,
-                             prompt,
-                             prompt_bytes,
-                             run_tokens,
-                             tokens,
-                             capacity,
-                             &out_count) != ATT1_OK)) {
+    if (att1_infer_set_trace(infer, trace) != ATT1_OK) {
         goto cleanup;
+    }
+
+    /* prefill: feed prompt bytes one at a time */
+    for (i = 0u; i < prompt_bytes; i++) {
+        uint32_t next = 0u;
+        if (att1_infer_decode_token(infer, (uint32_t)prompt[i], &next) != ATT1_OK) {
+            goto cleanup;
+        }
+        token = next;
+    }
+
+    /* snapshot at prefill/decode boundary */
+    (void)att1_trace_snapshot(trace, &snap_prefill);
+
+    /* decode: generate run_tokens output tokens */
+    for (out_count = 0u; out_count < run_tokens; out_count++) {
+        uint32_t next = 0u;
+        tokens[out_count] = token;
+        if ((out_count + 1u) < run_tokens) {
+            if (att1_infer_decode_token(infer, token, &next) != ATT1_OK) {
+                goto cleanup;
+            }
+            token = next;
+        }
     }
 
     printf("mode=single\n");
     printf("shard_plan=runtime\n");
     printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
     printf("tokenizer=%s\n", tokenizer_name != NULL ? tokenizer_name : "byte");
+    printf("prompt_tokens=%zu\n", prompt_bytes);
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);
     printf("generated_tokens=%zu\n", out_count);
     if (out_count > 0u) {
         printf("last_token=%u\n", tokens[out_count - 1u]);
     }
+    (void)att1_trace_snapshot(trace, &snap_total);
     print_counters(trace);
+    print_prefill_decode_split(&snap_prefill, &snap_total, out_count, 0);
     rc = 0;
 
 cleanup:
@@ -609,9 +691,13 @@ static int run_cluster(const att1_model *model,
     att1_trace_t *trace = NULL;
     att1_backend *backend = NULL;
     uint32_t *tokens = NULL;
+    uint32_t token = 0u;
+    size_t i = 0u;
     size_t out_count = 0u;
     size_t run_tokens = benchmark_token_count(model, prompt_bytes, max_tokens);
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
+    att1_trace_counters snap_prefill = {0};
+    att1_trace_counters snap_total = {0};
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
                 ((strcmp(backend_name, "cpu-q4") == 0) ||
@@ -676,15 +762,34 @@ static int run_cluster(const att1_model *model,
         }
     }
 
-    if ((att1_cluster_infer_set_trace(infer, trace) != ATT1_OK) ||
-        (att1_cluster_infer_generate(infer,
-                                     prompt,
-                                     prompt_bytes,
-                                     run_tokens,
-                                     tokens,
-                                     capacity,
-                                     &out_count) != ATT1_OK)) {
+    if (att1_cluster_infer_set_trace(infer, trace) != ATT1_OK) {
         goto cleanup;
+    }
+
+    /* prefill: feed prompt bytes one at a time */
+    for (i = 0u; i < prompt_bytes; i++) {
+        uint32_t next = 0u;
+        if (att1_cluster_infer_decode_token(infer,
+                                            (uint32_t)prompt[i],
+                                            &next) != ATT1_OK) {
+            goto cleanup;
+        }
+        token = next;
+    }
+
+    /* snapshot at prefill/decode boundary */
+    (void)att1_trace_snapshot(trace, &snap_prefill);
+
+    /* decode: generate run_tokens output tokens */
+    for (out_count = 0u; out_count < run_tokens; out_count++) {
+        uint32_t next = 0u;
+        tokens[out_count] = token;
+        if ((out_count + 1u) < run_tokens) {
+            if (att1_cluster_infer_decode_token(infer, token, &next) != ATT1_OK) {
+                goto cleanup;
+            }
+            token = next;
+        }
     }
 
     printf("mode=cluster\n");
@@ -693,13 +798,16 @@ static int run_cluster(const att1_model *model,
     printf("backend=%s\n", backend_name != NULL ? backend_name : "cpu-f32");
     printf("tokenizer=%s\n", tokenizer_name != NULL ? tokenizer_name : "byte");
     printf("tiles=%zu\n", tile_count);
+    printf("prompt_tokens=%zu\n", prompt_bytes);
     printf("requested_tokens=%zu\n", max_tokens);
     printf("benchmark_tokens=%zu\n", run_tokens);
     printf("generated_tokens=%zu\n", out_count);
     if (out_count > 0u) {
         printf("last_token=%u\n", tokens[out_count - 1u]);
     }
+    (void)att1_trace_snapshot(trace, &snap_total);
     print_counters(trace);
+    print_prefill_decode_split(&snap_prefill, &snap_total, out_count, 1);
     rc = 0;
 
 cleanup:

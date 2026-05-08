@@ -86,7 +86,22 @@ _SHARD_META_FIELDS = (
     "shard_meta_dtype_q8",
 )
 
-_ALL_SCALAR_FIELDS = _SCALAR_FIELDS + _SHARD_META_FIELDS
+# Prefill/decode phase split fields (M95)
+_PREFILL_DECODE_FIELDS = (
+    "decode_tokens",
+    "prefill_time_us_total",
+    "decode_time_us_total",
+    "prefill_kv_appends",
+    "decode_kv_appends",
+    "prefill_kv_reads",
+    "decode_kv_reads",
+    "prefill_logits_bytes",
+    "decode_logits_bytes",
+    "prefill_fabric_packets",
+    "decode_fabric_packets",
+)
+
+_ALL_SCALAR_FIELDS = _SCALAR_FIELDS + _SHARD_META_FIELDS + _PREFILL_DECODE_FIELDS
 
 # ---------------------------------------------------------------------------
 # Patterns for structured output lines

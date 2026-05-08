@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 94: ATT-1 trace diff tool (complete).
+Milestone 95: Prefill vs decode benchmark split (complete).
 
 ## Active Task
 
-Prepare Milestone 95.
+Prepare Milestone 96.
 
 ## Hard Rules
 
@@ -119,10 +119,11 @@ Prepare Milestone 95.
 - Milestone 92: Backend comparison report — `compiler/backend_comparison_report.py` added; 12-case matrix (f32/q8/q4 × CPU/CUDA × single/cluster); pending/unavailable/pass CUDA status; backend silent-fallback check; fabric-packet nonzero check; q4 notes; JSON report; `check_backend_comparison_smoke` added to `test_bench_smoke.c`; CPU-only: all 6 CPU rows pass, 6 CUDA rows pending (no --include-cuda); CUDA host: all 12 rows pass (verified on RTX 3090).
 - Milestone 93: AIMU/PCIe prototype requirements — Section 8 added to `docs/aimu_architecture.md`; covers prototype goal, proof criteria, runtime/CUDA relationships, tile responsibilities, local memory sizing (f32/q8/q4), host control plane, fabric/interconnect requirements, KV-MMU requirements, counter/trace requirements, four MVP options (software-emulated/FPGA/PCIe card/ASIC), data movement assumptions, dtype tolerances, non-goals, open engineering questions, and M94 proposal.
 - Milestone 94: ATT-1 trace diff tool — `compiler/trace_diff.py` added; parses att1-bench key=value output; compares all scalar, layer[N], and tile[N] fields; same/DIFF/MISSING tags; JSON report via --report-json; `check_trace_diff_smoke` added to `test_bench_smoke.c` (identical diff, cross-backend DIFF, malformed rejection); `docs/trace_diff.md` added; no C/Makefile/format changes.
+- Milestone 95: Prefill vs decode benchmark split — `att1-bench` now snapshots trace counters at the prefill/decode boundary and emits: `prompt_tokens` (byte and external modes), `decode_tokens`, `prefill_time_us_total`, `decode_time_us_total`, `prefill_kv_appends`, `decode_kv_appends`, `prefill_kv_reads`, `decode_kv_reads`, `prefill_logits_bytes`, `decode_logits_bytes`; `prefill_fabric_packets` + `decode_fabric_packets` for cluster mode; all four runner functions updated; `check_prefill_decode_split_smoke` added to `test_bench_smoke.c`; `trace_diff.py` updated with new field names; `docs/tracing.md` updated; no inference behavior changed.
 
 ## Next Prompt for Codex
 
-Implement Milestone 95 only.
+Implement Milestone 96 only.
 - Default make/make test must remain CPU-only and CUDA-free.
 - CUDA remains opt-in with make CUDA=1.
 - Do not implement CUDA q4 cluster inference yet.

@@ -73,3 +73,38 @@ claim for the future ASIC.
 The `gpt-oss-120b-shape` preset is synthetic/non-executable. It estimates model
 bytes, per-tile bytes, KV bytes per session, and activation bytes per token for
 architecture planning only.
+
+## Benchmark fields: prefill vs decode split (M95)
+
+`att1-bench` snapshots the trace counters at the boundary between the prefill
+phase (feeding prompt tokens) and the decode phase (generating new tokens).
+The following fields are appended after the existing counters in every run.
+
+### Phase-split counter fields
+
+| Field | Description |
+|-------|-------------|
+| `prompt_tokens` | Number of prompt tokens fed (byte count for byte tokenizer; ID count for external) |
+| `decode_tokens` | Number of new tokens generated |
+| `prefill_time_us_total` | CPU time used during prefill (microseconds) |
+| `decode_time_us_total` | CPU time used during decode (microseconds) |
+| `prefill_kv_appends` | KV cache appends during prefill |
+| `decode_kv_appends` | KV cache appends during decode |
+| `prefill_kv_reads` | KV key+value cache reads during prefill |
+| `decode_kv_reads` | KV key+value cache reads during decode |
+| `prefill_logits_bytes` | Logits bytes produced during prefill |
+| `decode_logits_bytes` | Logits bytes produced during decode |
+| `prefill_fabric_packets` | Fabric packets sent during prefill (cluster mode only) |
+| `decode_fabric_packets` | Fabric packets sent during decode (cluster mode only) |
+
+All existing fields (`tokens_decoded`, `token_time_us_total`, etc.) remain
+present for compatibility.
+
+### Notes
+
+- Timing fields are CPU process time from `clock()`, not wall-clock time.
+- In single-tile mode, `prefill_fabric_packets` and `decode_fabric_packets` are
+  omitted (fabric is unused in single-tile mode).
+- If `decode_tokens=0` (requested tokens capped to zero by `max_seq_len`), all
+  decode-phase fields will be zero.
+- `kv_reads` is the sum of `kv_key_reads + kv_value_reads` for that phase.
