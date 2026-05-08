@@ -1180,10 +1180,71 @@ Source comparison with a q4 artifact is not yet wired into
 CUDA q4 inference is not supported and will be rejected at argument-parse time
 (`--backend cuda-q4` exits with a clear error; see M80).
 
+## CPU q4 public-model conversion path (M83)
+
+Milestone 83 implements the converter tooling and validation workflow specified
+in the M82 plan above.
+
+### What changed
+
+| Component | Change |
+|-----------|--------|
+| `compiler/convert_llama_to_att1.py` | Auto-discovers `model.safetensors` inside `--model-dir` when `--safetensors` is not given and `--weight-format q4` (or q8) is used |
+| `compiler/fixtures/m83_model_dir/` | New fixture: `config.json` + `model.safetensors` symlink; mimics public model layout |
+| `compiler/validate_public_q4.py` | New manual validator: compat check → convert → inspect → cpu-q4 bench |
+| `tests/test_bench_smoke.c` | `check_public_q4_smoke()`: Python-skippable smoke test for `--model-dir` auto-discovery |
+
+### Auto-discovery rule
+
+When `--safetensors` is not specified and `--weight-format q4` (or q8) is
+requested, the converter looks for `<model-dir>/model.safetensors` and uses
+it automatically.  If the file is absent, the converter exits with a clear
+error.  The explicit `--safetensors PATH` flag still works as before.
+
+### Manual validation — SmolLM2-135M (outside Git)
+
+The public model lives at `~/Models/SmolLM2-135M/` and is not committed.
+Artifacts land in `~/Models/att1/SmolLM2-135M/`.
+
+```sh
+# Acquire the model once (one-time)
+git clone --depth 1 https://huggingface.co/HuggingFaceTB/SmolLM2-135M \
+    ~/Models/SmolLM2-135M
+
+# Compat check
+python3 compiler/check_llama_compat.py ~/Models/SmolLM2-135M
+# Expect: compat: pass
+
+# Convert to q4 using --model-dir (no --safetensors required)
+mkdir -p ~/Models/att1/SmolLM2-135M
+python3 compiler/convert_llama_to_att1.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --weight-format q4 \
+    --out ~/Models/att1/SmolLM2-135M/model_q4.att1
+# Expect: note: auto-discovered safetensors: ~/Models/SmolLM2-135M/model.safetensors
+
+# Inspect
+./build/att1-inspect ~/Models/att1/SmolLM2-135M/model_q4.att1 | head -6
+# Expect: dtype_name=q4  quant=grouped-q4-g32
+
+# Automated validation (after creating a prompt.ids file)
+python3 compiler/validate_public_q4.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --out ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids
+# Expect: result: pass
+```
+
+CUDA q4 is not supported (`--backend cuda-q4` exits with a clear error).
+
+Source comparison with a q4 artifact (numpy forward-pass tolerance check) is
+deferred to M84.
+
 ### Future milestones
 
 | Milestone | Goal |
 |-----------|------|
-| M83 | Public-model q4 converter path: run `--weight-format q4` on SmolLM2-135M; validate `model_q4.att1` with `att1-inspect` and cpu-q4 single + cluster bench |
+| M83 | *(complete — this section)* |
+| (old M83 row replaced above) |
 | M84 | Public-model q4 validation report: extend `compare_att1_to_source.py` to accept a q4 artifact; static and forward-pass tolerance checks vs f32/q8 references; structured report |
 | M85 | CUDA q4 planning/prototype: define CUDA q4 kernel approach, memory layout on device, and integration points with the existing CUDA backend |

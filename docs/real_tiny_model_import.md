@@ -2175,6 +2175,36 @@ and `docs/real_model_conversion.md` §"Public-model q4 conversion plan
 
 ---
 
+## M83 — public-model q4 conversion path (complete)
+
+**Goal:** Extend the converter so that `--model-dir` alone (without
+`--safetensors`) is sufficient for q4 conversion; add a manual validator and
+an in-repo smoke test.
+
+**Changes:**
+
+- `compiler/convert_llama_to_att1.py` — auto-discovers `model.safetensors`
+  inside `--model-dir` when `--safetensors` is not given and
+  `--weight-format q4` (or q8) is active.
+- `compiler/fixtures/m83_model_dir/` — new fixture (`config.json` +
+  `model.safetensors` symlink to `m63_llama_2l.safetensors`); mimics a public
+  model directory.
+- `compiler/validate_public_q4.py` — new manual validator for the
+  SmolLM2-135M public model: compat check → q4 conversion → `att1-inspect` →
+  cpu-q4 single bench → cpu-q4 cluster bench → optional f32/q8 token
+  comparison.  Stdlib-only; no network access.
+- `tests/test_bench_smoke.c` — `check_public_q4_smoke()`: Python-skippable
+  function that converts `compiler/fixtures/m83_model_dir` via
+  `--model-dir` (no `--safetensors`), inspects the result, and runs cpu-q4
+  single + cluster bench.
+
+**No public model weights or generated artifacts are committed.**  CUDA q4
+remains unsupported.
+
+`make test` passes after M83.
+
+---
+
 ## Related Documents
 
 - [real_model_conversion.md](real_model_conversion.md) — existing converter

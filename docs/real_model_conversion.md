@@ -637,6 +637,28 @@ Full specification (nibble order, scale storage, determinism rules, failure
 cases, validation commands) is in `docs/quantization.md` §"Public-model q4
 conversion plan (M82)".
 
+## Public-model q4 conversion path (Milestone 83)
+
+Milestone 83 extends the converter with `--model-dir` auto-discovery so that
+the explicit `--safetensors PATH` flag is not required when converting a
+public-model directory.
+
+When `--safetensors` is omitted and `--weight-format q4` (or q8) is active,
+the converter resolves `<model-dir>/model.safetensors` automatically.  If the
+file is absent, a clear error is printed and the converter exits non-zero.
+
+A new fixture at `compiler/fixtures/m83_model_dir/` (vocab=64, d_model=32,
+n_layers=2) exercises this path in `check_public_q4_smoke()` inside
+`tests/test_bench_smoke.c` without any public weights in the repository.
+
+A new manual validator script `compiler/validate_public_q4.py` automates the
+full SmolLM2-135M q4 conversion and bench validation outside Git.  See
+`docs/quantization.md` §"CPU q4 public-model conversion path (M83)" for
+detailed usage.
+
+No public weights or generated artifacts are committed.  CUDA q4 remains
+unsupported.
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -678,3 +700,4 @@ conversion plan (M82)".
 | M80 | q4 benchmark and trace integration: `att1-bench --backend cpu-q4` single and cluster, `test_q4_bench`, `test_backend_matrix` extended, `cuda-q4` rejected at arg-parse. |
 | M81 | q4 Python converter integration: `--weight-format q4` in `convert_llama_to_att1.py`; `models/real_tiny_q4/model.att1` from m63 fixture (vocab=64, d_model=32); `check_real_tiny_q4` in `test_converter_validation.c`; `check_q4_conversion` smoke test. |
 | M82 | Public-model q4 conversion plan: documentation-only spec for converting SmolLM2-135M to q4 `.att1`; eligible tensors, group-size policy, size estimates (≈190 MB vs ≈540 MB F32), tolerance expectations, validation flow, and failure cases documented in `docs/quantization.md`. |
+| M83 | Public-model q4 conversion path: `--model-dir` auto-discovery of `model.safetensors` in converter; `compiler/fixtures/m83_model_dir/` fixture; `compiler/validate_public_q4.py` manual validator; `check_public_q4_smoke()` in `test_bench_smoke.c`. |

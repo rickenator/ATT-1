@@ -1872,6 +1872,119 @@ static int check_q4_conversion(void)
 }
 
 /*
+ * check_public_q4_smoke() — M83
+ *
+ * Python-skippable.  Validates the --model-dir auto-discovery path for q4
+ * conversion using the checked-in m83_model_dir fixture:
+ *   1. Convert compiler/fixtures/m83_model_dir → q4 .att1 using ONLY
+ *      --model-dir (no --safetensors) to exercise auto-discovery.
+ *   2. att1-inspect: verify dtype_name=q4, grouped-q4-g32, tensor_count=21.
+ *   3. att1-bench --backend cpu-q4 --mode single: exits 0, expected fields.
+ *   4. att1-bench --backend cpu-q4 --mode cluster --tiles 2: exits 0,
+ *      fabric_packets_sent nonzero.
+ *
+ * The fixture (vocab=64, d_model=32, d_ff=64, n_layers=2) is identical in
+ * config to the m63 fixture but loaded via model directory layout.
+ */
+static int check_public_q4_smoke(void)
+{
+    char output[8192];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* Write token IDs file (vocab=64; 1,3,5 are valid IDs). */
+    {
+        FILE *fp = fopen("build/m83_smoke_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("public_q4_smoke: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n3\n5\n", fp);
+        fclose(fp);
+    }
+
+    /* 1. Convert using --model-dir only (tests auto-discovery of safetensors). */
+    if (run_command(
+            "python3 compiler/convert_llama_to_att1.py"
+            " --model-dir compiler/fixtures/m83_model_dir"
+            " --weight-format q4"
+            " --out build/m83_q4/model.att1"
+            " > build/m83_convert.txt 2>&1") != 0) {
+        fputs("public_q4_smoke: q4 conversion failed\n", stderr);
+        return -1;
+    }
+
+    /* 2. att1-inspect: q4 tensors must appear. */
+    if (run_command(
+            "./build/att1-inspect build/m83_q4/model.att1"
+            " > build/m83_inspect.txt 2>&1") != 0) {
+        fputs("public_q4_smoke: att1-inspect failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m83_inspect.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "dtype_name=q4")       == NULL) ||
+        (strstr(output, "quant=grouped-q4-g32") == NULL) ||
+        (strstr(output, "tensor_count=21")      == NULL)) {
+        fputs("public_q4_smoke: inspect output missing q4 fields\n", stderr);
+        return -1;
+    }
+
+    /* 3. cpu-q4 single-tile inference. */
+    if (run_command(
+            "./build/att1-bench"
+            " --model build/m83_q4/model.att1"
+            " --tokenizer external"
+            " --tokens-file build/m83_smoke_ids.txt"
+            " --tokens 1 --mode single --backend cpu-q4"
+            " > build/m83_q4_single.txt 2>&1") != 0) {
+        fputs("public_q4_smoke: cpu-q4 single failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m83_q4_single.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "mode=single")    == NULL) ||
+        (strstr(output, "backend=cpu-q4") == NULL) ||
+        (strstr(output, "last_token=")    == NULL)) {
+        fputs("public_q4_smoke: cpu-q4 single output unexpected\n", stderr);
+        return -1;
+    }
+
+    /* 4. cpu-q4 cluster inference. */
+    if (run_command(
+            "./build/att1-bench"
+            " --model build/m83_q4/model.att1"
+            " --tokenizer external"
+            " --tokens-file build/m83_smoke_ids.txt"
+            " --tokens 1 --mode cluster --tiles 2 --backend cpu-q4"
+            " > build/m83_q4_cluster.txt 2>&1") != 0) {
+        fputs("public_q4_smoke: cpu-q4 cluster failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m83_q4_cluster.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "mode=cluster")         == NULL) ||
+        (strstr(output, "backend=cpu-q4")       == NULL) ||
+        (strstr(output, "fabric_packets_sent=") == NULL)) {
+        fputs("public_q4_smoke: cpu-q4 cluster output unexpected\n", stderr);
+        return -1;
+    }
+    /* Cluster mode must have sent at least one fabric packet. */
+    if (strstr(output, "fabric_packets_sent=0") != NULL) {
+        fputs("public_q4_smoke: cpu-q4 cluster sent zero fabric packets\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * check_public_backend_smoke() — M70
  *
  * Python-skippable. Validates the manual public-model backend smoke driver
@@ -2162,6 +2275,7 @@ int main(void)
         (check_bf16_coercion()            != 0) ||
         (check_q8_conversion()            != 0) ||
         (check_q4_conversion()            != 0) ||
+        (check_public_q4_smoke()          != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0)) {

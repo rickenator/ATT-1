@@ -1162,11 +1162,24 @@ def main() -> None:
         # --shard-meta without --tiles defaults to 1 tile (still valid)
         pass
 
-    if args.safetensors and not os.path.isfile(args.safetensors):
-        print(f"error: safetensors file not found: {args.safetensors!r}", file=sys.stderr)
+    # Auto-discover model.safetensors from --model-dir when --safetensors is
+    # not provided explicitly and a quantized weight format is requested.
+    safetensors_path = args.safetensors
+    if safetensors_path is None and args.model_dir and args.weight_format in ("q8", "q4"):
+        candidate = os.path.join(args.model_dir, "model.safetensors")
+        if os.path.isfile(candidate):
+            safetensors_path = candidate
+            print(f"note: auto-discovered safetensors: {candidate}")
+
+    if safetensors_path and not os.path.isfile(safetensors_path):
+        print(f"error: safetensors file not found: {safetensors_path!r}", file=sys.stderr)
         sys.exit(1)
-    if (args.weight_format in ("q8", "q4")) and not args.safetensors:
-        print("error: --weight-format q8/q4 requires --safetensors", file=sys.stderr)
+    if (args.weight_format in ("q8", "q4")) and not safetensors_path:
+        print(
+            "error: --weight-format q8/q4 requires --safetensors or"
+            " model.safetensors present in --model-dir",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     errors = validate_att1_config(att1)
@@ -1184,7 +1197,7 @@ def main() -> None:
         for name, shape in tensor_name_plan(att1):
             shape_str = " \u00d7 ".join(str(s) for s in shape)
             print(f"  {name:<50} {shape_str}")
-        if args.safetensors:
+        if safetensors_path:
             print()
             print("source tensor mapping:")
             for item in llama_source_tensor_plan(att1):
@@ -1218,13 +1231,13 @@ def main() -> None:
                 att1,
                 output_path,
                 emit_shard_meta=args.shard_meta,
-                safetensors_path=args.safetensors,
+                safetensors_path=safetensors_path,
                 weight_format=args.weight_format,
             )
         except (LoadError, ScanError, ValueError) as exc:
             print(f"error: safetensors import failed: {exc}", file=sys.stderr)
             sys.exit(1)
-        if args.safetensors:
+        if safetensors_path:
             print(
                 f"note: tensor data loaded from F32 safetensors and emitted as {args.weight_format}"
             )
