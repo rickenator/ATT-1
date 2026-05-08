@@ -2484,6 +2484,102 @@ static int check_scaling_report(void)
     return 0;
 }
 
+/*
+ * check_public_q4_cuda_smoke() — M91
+ *
+ * Python-skippable.  Exercises validate_public_q4_cuda.py with the
+ * checked-in real_tiny_q4 artifact, which runs five bench invocations:
+ *
+ *   cpu-q4  single   runtime    → pass
+ *   cpu-q4  cluster  runtime    → pass  (fabric_packets_sent verified > 0)
+ *   cpu-q4  cluster  metadata   → plan_unsupported (q4 rejects metadata plan)
+ *   cuda-q4 single   runtime    → pass (CUDA host) | unavailable (CPU-only)
+ *   cuda-q4 cluster  runtime    → pass (CUDA host) | unavailable (CPU-only)
+ *
+ * Overall result is "pass" on both CPU-only and CUDA hosts.
+ *
+ * Checks:
+ *   1. Text report: result: pass, report: ok, status=plan_unsupported present,
+ *      cpu-q4 rows have status=pass, q4 notes are printed.
+ *   2. JSON report: "runs", "result", "pass" keys present.
+ */
+static int check_public_q4_cuda_smoke(void)
+{
+    char output[16384];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* Write the token IDs fixture file. */
+    {
+        FILE *fp = fopen("build/m91_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("q4_cuda_smoke: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("5\n20\n40\n", fp);
+        fclose(fp);
+    }
+
+    /* Run the validation script with the checked-in fixture. */
+    if (run_command(
+            "python3 compiler/validate_public_q4_cuda.py"
+            " --model-dir compiler/fixtures"
+            " --att1-q4 models/real_tiny_q4/model.att1"
+            " --tokens-file build/m91_ids.txt"
+            " --tokens 1 --tiles 2"
+            " --report-json build/m91_q4_cuda_report.json"
+            " > build/m91_q4_cuda_report.txt 2>&1") != 0) {
+        fputs("q4_cuda_smoke: validation script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m91_q4_cuda_report.txt", output, sizeof(output)) != 0) {
+        fputs("q4_cuda_smoke: cannot read report\n", stderr);
+        return -1;
+    }
+
+    /* cpu-q4 rows must be present and passing. */
+    if ((strstr(output, "backend=cpu-q4 mode=single")   == NULL) ||
+        (strstr(output, "backend=cpu-q4 mode=cluster")  == NULL) ||
+        (strstr(output, "generated_tokens=1")           == NULL) ||
+        (strstr(output, "status=pass")                  == NULL) ||
+        (strstr(output, "result: pass")                 == NULL) ||
+        (strstr(output, "report: ok")                   == NULL)) {
+        fputs("q4_cuda_smoke: text report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    /* Metadata plan rejection must be reported as plan_unsupported, not fail. */
+    if (strstr(output, "status=plan_unsupported") == NULL) {
+        fputs("q4_cuda_smoke: missing status=plan_unsupported for metadata row\n",
+              stderr);
+        return -1;
+    }
+
+    /* At least one q4 note must appear. */
+    if (strstr(output, "note:") == NULL) {
+        fputs("q4_cuda_smoke: q4 notes missing from report\n", stderr);
+        return -1;
+    }
+
+    /* 2. JSON report check. */
+    if (read_file("build/m91_q4_cuda_report.json", output, sizeof(output)) != 0) {
+        fputs("q4_cuda_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"runs\"")   == NULL) ||
+        (strstr(output, "\"result\"") == NULL) ||
+        (strstr(output, "\"pass\"")   == NULL)) {
+        fputs("q4_cuda_smoke: JSON report missing expected keys\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -2506,6 +2602,7 @@ int main(void)
         (check_q4_source_comparison()     != 0) ||
         (check_public_q4_smoke()          != 0) ||
         (check_public_q4_backend_smoke()  != 0) ||
+        (check_public_q4_cuda_smoke()     != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0)) {

@@ -735,3 +735,38 @@ All inference wiring was completed in M88 (single) and M89 (cluster).  M90
 adds only two `k_matrix[]` entries in `tests/test_backend_matrix.c` and
 relaxes the M85 Python/C smoke assertion from `status=unsupported` to
 `result: pass`.
+
+---
+
+## Milestone 91: CUDA q4 public-model validation report
+
+`compiler/validate_public_q4_cuda.py` produces a per-row CUDA q4 validation
+report for a local converted q4 ATT-1 artifact.
+
+### Validation matrix
+
+| Backend  | Mode    | Shard plan | CPU-only status | CUDA host status |
+|----------|---------|------------|-----------------|------------------|
+| cpu-q4   | single  | n/a        | pass            | pass             |
+| cpu-q4   | cluster | runtime    | pass            | pass             |
+| cpu-q4   | cluster | metadata   | plan_unsupported| plan_unsupported |
+| cuda-q4  | single  | n/a        | unavailable     | pass             |
+| cuda-q4  | cluster | runtime    | unavailable     | pass             |
+
+`plan_unsupported` and `unavailable` are expected outcomes; neither fails the
+overall report.
+
+### Backend-name verification
+
+cuda-q4 rows that exit zero but report a backend from
+`{cpu-q4, cpu-q8, cpu-f32, cuda, cuda-q8}` are marked `fail` (silent
+fallback detected).
+
+### Fabric packet verification
+
+All `status=pass` cluster rows must have `fabric_packets_sent > 0`.
+
+### No new inference code or CUDA kernels
+
+All inference wiring is from M88/M89.  M91 adds only the Python script and a
+C smoke test (`check_public_q4_cuda_smoke` in `tests/test_bench_smoke.c`).

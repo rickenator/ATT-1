@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 90: CUDA q4 benchmark and backend-matrix integration (complete).
+Milestone 91: CUDA q4 public-model validation report (complete).
 
 ## Active Task
 
-Prepare Milestone 91.
+Prepare Milestone 92.
 
 ## Hard Rules
 
@@ -115,10 +115,11 @@ Prepare Milestone 91.
 - Milestone 88: CUDA q4 single-tile inference — `cuda_q4_backend_ops` populated with full inference ops (rmsnorm, softmax, rope, ffn_swiglu); `att1_attention_forward_backend_q4` and `att1_transformer_block_forward_backend_q4` route matmuls through backend vtable via `attention_q4_matmul`/`block_q4_matmul` helpers; `infer_backend_is_q4` accepts "cuda-q4"; output projection in `att1_infer_decode_token` routed via `infer_matmul_q4`; `att1-bench` cuda-q4 single mode enabled (cluster remains rejected); `test_q4_bench` updated for CUDA-conditional cuda-q4 check; `tests/test_cuda_infer_q4.c` (3 cases: no-fallback, logits match, generated tokens); 48 tests pass.
 - Milestone 89: CUDA q4 cluster inference — `cluster_backend_is_q4()` extended to accept "cuda-q4"; `cluster_matmul_q4()` static helper routes output projection through backend vtable when supported; cuda-q4 cluster rejection removed from `att1-bench` `run_cluster`/`run_cluster_external`; cuda-q4 backend swap wired after `att1_cluster_infer_create_q4`; `tests/test_cuda_cluster_infer_q4.c` (4 cases: no-fallback, fabric counters, logits match, generated tokens); `test_q4_bench` extended with cuda-q4 cluster status check; 53 tests pass (7 CUDA-skipped on CPU-only host).
 - Milestone 90: CUDA q4 benchmark and backend-matrix integration — `test_backend_matrix` extended with cuda-q4 single and cluster runtime entries (group 4, q4_tiny fixture, CUDA-conditional); `validate_public_q4_backends.py` M85 smoke assertion relaxed from `status=unsupported` to `result: pass`; 28-entry matrix; M85 CUDA q4 policy note updated; CPU-only host: 14/28 passed, 14 skipped, 0 failed; CUDA host: 28/28 passed, 0 skipped, 0 failed (verified).
+- Milestone 91: CUDA q4 public-model validation report — `compiler/validate_public_q4_cuda.py` added; 5-case validation matrix (cpu-q4 × single/cluster/metadata, cuda-q4 × single/cluster); plan_unsupported and unavailable are non-failure outcomes; backend silent-fallback check; fabric-packet nonzero check; q4 notes embedded; JSON report; `check_public_q4_cuda_smoke` added to `test_bench_smoke.c`; CPU-only: bench smoke passes; CUDA host: all cuda-q4 rows pass (verified).
 
 ## Next Prompt for Codex
 
-Implement Milestone 91 only: CUDA q4 public-model backend smoke validation.
+Implement Milestone 92 only.
 
 Goal:
 Wire the cuda-q4 backend into `att1_infer_create_q4()` so that single-tile

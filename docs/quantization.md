@@ -1500,6 +1500,84 @@ Both `att1-bench` and the bench matrix infrastructure already support cuda-q4
 as a result of M88 and M89.  M90 adds only two entries to `k_matrix[]` in
 `tests/test_backend_matrix.c` and relaxes the Python/C smoke assertion.
 
+---
+
+## CUDA q4 public-model CUDA validation report (M91)
+
+### Overview
+
+M91 adds `compiler/validate_public_q4_cuda.py`, a dedicated validation script
+that runs a local converted q4 ATT-1 artifact through all q4 backend paths and
+produces a comprehensive per-row report.
+
+### Script: `compiler/validate_public_q4_cuda.py`
+
+Runs five bench invocations and reports per-row fields:
+
+| Backend  | Mode    | Shard plan | Expected status (CPU-only) | Expected status (CUDA host) |
+|----------|---------|------------|----------------------------|-----------------------------|
+| cpu-q4   | single  | n/a        | pass                       | pass                        |
+| cpu-q4   | cluster | runtime    | pass                       | pass                        |
+| cpu-q4   | cluster | metadata   | plan_unsupported           | plan_unsupported            |
+| cuda-q4  | single  | n/a        | unavailable                | pass                        |
+| cuda-q4  | cluster | runtime    | unavailable                | pass                        |
+
+Report fields per row: `artifact_path`, `backend`, `mode`, `shard_plan`,
+`tokenizer_mode`, `generated_tokens`, `last_token`, `token_time_us_total`,
+`logits_bytes`, `kv_appends`, `kv_evictions`, `fabric_packets_sent`,
+`status`, `error`.
+
+Status values:
+- `pass` — bench exited zero; backend name verified (no silent fallback).
+- `plan_unsupported` — q4 rejected the metadata shard plan; not a failure.
+- `unavailable` — cuda-q4 backend absent on this host; not a failure.
+- `fail` — unexpected error.
+
+Fabric packet validation: all `status=pass` cluster rows must have
+`fabric_packets_sent > 0`.
+
+Backend-name verification: cuda-q4 rows that exit zero but report a backend
+name in `{cpu-q4, cpu-q8, cpu-f32, cuda, cuda-q8}` are flagged as
+`status=fail` (silent fallback detected).
+
+Notes printed in every report:
+- `cuda-q4 logits are expected to match cpu-q4 within Q4_TOLERANCE=0.35f`
+- `generated-token divergence between cpu-q4 and cuda-q4 is expected`
+- `metadata shard plan is not supported for q4 (ATT1_ERR_UNSUPPORTED)`
+
+### Usage (public model, external paths)
+
+```sh
+python3 compiler/validate_public_q4_cuda.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-q4   ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 1 --tiles 2 \
+    --bench ./build/att1-bench \
+    --report-json ~/Models/att1/SmolLM2-135M/m91_report.json
+```
+
+### Usage (fixture smoke, checked-in artifact)
+
+```sh
+python3 compiler/validate_public_q4_cuda.py \
+    --model-dir compiler/fixtures \
+    --att1-q4   models/real_tiny_q4/model.att1 \
+    --tokens-file build/m91_ids.txt \
+    --tokens 1 --tiles 2
+```
+
+### Smoke test (`test_bench_smoke.c`, `check_public_q4_cuda_smoke`)
+
+Exercises the script with the checked-in fixture and verifies:
+- `result: pass` and `report: ok` in text report.
+- `status=plan_unsupported` present (cpu-q4 metadata row).
+- `status=pass` present (cpu-q4 single/cluster runtime rows).
+- At least one `note:` line present.
+- JSON report contains `"runs"`, `"result"`, `"pass"`.
+
+Passes on both CPU-only and CUDA hosts without changes.
+
 ### Overview
 
 This milestone is documentation-only.  It specifies the CUDA q4 design
