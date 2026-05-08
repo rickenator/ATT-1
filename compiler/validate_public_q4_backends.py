@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-ATT-1 public-model q4 backend smoke validator (Milestone 85).
+ATT-1 public-model q4 backend smoke validator (Milestone 85, updated M89).
 
 Runs a local converted q4 ATT-1 artifact through all supported cpu-q4
-single/cluster backend paths using an external token IDs file.  Also
-exercises the cuda-q4 path, which must fail clearly as unsupported.
+single/cluster backend paths using an external token IDs file.  With
+--include-cuda, also exercises the cuda-q4 single and cluster paths: on a
+CUDA-capable host these succeed (status=pass); on a CPU-only host they fail
+gracefully (status=unsupported).  Neither outcome causes the overall report
+to be "fail".
 
-No network access is attempted.  CUDA q4 is not supported.  No public
-weights or generated artifacts are committed to Git.
+No network access is attempted.  No public weights or generated artifacts are
+committed to Git.
 
 Usage (manual, public model outside Git):
 
@@ -181,8 +184,9 @@ def _build_cases(att1_q4, include_cuda):
         (att1_q4, _CPU_Q4, "cluster"),
     ]
     if include_cuda:
-        # cuda-q4 must fail as unsupported; we include it to verify the error
-        # path, but its result must not cause the overall report to be "fail".
+        # M89: cuda-q4 single and cluster are fully supported.  On a CUDA host
+        # both rows will have status=pass; on a CPU-only host they will have
+        # status=unsupported.  Neither outcome counts as a failure.
         cases += [
             (att1_q4, _CUDA_Q4, "single"),
             (att1_q4, _CUDA_Q4, "cluster"),
@@ -311,9 +315,9 @@ def main():
     )
     parser.add_argument(
         "--include-cuda", action="store_true", dest="include_cuda",
-        help=("Also run cuda-q4 paths to verify the unsupported error; "
-              "cuda-q4 rows always report 'unsupported' and do not affect "
-              "overall pass/fail")
+        help=("Also run cuda-q4 paths (M89: both single and cluster are "
+              "supported); on a CUDA host rows report 'pass', on a CPU-only "
+              "host rows report 'unsupported'; neither affects overall pass/fail")
     )
     parser.add_argument(
         "--report-json", default=None, metavar="PATH",

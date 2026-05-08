@@ -2201,8 +2201,10 @@ static int check_public_q4_backend_smoke(void)
         fputs("q4_backend_smoke: cannot read cuda report\n", stderr);
         return -1;
     }
-    if ((strstr(output, "status=unsupported") == NULL) ||
-        (strstr(output, "result: pass")       == NULL)) {
+    /* M89: cuda-q4 cluster is now supported.  On a CUDA host both cuda-q4
+     * rows have status=pass; on a CPU-only host they have status=unsupported.
+     * Either way the overall result must be pass. */
+    if (strstr(output, "result: pass") == NULL) {
         fputs("q4_backend_smoke: cuda-q4 unsupported check failed\n", stderr);
         return -1;
     }
