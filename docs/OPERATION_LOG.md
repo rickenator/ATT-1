@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 92: Backend comparison report (complete; CUDA verified on RTX 3090).
+Milestone 93: AIMU/PCIe prototype requirements document (complete).
 
 ## Active Task
 
-Prepare Milestone 93.
+Prepare Milestone 94.
 
 ## Hard Rules
 
@@ -117,10 +117,11 @@ Prepare Milestone 93.
 - Milestone 90: CUDA q4 benchmark and backend-matrix integration — `test_backend_matrix` extended with cuda-q4 single and cluster runtime entries (group 4, q4_tiny fixture, CUDA-conditional); `validate_public_q4_backends.py` M85 smoke assertion relaxed from `status=unsupported` to `result: pass`; 28-entry matrix; M85 CUDA q4 policy note updated; CPU-only host: 14/28 passed, 14 skipped, 0 failed; CUDA host: 28/28 passed, 0 skipped, 0 failed (verified).
 - Milestone 91: CUDA q4 public-model validation report — `compiler/validate_public_q4_cuda.py` added; 5-case validation matrix (cpu-q4 × single/cluster/metadata, cuda-q4 × single/cluster); plan_unsupported and unavailable are non-failure outcomes; backend silent-fallback check; fabric-packet nonzero check; q4 notes embedded; JSON report; `check_public_q4_cuda_smoke` added to `test_bench_smoke.c`; CPU-only: bench smoke passes; CUDA host: all cuda-q4 rows pass (verified).
 - Milestone 92: Backend comparison report — `compiler/backend_comparison_report.py` added; 12-case matrix (f32/q8/q4 × CPU/CUDA × single/cluster); pending/unavailable/pass CUDA status; backend silent-fallback check; fabric-packet nonzero check; q4 notes; JSON report; `check_backend_comparison_smoke` added to `test_bench_smoke.c`; CPU-only: all 6 CPU rows pass, 6 CUDA rows pending (no --include-cuda); CUDA host: all 12 rows pass (verified on RTX 3090).
+- Milestone 93: AIMU/PCIe prototype requirements — Section 8 added to `docs/aimu_architecture.md`; covers prototype goal, proof criteria, runtime/CUDA relationships, tile responsibilities, local memory sizing (f32/q8/q4), host control plane, fabric/interconnect requirements, KV-MMU requirements, counter/trace requirements, four MVP options (software-emulated/FPGA/PCIe card/ASIC), data movement assumptions, dtype tolerances, non-goals, open engineering questions, and M94 proposal.
 
 ## Next Prompt for Codex
 
-Implement Milestone 93 only.
+Implement Milestone 94 only.
 - Default make/make test must remain CPU-only and CUDA-free.
 - CUDA remains opt-in with make CUDA=1.
 - Do not implement CUDA q4 cluster inference yet.

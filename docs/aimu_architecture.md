@@ -250,3 +250,379 @@ The following are explicitly outside the AIMU / ATT-1 scope:
 - [tile_runtime.md](tile_runtime.md) — tile thread lifecycle and command dispatch
 - [tracing.md](tracing.md) — trace counter and proof-of-execution design
 - [backend.md](backend.md) — backend vtable abstraction and operator set
+
+---
+
+## 8. Phase 2 PCIe/AIMU Prototype Requirements (M93)
+
+This section specifies the engineering requirements for a Phase 2 PCIe/AIMU
+prototype.  The ATT-1 software simulator, backend matrix, shard metadata,
+q4/q8/f32 inference paths, and scaling reports (M72, M90–M92) are the
+reference basis.
+
+---
+
+### 8.1 Prototype Goal
+
+Demonstrate that the ATT-1 cluster inference protocol — as defined by the
+software simulator — can execute on real hardware over a PCIe interconnect,
+with tensor tiles resident in device-local memory and the host runtime
+driving the decode loop through defined control-plane interfaces.
+
+The prototype does **not** need to achieve production throughput.  It needs to
+prove that the protocol is hardware-expressible and that the abstractions in
+the software simulator correspond to physically realizable hardware primitives.
+
+---
+
+### 8.2 What the Prototype Must Prove
+
+1. **Tile isolation.** A PCIe endpoint can hold a model shard exclusively in
+   device-local memory and execute at least one transformer block forward pass
+   (matmul, RMSNorm, RoPE, FFN/SwiGLU, softmax, attention) without the host
+   reading or writing that tensor memory during inference.
+
+2. **Activation routing.** Compact activation vectors (not weight tensors) can
+   be transferred across the PCIe bus between tiles with measured latency and
+   bandwidth, matching the fabric packet model used by the ATT-1 simulator.
+
+3. **KV-cache locality.** Session key/value memory can be maintained
+   device-locally across multiple decode steps without copying KV data to the
+   host between tokens.
+
+4. **Multi-tile decode.** At least two tiles can cooperate on a single decode
+   step using the fabric barrier and reduction protocol, producing a final
+   logit vector that matches the software simulator output within the
+   established tolerances (f32: exact; q8: abs ≤ 0.15; q4: abs ≤ 0.35).
+
+5. **Trace and counter fidelity.** The hardware tile must report the same
+   counter categories (fabric packets sent, KV appends, logits bytes produced,
+   fabric barrier completions) that the software simulator records, so that
+   existing smoke tests can validate hardware output without modification.
+
+6. **Dtype coverage.** At minimum, the f32 reference path and the q8 path must
+   be validated end-to-end.  q4 on the prototype is desirable but not blocking.
+
+---
+
+### 8.3 Relationship to the ATT-1 Runtime
+
+The PCIe prototype uses the existing ATT-1 C11 runtime unchanged as the host
+control plane.  No new host API is needed for Phase 2:
+
+- `att1_cluster_infer_create()` / `att1_cluster_infer_decode()` drive the
+  decode loop.
+- `att1_shard_plan_build()` / `att1_shard_plan_from_meta()` assign tensor
+  tiles to PCIe endpoint memory regions.
+- `att1_fabric_t` packet semantics are preserved; the PCIe bus is the physical
+  fabric transport.
+- `att1_trace_t` counters are fed from hardware-reported values at each step.
+- The `.att1` artifact is used directly as the tensor layout and configuration
+  source.  No format change is required for Phase 2.
+
+The backend vtable (`att1_backend_ops`) gains one new concrete implementation:
+`backend_pcie.c` (or equivalent), which replaces the CPU and CUDA dispatch
+with PCIe DMA commands to the hardware tile.  All other runtime code is
+unchanged.
+
+---
+
+### 8.4 Relationship to CUDA Validation
+
+The CUDA backend (M12–M92) established that:
+
+- All math primitives produce numerically correct output at f32, q8, and q4
+  precision (verified on RTX 3090, M90–M92).
+- The backend vtable abstraction is sufficient to hot-swap the execution
+  substrate without changing the inference driver.
+- Silent-fallback detection and fabric-packet counters can be used to
+  distinguish real hardware dispatch from a CPU fallback.
+
+These properties carry forward to the PCIe prototype:
+
+- The CUDA tolerance baselines (f32: exact; q8 ≤ 0.15; q4 ≤ 0.35) are the
+  acceptance tolerances for prototype validation.
+- The backend-swap pattern from CUDA is reused for the PCIe backend.
+- The backend comparison report (`compiler/backend_comparison_report.py`, M92)
+  can be extended with a `pcie` backend column to validate the prototype.
+
+---
+
+### 8.5 AIMU Tile Responsibilities
+
+Each prototype tile must implement the following, locally:
+
+| Responsibility | Required for Phase 2 | Notes |
+|---|---|---|
+| Tensor memory ownership | yes | tile holds shard; host does not read/write tensor data during inference |
+| Matmul (f32) | yes | reference correctness path |
+| Matmul (q8×f32) | yes | required for q8 backend validation |
+| Matmul (q4×f32) | desirable | blocking for full q4 coverage |
+| RMSNorm | yes | pre-attention and pre-FFN normalization |
+| RoPE | yes | rotary positional embedding applied to Q and K |
+| FFN / SwiGLU | yes | gate+up projection, SiLU activation, down projection |
+| Softmax (causal) | yes | attention weight normalization |
+| KV-cache append/read | yes | local session memory; one context per session |
+| Fabric send/receive | yes | activation and logit routing |
+| Barrier participation | yes | cross-tile synchronization per decode step |
+| Partial logit reduction | yes | sum partial logits from shards |
+| Counter reporting | yes | packets sent, KV appends, logits bytes |
+
+---
+
+### 8.6 Local Tensor Memory Requirements
+
+For a two-tile prototype with a SmolLM2-135M class model (135 M parameters):
+
+| Format | Total weight bytes | Per-tile (2 tiles) |
+|--------|-------------------|--------------------|
+| f32    | ~540 MB           | ~270 MB            |
+| q8     | ~135 MB           | ~68 MB             |
+| q4     | ~68 MB            | ~34 MB             |
+
+KV cache per tile (32 layers, 9 heads, head_dim=64, 2048 tokens, f32):
+`32 × 9 × 64 × 2048 × 4 bytes × 2 (K+V) ≈ 300 MB`
+
+A Phase 2 PCIe card requires a minimum of **512 MB device-local SRAM or HBM**
+to hold the q8 shard and a 2048-token KV cache with margin.  **1 GB** is
+recommended for f32 shard + KV cache.  **256 MB** is sufficient for a q4-only
+two-tile proof with a short context window (≤512 tokens).
+
+These figures assume no tensor compression beyond what the `.att1` dtype
+already encodes.  No additional quantization or sparsity is required for
+Phase 2.
+
+---
+
+### 8.7 Host Control Plane Requirements
+
+The host runtime must be able to:
+
+1. **Load** the `.att1` artifact and map tensor descriptors to PCIe BAR address
+   ranges (or DMA target addresses) on the device.
+2. **Transfer** tensor shards to device-local memory once at model load time.
+   Subsequent inference steps must not require re-transfer of weight tensors.
+3. **Enqueue** per-decode commands to the tile command queue (activation input,
+   decode step index, KV position, tile count, backend selector).
+4. **Collect** per-step outputs: final logit vector (device → host), trace
+   counter snapshot.
+5. **Manage** session state: open session, close session, evict KV pages.
+6. **Tolerate** tile errors: read status register and map hardware errors to
+   `att1_status_t` codes without undefined behaviour.
+
+The host control plane must not issue fabric packets directly.  Fabric routing
+is the tile's responsibility.  The host sends decode commands; the tile drives
+the fabric.
+
+---
+
+### 8.8 Fabric / Interconnect Requirements
+
+| Property | Requirement |
+|---|---|
+| Physical transport | PCIe Gen 3 x4 or better (or NTB / PCIe switch for multi-card) |
+| Logical model | Matches `att1_fabric_t`: bounded queues, send/receive, broadcast, barrier |
+| Packet payload | Activation vector per tile: `d_model × sizeof(dtype)` bytes (e.g., 512 B for d_model=128, f32) |
+| Max in-flight packets | ≥ tile_count × 2 (pipeline two steps without stall) |
+| Barrier semantics | All-or-nothing: barrier completes only when all participants have arrived |
+| Reduction | Partial logit sum across shards before final sampling |
+| Queue-full behaviour | Must return detectable error; must not silently drop packets |
+| Counter requirements | packets_sent, bytes_sent, broadcast_packets, barrier_arrivals, queue_full_errors |
+
+For a two-tile software-emulated PCIe endpoint prototype, shared memory or
+Unix domain sockets may substitute for physical PCIe, provided the same queue
+semantics and counter definitions are preserved.
+
+---
+
+### 8.9 KV-MMU / Session Memory Requirements
+
+Each tile's KV-MMU must implement:
+
+| Capability | Requirement |
+|---|---|
+| Address dimensions | session_id, layer_id, head_id, position |
+| Page granularity | Configurable; 16 or 32 tokens per page sufficient for Phase 2 |
+| Append ordering | Sequential per session/layer; out-of-order appends must fail cleanly |
+| Duplicate-append rejection | Appending an already-populated position must fail |
+| Range-copy | Copy a range of token positions for attention window reads |
+| Session lifecycle | Open, append, read, close, evict per session |
+| Error mapping | All KV errors must map to `att1_status_t` codes |
+| Counter reporting | page_hits, page_misses, page_alloc, appends, reads, errors |
+
+KV memory is device-local.  The host does not read or write KV entries during
+inference.  Session eviction may be host-initiated but must complete without
+disrupting other active sessions.
+
+---
+
+### 8.10 Required Counters / Trace / Debug Visibility
+
+At minimum, each hardware tile must expose the following counters per decode
+step, readable by the host after step completion:
+
+| Counter | Source | Purpose |
+|---|---|---|
+| `fabric_packets_sent` | fabric unit | detects silent no-op execution |
+| `fabric_packets_received` | fabric unit | confirms activation delivery |
+| `kv_appends` | KV-MMU | confirms KV cache is advancing |
+| `kv_reads` | KV-MMU | confirms attention reads |
+| `logits_bytes_produced` | output unit | confirms correct output size |
+| `barrier_completions` | fabric unit | confirms cross-tile sync |
+| `decode_steps_executed` | tile control | decode loop progress |
+| `error_count` | all units | aggregate error indicator |
+
+These counters map 1-to-1 with the fields already validated by the ATT-1
+software smoke tests and the backend comparison report.  Hardware that reports
+the same counter names can be validated by the existing Python and C test
+infrastructure without modification.
+
+Per-layer timing counters (microseconds) are desirable but not required for
+Phase 2 prototype acceptance.
+
+---
+
+### 8.11 Minimal Viable Prototype Options
+
+Four options are ordered by implementation cost:
+
+#### Option A: Software-emulated PCIe endpoint (lowest cost)
+
+Replace the `att1_fabric_t` userspace queue with a shared-memory or Unix
+socket transport that exposes the same send/receive/barrier/counter API.
+Tensor memory is process-local.  Validates the protocol mapping without
+any physical hardware.  Suitable as a Phase 2 pre-step before acquiring
+FPGA or PCIe card hardware.
+
+**Already partially realised** by the existing `simulator/sim_fabric_bus.c`
+and `simulator/sim_tile_thread.c`.
+
+#### Option B: FPGA board (mid cost)
+
+Implement the AIMU tile logic on a PCIe-attached FPGA (e.g., AMD/Xilinx
+Alveo U50/U55C or Intel Stratix 10 MX).  The FPGA holds tensor SRAM
+(HBM or block RAM), implements the matmul/norm/RoPE ops in RTL or HLS,
+and exposes a PCIe BAR-mapped command queue to the host.  The ATT-1 runtime
+loads the `.att1` shard, enqueues decode commands, and reads counters.
+
+This is the recommended first physical-hardware target.
+
+#### Option C: PCIe accelerator card (off-the-shelf)
+
+Use an existing PCIe inference card (e.g., Hailo-8, Coral M.2 PCIe,
+or a research-grade card with open firmware) as a protocol-compatible
+endpoint.  Requires porting the AIMU tile ops to the card's native
+programming model and exporting the required counter interface.
+
+Feasibility depends on card-specific memory and programmability constraints.
+
+#### Option D: Custom silicon (long-term target)
+
+Full ASIC implementation of the AIMU tile: local tensor SRAM,
+multiply-accumulate array, RoPE/norm unit, fabric transceiver, KV-MMU
+controller, and PCIe or custom interconnect.  Host API and `.att1` format
+remain identical to Phase 1 and Phase 2.  This is Phase 3.
+
+---
+
+### 8.12 Data Movement Assumptions
+
+| Movement | Direction | When |
+|---|---|---|
+| Tensor shard (model weights) | host → device | once, at model load |
+| Activation vector | host → tile-0 (first token position) | per decode step |
+| Activation vector | tile-N → tile-N+1 (intermediate) | per decode step, via fabric |
+| Partial logits | tile → tile (reduction) | per decode step, via fabric |
+| Final logits | device → host | per decode step |
+| KV cache entries | device-local only | never cross PCIe during inference |
+| Trace counters | device → host | per decode step (small struct read) |
+| Session eviction commands | host → device | on session close or OOM |
+
+Weight tensors never leave device memory after initial load.  The only
+per-step host↔device traffic is: one activation vector in, one logit vector
+out, one counter snapshot out.
+
+---
+
+### 8.13 Supported Dtypes
+
+| Dtype | Phase 2 status | Tolerance |
+|---|---|---|
+| f32 | required | exact (reference) |
+| q8 (int8 weights × f32 activations) | required | abs ≤ 0.15 per logit |
+| q4 (int4 grouped weights × f32 activations) | desirable | abs ≤ 0.35 per logit |
+
+Tolerance values are taken from the CUDA validation results (M90–M92, RTX 3090
+verified).  A hardware tile that meets these tolerances for f32 and q8 is
+considered Phase 2 complete for dtype coverage.  q4 hardware support may be
+deferred to a later milestone without blocking Phase 2 sign-off.
+
+---
+
+### 8.14 Non-Goals
+
+The following are explicitly outside the Phase 2 prototype scope:
+
+- **Full production ASIC.** Phase 2 is a protocol and correctness proof.
+  Timing closure, power budgets, and production yield are Phase 3 concerns.
+- **Public cloud deployment.** The prototype runs on a local PCIe card or FPGA
+  connected to the development machine used for ATT-1 simulation.
+- **Mobile / Android / Vulkan / OpenCL.** No mobile or graphics APIs will be
+  added.  The hardware target is a PCIe card or discrete AIMU tile.
+- **Training or fine-tuning.** ATT-1 is inference-only.  No gradient or
+  backward-pass hardware is required.
+- **Multi-model switching.** Phase 2 loads one model per prototype session.
+  Dynamic model hot-swap is a Phase 3 feature.
+- **Patent claims.** This document is an engineering specification.  No claim
+  language is used or implied.
+
+---
+
+### 8.15 Open Engineering Questions
+
+1. **Matmul unit.** Should Phase 2 use a systolic array, a dot-product
+   accumulator, or an off-the-shelf DSP block?  The answer affects FPGA
+   resource utilisation and latency per decode step.
+
+2. **KV-MMU page size.** What page granularity minimises wasted SRAM while
+   supporting 2048-token contexts on a 512 MB device?  Initial estimate:
+   32 tokens/page for q8 KV.
+
+3. **Activation precision.** The software simulator passes f32 activations
+   between tiles.  Should the prototype use f32 or bf16 for inter-tile
+   activation packets to reduce fabric bandwidth?  Effect on q8/q4 tolerance
+   must be measured before committing.
+
+4. **Barrier implementation.** The `att1_fabric_t` barrier is a single-
+   generation all-or-nothing primitive.  Can this be implemented with a
+   PCIe atomic compare-and-swap, or is a dedicated barrier register required?
+
+5. **DMA vs MMIO command queue.** Should the host enqueue decode commands via
+   MMIO writes to a BAR-mapped command FIFO, or via DMA descriptors?  MMIO is
+   simpler for a two-tile prototype; DMA scales better to many tiles.
+
+6. **Error isolation.** If one tile returns a hardware error, should the host
+   runtime retry, evict the session, or halt the decode loop?  The current
+   C11 runtime propagates the first non-OK status and stops.  Hardware may
+   require a retry path.
+
+7. **Counter read timing.** Should counter snapshots be read synchronously
+   after each decode step (adds one PCIe read per step) or accumulated on-device
+   and read at end-of-session?
+
+---
+
+### 8.16 Next Milestone Proposal
+
+**Milestone 94: PCIe prototype interface layer**
+
+Define the `att1_backend_ops` implementation for a PCIe/hardware tile:
+- `backend_pcie_create()` — opens PCIe BAR, validates tile firmware version.
+- `backend_pcie_matmul_f32()` — enqueues matmul command, reads result.
+- Counter collection stub.
+- Software-emulated endpoint (Option A) as the initial target so the
+  interface can be validated before physical hardware is available.
+- No C runtime change beyond adding `src/backend_pcie.c` and
+  `include/att1_backend_pcie.h`.
+- Validated by a new test binary `tests/test_backend_pcie.c` using the
+  software-emulated endpoint.
