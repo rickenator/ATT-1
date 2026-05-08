@@ -1065,7 +1065,7 @@ of `docs/aimu_pcie_command_requirements.md`).
 |---|---|---|
 | M105 | PCIe command queue simulator | Python or C shim over POSIX shared memory that models the command ring buffer (§4), processes 64-byte command packets, writes completion records, and validates checksums; smoke test: submit `LOAD_TENSOR_TILE` + `EXEC_MATMUL` against the tiny dummy model and compare result to `att1-bench cpu-f32` |
 | M106 | AIMU device discovery simulator | **Complete.** Implemented as an in-process C11 simulator (`include/att1_aimu_device.h`, `src/aimu_device.c`). See §14 for the full struct-to-register mapping. |
-| M107 | DMA descriptor simulator | Implement the §5 descriptor layout; validate host-to-AIMU tensor load round-trip; integrate with M105/M106 |
+| M107 | DMA descriptor simulator | **Complete.** Implemented as an in-process C11 simulator (`include/att1_aimu_dma.h`, `src/aimu_dma.c`). See §15 for the full descriptor-to-register mapping. |
 | M108 | Command trace/counter integration | Wire the §7 counter registers and §8 trace buffer into the M105/M106 simulator; export trace records in `att1_trace_t`-compatible JSON for diff against `att1-bench` output |
 | M109 | Placement-report-to-command-plan mapper | Python tool that reads an M100 placement report and produces an ordered list of `LOAD_TENSOR_TILE` + `EXEC_*` commands with register field values filled in; validates command plan against placement report tensor/tile assignments |
 | M110 | Minimal PCIe/AIMU prototype design review | Engineering review: reconcile M104–M109 artifacts, finalize BAR0 offset assignments, resolve open questions from §14, produce hardware bringup checklist |
@@ -1169,6 +1169,116 @@ if (tile.memory_capacity_bytes - tile.memory_used_bytes < required_bytes) { ... 
 /* Check that the target tile supports the required ops. */
 if (!att1_aimu_device_tile_supports_op(dev, target_tile, ATT1_AIMU_OP_ATTENTION)) { ... }
 ```
+
+---
+
+## 15. M107 In-Process DMA Descriptor Simulator
+
+M107 delivers a pure C11, in-process simulator for the DMA buffer descriptor
+model defined in §5.  There is **no real PCIe DMA engine, no host physical
+memory access, and no MMIO**.  Descriptor validation, address alignment
+checking, range enforcement, and counter tracking all operate over plain
+heap-allocated C structs.
+
+### 15.1 Descriptor-to-Register Field Mapping
+
+The table below maps each `att1_aimu_dma_desc` field to the M104 §5.1 on-wire
+register position.
+
+| C struct field | §5.1 offset | Width | Notes |
+|---|---|---|---|
+| `host_addr` | 0 + 4 (low/high) | 8 B | Split into `host_addr_low` (0x0) / `host_addr_high` (0x4) on wire |
+| `device_addr` | 8 + 12 (low/high) | 8 B | Split into `device_addr_low` (0x8) / `device_addr_high` (0xC) on wire |
+| `src_device_addr` | (D2D: replaces device_addr) | 8 B | Simulator extension; not in M104 on-wire format |
+| `dst_device_addr` | (D2D: replaces host_addr) | 8 B | Simulator extension; not in M104 on-wire format |
+| `byte_length` | 16 | 4 B | Max 2^28 per §5.1 |
+| `descriptor_id` | replaces `reserved_0` | 4 B | Simulator extension |
+| `command_id` | 40 | 4 B | §5.1 offset 40 |
+| `tensor_id` | 36 | 4 B | §5.1 offset 36 |
+| `checksum` | 32 | 4 B | §5.1 offset 32 — placeholder only in M107 |
+| `dim0` | 24 | 2 B | §5.1 offset 24 |
+| `dim1` | 26 | 2 B | §5.1 offset 26 |
+| `flags` | 30 | 2 B | §5.2 bits 2–5; direction bits handled by `direction` field |
+| `dtype` | 28 | 1 B | `0=f32, 1=q8, 2=q4` per §5.1 |
+| `quant_group_size` | 29 | 1 B | §5.1 offset 29; q4: must be 32 or 64 |
+| `direction` | (derived from flags bits 0–1 on wire) | 1 B | Enum: 0=H2D, 1=D2H, 2=D2D |
+
+### 15.2 Flag Bits
+
+| Bit | Constant | On-wire M104 §5.2 bit | Meaning |
+|---|---|---|---|
+| 0 | `ATT1_AIMU_DMA_FLAG_VALIDATE_CHECKSUM` | 2 | AIMU verifies `checksum` on receipt (placeholder) |
+| 1 | `ATT1_AIMU_DMA_FLAG_GENERATE_CHECKSUM` | 3 | AIMU computes checksum for D2H (placeholder) |
+| 2 | `ATT1_AIMU_DMA_FLAG_LAST_DESCRIPTOR` | 4 | Final in chain; triggers completion |
+| 3 | `ATT1_AIMU_DMA_FLAG_SCATTER_GATHER` | 5 | Part of scatter-gather chain (unsupported M107) |
+| 15:4 | — | reserved | Must be zero — any set bit fails validation |
+
+### 15.3 Validation Rules
+
+All rules are enforced by `att1_aimu_dma_validate()` and `att1_aimu_dma_submit()`:
+
+| Rule | Error counter on submit failure |
+|---|---|
+| `direction` ∈ {0,1,2} | `dma_failed` only |
+| `byte_length` ∈ [1, 2²⁸] | `dma_failed` only |
+| No unknown flag bits | `unsupported_flags` |
+| `dtype` ∈ {F32, Q8, Q4} | `dma_failed` only |
+| Q4: `quant_group_size` ∈ {32, 64}; `byte_length % (group_size/2) == 0` | `dma_failed` only |
+| H2D/D2H: `host_addr`, `device_addr` 64-byte aligned | `alignment_failures` |
+| D2D: `src_device_addr`, `dst_device_addr` 64-byte aligned | `alignment_failures` |
+| H2D/D2H: `addr + byte_length` does not overflow uint64 | `range_failures` |
+| D2D: source and destination ranges do not overlap | `range_failures` |
+| If host regions registered: H2D/D2H host range within a region | `range_failures` |
+| If device regions registered: device range within a region | `range_failures` |
+
+### 15.4 Alignment Requirements by Dtype
+
+| Dtype | `byte_length` constraint | `quant_group_size` |
+|---|---|---|
+| F32 | Any multiple of 4 is natural; no explicit M107 check | 0 (ignored) |
+| Q8 | No M107 group-size check (per-row stride deferred) | 0 (ignored) |
+| Q4 | Multiple of `quant_group_size / 2` bytes | 32 or 64 |
+
+### 15.5 Relationship to M105 LOAD_TENSOR_TILE Command
+
+When the host issues a `LOAD_TENSOR_TILE` command via M105 `att1_aimu_cmdq`,
+it embeds a `tensor_id` and `input_buf_addr`/`byte_length` in the 64-byte
+command packet.  M107 makes the pre-validation step explicit:
+
+```c
+/* Validate the DMA descriptor before submitting the command. */
+att1_aimu_dma_desc dma;
+memset(&dma, 0, sizeof(dma));
+dma.host_addr   = weight_host_addr;
+dma.device_addr = tile_local_addr;
+dma.byte_length = weight_bytes;
+dma.direction   = ATT1_AIMU_DMA_HOST_TO_DEVICE;
+dma.dtype       = ATT1_AIMU_DMA_DTYPE_Q8;
+dma.tensor_id   = TENSOR_ID_WQ;
+dma.command_id  = next_command_id;
+
+if (att1_aimu_dma_submit(dma_sim, &dma) != ATT1_OK) {
+    /* reject the placement plan before issuing any commands */
+}
+
+/* Only if DMA validation passed: enqueue the command. */
+att1_aimu_cmd cmd;
+memset(&cmd, 0, sizeof(cmd));
+cmd.command_type    = ATT1_AIMU_CMD_LOAD_TENSOR_TILE;
+cmd.input_buf_addr  = weight_host_addr;
+cmd.input_buf_bytes = weight_bytes;
+cmd.tensor_id       = TENSOR_ID_WQ;
+cmd.dtype           = ATT1_AIMU_DMA_DTYPE_Q8;
+att1_aimu_cmdq_submit(cmdq, &cmd);
+```
+
+### 15.6 Relationship to M106 Device Capability
+
+Use `att1_aimu_device_query_tile()` to bound `byte_length` against the tile's
+`memory_capacity_bytes - memory_used_bytes` before calling
+`att1_aimu_dma_submit()`.  This is not enforced automatically by M107 (the
+DMA simulator does not hold a device reference); the integration is the
+caller's responsibility.
 
 ---
 
