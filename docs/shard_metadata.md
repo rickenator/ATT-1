@@ -1343,3 +1343,107 @@ explicitly requested; the default always uses the runtime-generated plan.
 | **M101** | Advisory tensor-level placement proposal tool — `compiler/propose_tensor_placement.py`; generates a placement report from a model config, tile count, and placement policy (layer-wise, head-wise, vocab-split); produces M98 schema output |
 | **M102** | Opt-in tensor-level placement execution (CPU only) — `att1-cluster_infer_create_tensor_plan()` or `--shard-plan tensor` CLI flag; executes inference using a tensor-level placement plan from the model artifact; CPU backends only; validated against layer-wise baseline within established tolerances |
 | **M103** | AIMU/PCIe command packet requirements — define the per-decode command packet structure sent from the host runtime to a hardware AIMU tile; covers activation delivery, KV position, tensor slice routing, barrier token, and counter read protocol |
+
+---
+
+## 14. Tensor-Level Placement Report Schema (Milestone 98)
+
+This section defines the **reporting layer** on top of the M97 tensor-level
+placement model.  The placement report is a structured, serializable record
+that describes how model tensors (or tensor slices) are assigned to tiles,
+along with estimated memory, bandwidth, and fabric traffic figures.
+
+The canonical schema definition is in
+[docs/tensor_placement_report.md](tensor_placement_report.md).  This section
+summarises how the schema relates to shard metadata fields and defines the
+mapping from existing binary records to report fields.
+
+---
+
+### 14.1 Shard Metadata → Report Field Mapping
+
+The existing 120-byte shard metadata records (§3) are the per-artifact source
+of truth for tensor-to-tile assignment.  The placement report is a derived
+reporting layer built on top of these records.
+
+| Shard metadata field | Report field (`tensors[*]`) |
+|---|---|
+| `tensor_id` | `tensor_id` |
+| `tile_id` | `owner_tile` |
+| `owner_aimu` | `owner_aimu` |
+| `dtype` | `dtype` |
+| `quantization` | `quantization` |
+| `replication_policy` | `replication_policy` |
+| `routing_requirements` | `routing_requirements` |
+| `reduction_behavior` | `reduction_behavior` |
+| `checksum` | `checksum` |
+| *(M97 extension)* `tensor_category` | `tensor_category` |
+| *(M97 extension)* `slice_axis` | `slice_axis` |
+| *(M97 extension)* `slice_start` | `slice_start` |
+| *(M97 extension)* `slice_end` | `slice_end` |
+
+Fields not present in the 120-byte record (`tensor_name`, `source_shape`,
+`placed_shape`, `scale_bytes`, `packed_bytes`) are derived from the tensor
+descriptor table during report generation.
+
+---
+
+### 14.2 Validation Rule → Report Violation Mapping
+
+Validation rule checks from §13.5 map to placement report violation records
+(tensor_placement_report.md §4.2):
+
+| §13.5 rule | Violation `rule` field | Default severity |
+|---|---|---|
+| 1 — no missing required tensors | 1 | `error` |
+| 2 — no overlapping slices unless replicated | 2 | `error` |
+| 3 — full tensor coverage | 3 | `error` |
+| 4 — tile IDs in range | 4 | `error` |
+| 5 — dtype and quant match descriptor | 5 | `error` |
+| 6 — slice shapes align to q8/q4 group constraints | 6 | `error` |
+| 7 — replicated tensor checksum consistency | 7 | `warning` |
+| 8 — reduction requirements explicit | 8 | `warning` |
+| 9 — routing targets valid | 9 | `error` |
+| 10 — KV category tile consistency | 10 | `error` |
+| 11 — norm replication completeness | 11 | `warning` |
+| 12 — lm_head concat coverage | 12 | `error` |
+
+Rule 7, 8, and 11 are `warning` severity because a missing checksum or
+implicit reduction is technically valid in the M97 layer-wise baseline;
+they become `error` only when the M97-extension fields are present and
+inconsistent.
+
+---
+
+### 14.3 Report Generation Path (M99–M101)
+
+```
+.att1 artifact
+  └── shard metadata section (§3, 120-byte records)
+        │
+        ▼
+  M99 validator / M101 proposal tool
+        │
+        ├── extract tensor descriptors (name, shape, dtype)
+        ├── read tile_id, owner_aimu, replication_policy, etc.
+        ├── compute packed_bytes and scale_bytes from dtype + shape
+        ├── apply §13.5 validation rules → violations list
+        ├── compute per-tile model_bytes, kv_bytes, utilization
+        └── emit placement report JSON (tensor_placement_report.md)
+```
+
+The report is a **read-only derived artefact**.  It does not modify the
+`.att1` binary and is not stored in the model file.
+
+---
+
+### 14.4 Non-Goals for M98
+
+- No binary format change.
+- No new C source files.
+- No runtime scheduling change.
+- No inference behavior change.
+- No `compiler/` Python implementation (skeleton in M101).
+- No CUDA change.
+- No q4/q8/f32 tolerance change.
+- No PCIe register map.

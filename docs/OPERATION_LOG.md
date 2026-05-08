@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 97: Metadata-driven tensor-level placement plan (complete).
+Milestone 98: Tensor-level placement report schema (complete).
 
 ## Active Task
 
-Prepare Milestone 98.
+Prepare Milestone 99.
 
 ## Hard Rules
 
@@ -122,10 +122,11 @@ Prepare Milestone 98.
 - Milestone 95: Prefill vs decode benchmark split — `att1-bench` now snapshots trace counters at the prefill/decode boundary and emits: `prompt_tokens` (byte and external modes), `decode_tokens`, `prefill_time_us_total`, `decode_time_us_total`, `prefill_kv_appends`, `decode_kv_appends`, `prefill_kv_reads`, `decode_kv_reads`, `prefill_logits_bytes`, `decode_logits_bytes`; `prefill_fabric_packets` + `decode_fabric_packets` for cluster mode; all four runner functions updated; `check_prefill_decode_split_smoke` added to `test_bench_smoke.c`; `trace_diff.py` updated with new field names; `docs/tracing.md` updated; no inference behavior changed.
 - Milestone 96: Tile memory capacity and bandwidth estimator — `tools/att1-size.c` extended with `--tile-memory-mib N`, `--tile-memory-gib N`, `--sessions N`, `--target-tokens-per-sec N`, `--fabric-gib-sec N` options; `capacity_opts` struct and `tile_capacity_status()`/`fabric_bandwidth_status()` helpers added; preset mode emits `tile_memory_mib`, `model_bytes_per_tile`, `tile_capacity_status`, and `fabric_bandwidth_status` lines; full/config/manual mode emits `[tile_capacity_estimate]` and `[fabric_bandwidth_estimate]` sections with combined model+KV utilization, PASS/WARN/FAIL/UNKNOWN status; JSON mode extended with `tile_capacity_estimate` and `fabric_bandwidth_estimate` objects; `check_tile_capacity_smoke` added to `test_bench_smoke.c` (6 scenarios); no C ABI, format, or inference behavior changed.
 - Milestone 97: Metadata-driven tensor-level placement plan — documentation/spec only; `docs/shard_metadata.md` §13 added: tensor-level ownership record schema (200-byte extended record, tensor_category/slice_axis/slice_start/slice_end fields), slicing policies (row-wise, column-wise, head-wise, layer-wise, vocab/lm_head split, embedding split, KV-cache split, replicated norms), execution consequences (matmul, attention, FFN/SwiGLU, lm_head logits, reductions, fabric traffic, synchronization, trace determinism, error/tolerance), placement validation rules (12 checks), estimator integration plan, execution modes (advisory/validation/opt-in/enforced), non-goals, and M98–M103 future milestone split; `docs/aimu_architecture.md` §9 added: AIMU fabric implications of each split policy (broadcast to slice owners, partial result collection, head-local KV traffic, embedding lookup routing, logit concat routing), AIMU local memory layout for tensor slices, activation routing protocol DAG changes, trace determinism under tensor-level placement, estimator integration (AIMU perspective), prototype engineering path M98–M103, and AIMU-scope non-goals; no C, Makefile, binary format, or inference behavior changed.
+- Milestone 98: Tensor-level placement report schema — documentation/spec only; `docs/tensor_placement_report.md` added: canonical schema for placement reports covering report header (§1, 15 fields, key-value and JSON formats), tile/AIMU summary records (§2, per-tile model_bytes/kv_bytes/activation_bytes/logits_bytes/fabric_payload/fabric_packets/utilization/capacity_status/bandwidth_status, PASS/WARN/FAIL thresholds), tensor placement records (§3, 13 tensor categories, 3 replication policies, 4 reduction behaviors, 5 routing_requirements values, 5 placement_status values, key-value and JSON formats), validation report fields (§4, 10 violation counters, severity levels, per-violation tensor_id/rule/message), human-readable output (§5, tile summary table, overloaded-tile report, largest-tensor report, warnings, remediation suggestions), JSON schema summary (§6, stability rules), relationship to existing tools (§7: M96 att1-size heuristic→exact mapping, shard metadata field mapping, M99 validator flow, M100 estimator integration); `docs/shard_metadata.md` §14 added: shard-metadata-to-report field mapping table, §13.5 validation rule→report violation mapping, report generation path diagram, non-goals; no C, Makefile, binary format, or inference behavior changed.
 
 ## Next Prompt for Codex
 
-Implement Milestone 98 only.
+Implement Milestone 99 only.
 - Default make/make test must remain CPU-only and CUDA-free.
 - CUDA remains opt-in with make CUDA=1.
 - Do not change .att1 binary format.
