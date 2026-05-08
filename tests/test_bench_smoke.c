@@ -3064,6 +3064,168 @@ static int check_tile_capacity_smoke(void)
     return 0;
 }
 
+/*
+ * check_placement_validator_smoke() — M99
+ *
+ * Python-skippable.  Exercises compiler/validate_tensor_placement_report.py
+ * with eight scenarios:
+ *
+ *   1. Valid fixture → exit 0; output contains "validation: pass".
+ *   2. Invalid tile ID fixture → exit 1; output contains "validation: fail".
+ *   3. Capacity overflow with PASS status → exit 1; "validation: fail".
+ *   4. Overlapping unique slices → exit 1; "validation: fail".
+ *   5. Q4 group alignment violation → exit 1; "validation: fail".
+ *   6. Malformed JSON → exit 2 (parse error, not 0 or 1).
+ *   7. Missing required field (report_version absent) → exit 1.
+ *   8. JSON output mode: valid fixture + --report-json produces
+ *      a JSON file with "status": "pass" and integer counters.
+ */
+static int check_placement_validator_smoke(void)
+{
+    char output[16384];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    /* 1. Valid fixture: exit 0, "validation: pass". */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " > build/m99_valid.txt 2>&1") != 0) {
+        fputs("placement_validator: valid fixture should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m99_valid.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: pass") == NULL) {
+        fputs("placement_validator: valid fixture missing 'validation: pass'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 2. Invalid tile ID fixture: exit 1, "validation: fail". */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report compiler/fixtures/placement_report_invalid_tile_id.json"
+            " > build/m99_bad_tile.txt 2>&1") == 0) {
+        fputs("placement_validator: invalid tile ID fixture should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m99_bad_tile.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: fail") == NULL) {
+        fputs("placement_validator: invalid tile ID fixture missing 'validation: fail'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 3. Capacity overflow with PASS status: exit 1. */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report compiler/fixtures/placement_report_capacity_overflow.json"
+            " > build/m99_overflow.txt 2>&1") == 0) {
+        fputs("placement_validator: capacity overflow fixture should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m99_overflow.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: fail") == NULL) {
+        fputs("placement_validator: capacity overflow missing 'validation: fail'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 4. Overlapping slices: exit 1. */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report compiler/fixtures/placement_report_overlapping_slices.json"
+            " > build/m99_overlap.txt 2>&1") == 0) {
+        fputs("placement_validator: overlapping slices fixture should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m99_overlap.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: fail") == NULL) {
+        fputs("placement_validator: overlapping slices missing 'validation: fail'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 5. Q4 group alignment violation: exit 1. */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report compiler/fixtures/placement_report_q4_bad_align.json"
+            " > build/m99_q4align.txt 2>&1") == 0) {
+        fputs("placement_validator: q4 alignment fixture should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m99_q4align.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: fail") == NULL) {
+        fputs("placement_validator: q4 alignment missing 'validation: fail'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 6. Malformed JSON: must exit 2. */
+    if (run_command(
+            "echo 'not_valid_json' | python3"
+            " compiler/validate_tensor_placement_report.py"
+            " --report /dev/stdin"
+            " > build/m99_malformed.txt 2>&1") == 0) {
+        fputs("placement_validator: malformed JSON should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+
+    /* 7. Missing report_version field: must exit non-zero. */
+    if (run_command(
+            "echo '{\"header\":{\"tile_count\":1,\"dtype\":\"f32\","
+            "\"quantization_family\":\"none\",\"target_context_length\":128,"
+            "\"target_sessions\":1},\"tiles\":[],\"tensors\":[]}'"
+            " | python3 compiler/validate_tensor_placement_report.py"
+            " --report /dev/stdin"
+            " > build/m99_nover.txt 2>&1") == 0) {
+        fputs("placement_validator: missing report_version should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+
+    /* 8. JSON output mode: valid fixture produces JSON with status=pass. */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --report-json build/m99_valid_result.json"
+            " > build/m99_json_mode.txt 2>&1") != 0) {
+        fputs("placement_validator: JSON mode failed on valid fixture\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m99_valid_result.json", output, sizeof(output)) != 0) {
+        fputs("placement_validator: cannot read JSON result file\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"status\"")         == NULL) ||
+        (strstr(output, "\"pass\"")           == NULL) ||
+        (strstr(output, "\"total_errors\"")   == NULL) ||
+        (strstr(output, "\"total_warnings\"") == NULL)) {
+        fputs("placement_validator: JSON result missing expected keys\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -3093,7 +3255,8 @@ int main(void)
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0) ||
-        (check_tile_capacity_smoke()      != 0)) {
+        (check_tile_capacity_smoke()      != 0) ||
+        (check_placement_validator_smoke() != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

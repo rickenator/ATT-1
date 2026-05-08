@@ -1,0 +1,72 @@
+{
+  "report_version": 1,
+  "header": {
+    "model_name": "bad_tile_id_model",
+    "artifact_path": "",
+    "config_source": "manual",
+    "dtype": "f32",
+    "quantization_family": "none",
+    "n_layers": 1,
+    "d_model": 64,
+    "n_heads": 2,
+    "n_kv_heads": 2,
+    "ffn_hidden": 128,
+    "vocab_size": 256,
+    "tile_count": 2,
+    "tile_memory_mib": 64,
+    "target_context_length": 128,
+    "target_sessions": 1,
+    "target_tokens_per_sec": null,
+    "fabric_gib_sec": null,
+    "placement_policy": "layer_wise",
+    "report_timestamp": "2026-05-08T00:00:00Z"
+  },
+  "tiles": [
+    {
+      "tile_id": 0,
+      "aimu_id": 0,
+      "layer_range_start": 0,
+      "layer_range_end": 0,
+      "assigned_tensor_count": 1,
+      "assigned_tensor_slice_count": 0,
+      "model_bytes": 16384,
+      "kv_bytes": 0,
+      "activation_bytes_per_token": 256,
+      "logits_bytes_per_token": 0,
+      "fabric_payload_bytes_per_token": 256,
+      "fabric_packets_per_token": 1,
+      "memory_utilization_percent": 0.2,
+      "capacity_status": "PASS",
+      "bandwidth_status": "PASS"
+    }
+  ],
+  "tensors": [
+    {
+      "tensor_id": 0,
+      "tensor_name": "layers.0.attention.wq.weight",
+      "tensor_category": "attention_q",
+      "layer": 0,
+      "source_shape": [64, 64],
+      "placed_shape": [64, 64],
+      "dtype": "f32",
+      "quantization": "none",
+      "quantization_group_size": null,
+      "scale_bytes": 0,
+      "packed_bytes": 16384,
+      "owner_tile": 99,
+      "owner_aimu": 99,
+      "slice_axis": null,
+      "slice_start": null,
+      "slice_end": null,
+      "replication_policy": "unique",
+      "routing_requirements": "none",
+      "reduction_behavior": "none",
+      "checksum": "0x0000000000000000",
+      "placement_status": "placed"
+    }
+  ],
+  "validation": {},
+  "warnings": [],
+  "failures": [],
+  "remediation": []
+}

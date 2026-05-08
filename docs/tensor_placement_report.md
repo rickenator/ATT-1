@@ -644,3 +644,117 @@ The M100 `att1-size --placement PATH` option will:
   activation routing
 - [backend.md](backend.md) — backend vtable and operator set
 - [kv_mmu.md](kv_mmu.md) — KV-MMU paged session memory
+
+---
+
+## 9. Placement Report Validator (Milestone 99)
+
+`compiler/validate_tensor_placement_report.py` is the reference validator for
+placement reports produced according to this schema.
+
+### 9.1 Usage
+
+```
+python3 compiler/validate_tensor_placement_report.py \
+    --report PATH [--report-json PATH] [--strict]
+```
+
+| Option | Description |
+|---|---|
+| `--report PATH` | Required. Path to the placement report JSON file to validate. |
+| `--report-json PATH` | Optional. Write a machine-readable JSON validation summary to PATH. |
+| `--strict` | Optional. Promote warnings to errors (validation fails on any issue). |
+
+### 9.2 Exit Codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Validation passed — zero errors detected (warnings may be present). |
+| `1` | Validation failed — one or more errors detected. |
+| `2` | Report could not be parsed — malformed JSON or file not found. |
+
+### 9.3 Checks Performed
+
+The validator applies the following checks in order:
+
+**Header checks (§1):**
+
+- `report_version` present and in the supported set (`{1}`).
+- `dtype` present and one of `f32`, `q8`, `q4`, `bf16`.
+- `quantization_family` present and recognised.
+- `tile_count` present, a positive integer.
+- `target_context_length` ≥ 1 if present.
+- `target_sessions` ≥ 1 if present.
+- `tile_memory_mib` > 0 if present.
+- `fabric_gib_sec` > 0 if present.
+
+**Tile record checks (§2):**
+
+- Each tile has a non-null `tile_id` integer.
+- All `tile_id` values are unique.
+- All `tile_id` values are within `[0, tile_count)`.
+- `model_bytes`, `kv_bytes`, `activation_bytes_per_token`, `logits_bytes_per_token`,
+  `fabric_payload_bytes_per_token` are non-negative integers.
+- `memory_utilization_percent` is a non-negative number.
+- `capacity_status` is one of `PASS`, `WARN`, `FAIL`, `UNKNOWN`.
+- Consistency: if `capacity_status = PASS` and `memory_utilization_percent > 100`,
+  that is an error.
+- `bandwidth_status` is one of `PASS`, `WARN`, `FAIL`, `UNKNOWN`.
+
+**Tensor record checks (§3):**
+
+- Each record has `tensor_id` or `tensor_name`.
+- `tensor_category` is recognised (or `other`).
+- `source_shape` and `placed_shape` are lists of positive integers.
+- `dtype` is recognised.
+- `quantization = per_group_q4` requires a valid `quantization_group_size`.
+- `packed_bytes`, `scale_bytes` are non-negative integers if present.
+- `owner_tile` is present, an integer, within `[0, tile_count)`, and present
+  in the `tiles` list.
+- `slice_axis` is a valid axis for the tensor rank.
+- `slice_start` and `slice_end` define a non-empty range within the tensor
+  dimension.
+- For q4 tensors: `slice_start` and `slice_end` must be aligned to `quantization_group_size`.
+- `replication_policy` is `unique`, `replicated`, or `partial`.
+- `reduction_behavior` is `none`, `sum`, `max`, or `concat`.
+- Duplicate `unique` placement records for the same `tensor_id` are errors.
+
+**Coverage and overlap checks:**
+
+- Per `tensor_id`: overlapping slice ranges across tiles are errors (unless
+  all records have `replication_policy = replicated`).
+- Split tensors with `reduction_behavior = none` for all slices produce a
+  warning (rule 8).
+- Gaps in slice coverage for fully-placed tensors produce a warning (rule 3).
+
+### 9.4 Fixture Files
+
+| File | Expected outcome |
+|---|---|
+| `compiler/fixtures/placement_report_valid.json` | exit 0; `validation: pass` |
+| `compiler/fixtures/placement_report_invalid_tile_id.json` | exit 1; `owner_tile=99` error |
+| `compiler/fixtures/placement_report_capacity_overflow.json` | exit 1; utilization 204800% with `PASS` status |
+| `compiler/fixtures/placement_report_overlapping_slices.json` | exit 1; slices `[0,48)` and `[32,64)` overlap |
+| `compiler/fixtures/placement_report_q4_bad_align.json` | exit 1; `slice_start=60` not aligned to group_size=32 |
+
+### 9.5 JSON Output Format
+
+When `--report-json PATH` is used, the output file contains:
+
+```json
+{
+  "status": "pass",
+  "total_warnings": 0,
+  "total_errors": 0,
+  "warnings": [],
+  "failures": [],
+  "report_path": "compiler/fixtures/placement_report_valid.json",
+  "tile_count_header": 2,
+  "tensor_record_count": 5,
+  "tile_record_count": 2
+}
+```
+
+The `status` field is `"pass"` or `"fail"`.  `total_errors` and
+`total_warnings` are non-negative integers.  `warnings` and `failures` are
+lists of violation records (same schema as §4.2 `violations`).
