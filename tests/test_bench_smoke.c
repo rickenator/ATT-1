@@ -2933,6 +2933,137 @@ static int check_prefill_decode_split_smoke(void)
     return 0;
 }
 
+/*
+ * check_tile_capacity_smoke() — M96
+ *
+ * Validates the tile memory capacity and fabric bandwidth estimator fields
+ * added to att1-size by Milestone 96.  Six scenarios:
+ *
+ *   1. --preset tiny-dummy --tile-memory-mib 256:
+ *      exit 0; output has tile_memory_mib=256, model_bytes_per_tile=,
+ *      tile_capacity_status=PASS  (9 KiB model << 256 MiB).
+ *
+ *   2. --preset tiny-dummy --tile-memory-gib 1:
+ *      exit 0; tile_capacity_status=PASS.
+ *
+ *   3. Manual shape with 1 MiB budget → FAIL:
+ *      --layers 4 --d-model 256 --heads 4 --d-ff 512 --vocab-size 1000
+ *      --tiles 1 --tile-memory-mib 1
+ *      exit 0; tile_capacity_status=FAIL (model ≈ 12 MiB >> 1 MiB).
+ *
+ *   4. --tile-memory-mib abc → exit non-zero (bad parse).
+ *
+ *   5. --preset gpt-oss-120b-shape --tiles 16
+ *      --target-tokens-per-sec 10 --fabric-gib-sec 5:
+ *      exit 0; output has fabric_bandwidth_status=.
+ *
+ *   6. --config + --tile-memory-mib + --target-tokens-per-sec + --fabric-gib-sec
+ *      --json: JSON output has "tile_capacity_status" and
+ *      "fabric_bandwidth_status".
+ */
+static int check_tile_capacity_smoke(void)
+{
+    char output[8192];
+
+    /* 1. Tiny preset + tile-memory-mib 256: PASS */
+    if (run_command("./build/att1-size --preset tiny-dummy"
+                    " --tile-memory-mib 256"
+                    " > build/m96_cap_pass.txt 2>&1") != 0) {
+        fputs("tile_capacity: preset + tile-memory-mib failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m96_cap_pass.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "tile_memory_mib=256")    == NULL) ||
+        (strstr(output, "model_bytes_per_tile=")  == NULL) ||
+        (strstr(output, "tile_capacity_status=")  == NULL) ||
+        (strstr(output, "tile_capacity_status=PASS") == NULL)) {
+        fputs("tile_capacity: PASS scenario missing expected fields\n", stderr);
+        return -1;
+    }
+
+    /* 2. Tiny preset + tile-memory-gib 1: also PASS */
+    if (run_command("./build/att1-size --preset tiny-dummy"
+                    " --tile-memory-gib 1"
+                    " > build/m96_cap_gib.txt 2>&1") != 0) {
+        fputs("tile_capacity: preset + tile-memory-gib failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m96_cap_gib.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "tile_capacity_status=PASS") == NULL) {
+        fputs("tile_capacity: GiB PASS scenario wrong status\n", stderr);
+        return -1;
+    }
+
+    /* 3. Manual shape with 1 MiB budget → FAIL */
+    if (run_command("./build/att1-size"
+                    " --layers 4 --d-model 256 --heads 4 --d-ff 512"
+                    " --vocab-size 1000 --tiles 1 --tile-memory-mib 1"
+                    " > build/m96_cap_fail.txt 2>&1") != 0) {
+        fputs("tile_capacity: FAIL scenario exited non-zero\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m96_cap_fail.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    /* Full-mode report uses aligned "  key       = VALUE" format. */
+    if ((strstr(output, "tile_capacity_status") == NULL) ||
+        (strstr(output, "FAIL")                 == NULL)) {
+        fputs("tile_capacity: FAIL scenario missing tile_capacity_status=FAIL\n",
+              stderr);
+        return -1;
+    }
+
+    /* 4. Invalid --tile-memory-mib value must cause exit non-zero */
+    if (run_command("./build/att1-size --preset tiny-dummy"
+                    " --tile-memory-mib abc"
+                    " > build/m96_cap_invalid.txt 2>&1") == 0) {
+        fputs("tile_capacity: invalid tile-memory-mib should fail\n", stderr);
+        return -1;
+    }
+
+    /* 5. Fabric bandwidth status present when target-tokens-per-sec and
+     *    fabric-gib-sec are specified */
+    if (run_command("./build/att1-size --preset gpt-oss-120b-shape --tiles 16"
+                    " --target-tokens-per-sec 10 --fabric-gib-sec 5"
+                    " > build/m96_fabric.txt 2>&1") != 0) {
+        fputs("tile_capacity: fabric bandwidth preset run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m96_fabric.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "fabric_bandwidth_status=") == NULL) {
+        fputs("tile_capacity: fabric_bandwidth_status= missing\n", stderr);
+        return -1;
+    }
+
+    /* 6. JSON output contains both capacity and bandwidth status keys */
+    if (run_command("./build/att1-size"
+                    " --config compiler/fixtures/tiny_llama_config.json"
+                    " --tiles 2 --tile-memory-mib 4096"
+                    " --target-tokens-per-sec 10 --fabric-gib-sec 10"
+                    " --json"
+                    " > build/m96_cap_json.txt 2>&1") != 0) {
+        fputs("tile_capacity: JSON mode failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m96_cap_json.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "\"tile_capacity_status\"")    == NULL) ||
+        (strstr(output, "\"fabric_bandwidth_status\"") == NULL)) {
+        fputs("tile_capacity: JSON missing tile_capacity_status or "
+              "fabric_bandwidth_status\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -2961,7 +3092,8 @@ int main(void)
         (check_prefill_decode_split_smoke() != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
-        (check_scaling_report()           != 0)) {
+        (check_scaling_report()           != 0) ||
+        (check_tile_capacity_smoke()      != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

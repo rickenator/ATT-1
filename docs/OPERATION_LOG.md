@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 95: Prefill vs decode benchmark split (complete).
+Milestone 96: Tile memory capacity and bandwidth estimator (complete).
 
 ## Active Task
 
-Prepare Milestone 96.
+Prepare Milestone 97.
 
 ## Hard Rules
 
@@ -120,24 +120,18 @@ Prepare Milestone 96.
 - Milestone 93: AIMU/PCIe prototype requirements — Section 8 added to `docs/aimu_architecture.md`; covers prototype goal, proof criteria, runtime/CUDA relationships, tile responsibilities, local memory sizing (f32/q8/q4), host control plane, fabric/interconnect requirements, KV-MMU requirements, counter/trace requirements, four MVP options (software-emulated/FPGA/PCIe card/ASIC), data movement assumptions, dtype tolerances, non-goals, open engineering questions, and M94 proposal.
 - Milestone 94: ATT-1 trace diff tool — `compiler/trace_diff.py` added; parses att1-bench key=value output; compares all scalar, layer[N], and tile[N] fields; same/DIFF/MISSING tags; JSON report via --report-json; `check_trace_diff_smoke` added to `test_bench_smoke.c` (identical diff, cross-backend DIFF, malformed rejection); `docs/trace_diff.md` added; no C/Makefile/format changes.
 - Milestone 95: Prefill vs decode benchmark split — `att1-bench` now snapshots trace counters at the prefill/decode boundary and emits: `prompt_tokens` (byte and external modes), `decode_tokens`, `prefill_time_us_total`, `decode_time_us_total`, `prefill_kv_appends`, `decode_kv_appends`, `prefill_kv_reads`, `decode_kv_reads`, `prefill_logits_bytes`, `decode_logits_bytes`; `prefill_fabric_packets` + `decode_fabric_packets` for cluster mode; all four runner functions updated; `check_prefill_decode_split_smoke` added to `test_bench_smoke.c`; `trace_diff.py` updated with new field names; `docs/tracing.md` updated; no inference behavior changed.
+- Milestone 96: Tile memory capacity and bandwidth estimator — `tools/att1-size.c` extended with `--tile-memory-mib N`, `--tile-memory-gib N`, `--sessions N`, `--target-tokens-per-sec N`, `--fabric-gib-sec N` options; `capacity_opts` struct and `tile_capacity_status()`/`fabric_bandwidth_status()` helpers added; preset mode emits `tile_memory_mib`, `model_bytes_per_tile`, `tile_capacity_status`, and `fabric_bandwidth_status` lines; full/config/manual mode emits `[tile_capacity_estimate]` and `[fabric_bandwidth_estimate]` sections with combined model+KV utilization, PASS/WARN/FAIL/UNKNOWN status; JSON mode extended with `tile_capacity_estimate` and `fabric_bandwidth_estimate` objects; `check_tile_capacity_smoke` added to `test_bench_smoke.c` (6 scenarios); no C ABI, format, or inference behavior changed.
 
 ## Next Prompt for Codex
 
-Implement Milestone 96 only.
+Implement Milestone 97 only.
 - Default make/make test must remain CPU-only and CUDA-free.
 - CUDA remains opt-in with make CUDA=1.
-- Do not implement CUDA q4 cluster inference yet.
 - Do not change .att1 binary format.
-- Do not change CPU q4 behavior.
-- Do not change f32/q8/cuda-f32/cuda-q8 behavior.
-- `att1_infer_create_q4()` must accept a "cuda-q4" backend.
-- `att1-bench --backend cuda-q4 --mode single` must exit zero.
-- CUDA q4 logits must match CPU q4 within Q4_TOLERANCE=0.35f.
-- Update docs/quantization.md.
-- Update docs/cuda_backend.md.
+- Do not change any existing benchmark output fields.
+- Do not change CPU f32/q8/q4 or CUDA inference behavior.
 - Update docs/OPERATION_LOG.md.
 - Run make clean && make && make test.
-- On CUDA host, run make clean && make CUDA=1 && make test CUDA=1.
 
 ## Known Risks
 

@@ -44,6 +44,14 @@ typedef struct model_shape {
 /* Legacy alias used by existing smoke test */
 typedef model_shape preset_shape;
 
+/* M96: capacity planning options */
+typedef struct capacity_opts {
+    uint64_t tile_memory_mib;   /* per-tile SRAM budget in MiB; 0 = not specified */
+    uint64_t sessions;          /* concurrent KV sessions; 0 = not specified (treated as 1) */
+    uint64_t target_tps;        /* target decode tokens/sec; 0 = not specified */
+    double   fabric_gib_sec;    /* fabric bandwidth GiB/sec; 0.0 = not specified */
+} capacity_opts;
+
 /* -------------------------------------------------------------------------
  * Helpers
  * ---------------------------------------------------------------------- */
@@ -66,7 +74,13 @@ static void usage(const char *argv0)
     printf("usage:\n"
            "  %s --preset tiny-dummy|gpt-oss-120b-shape [--tiles N] [--context N] [--dtype f32|f16|q8|q4]\n"
            "  %s --config PATH [--tiles N] [--context N] [--dtype f32|f16|q8|q4] [--json]\n"
-           "  %s --layers N --d-model N --heads N --d-ff N --vocab-size N [--context N] [--tiles N] [--dtype f32|f16|q8|q4] [--json]\n",
+           "  %s --layers N --d-model N --heads N --d-ff N --vocab-size N [--context N] [--tiles N] [--dtype f32|f16|q8|q4] [--json]\n"
+           "\nCapacity planning options (any mode):\n"
+           "  --tile-memory-mib N      Per-tile SRAM budget in MiB\n"
+           "  --tile-memory-gib N      Per-tile SRAM budget in GiB (sets mib = N*1024)\n"
+           "  --sessions N             Concurrent KV sessions for pressure estimate\n"
+           "  --target-tokens-per-sec N  Target decode rate (tokens/sec)\n"
+           "  --fabric-gib-sec N       Fabric bandwidth (GiB/sec) for PASS/WARN/FAIL check\n",
            argv0, argv0, argv0);
 }
 
@@ -95,6 +109,56 @@ static int dtype_supported(const char *dtype)
            (strcmp(dtype, "f16") == 0) ||
            (strcmp(dtype, "q8") == 0) ||
            (strcmp(dtype, "q4") == 0);
+}
+
+static int parse_double(const char *text, double *out)
+{
+    char  *end = NULL;
+    double v   = 0.0;
+
+    if ((text == NULL) || (out == NULL)) {
+        return -1;
+    }
+    v = strtod(text, &end);
+    if ((end == text) || (*end != '\0')) {
+        return -1;
+    }
+    *out = v;
+    return 0;
+}
+
+/* Returns PASS/WARN/FAIL/UNKNOWN for model+KV combined bytes vs tile memory. */
+static const char *tile_capacity_status(uint64_t combined_bytes, uint64_t tile_mib)
+{
+    uint64_t tile_bytes;
+
+    if (tile_mib == 0u) {
+        return "UNKNOWN";
+    }
+    tile_bytes = tile_mib * 1024u * 1024u;
+    if (combined_bytes <= (tile_bytes * 8u / 10u)) {
+        return "PASS";
+    }
+    if (combined_bytes <= tile_bytes) {
+        return "WARN";
+    }
+    return "FAIL";
+}
+
+/* Returns PASS/WARN/FAIL/UNKNOWN for required vs available fabric bandwidth. */
+static const char *fabric_bandwidth_status(double required_gib_sec,
+                                           double available_gib_sec)
+{
+    if (available_gib_sec <= 0.0) {
+        return "UNKNOWN";
+    }
+    if (required_gib_sec <= (available_gib_sec * 0.8)) {
+        return "PASS";
+    }
+    if (required_gib_sec <= available_gib_sec) {
+        return "WARN";
+    }
+    return "FAIL";
 }
 
 /* -------------------------------------------------------------------------
@@ -460,7 +524,8 @@ static void print_report_preset(const model_shape *s, const char *dtype)
 }
 
 /* Full scaling report (config/manual mode) */
-static void print_report_full(const model_shape *s, const char *dtype, int json_out)
+static void print_report_full(const model_shape *s, const char *dtype, int json_out,
+                               const capacity_opts *opts)
 {
     static const uint64_t ctx_list[] = { 512u, 2048u, 8192u, 32768u };
     static const size_t   n_ctx = sizeof(ctx_list) / sizeof(ctx_list[0]);
@@ -624,6 +689,66 @@ static void print_report_full(const model_shape *s, const char *dtype, int json_
             printf("\ndtype_selected=%s\n", dtype);
         }
 
+        /* M96: tile capacity estimate section */
+        if ((opts != NULL) && (opts->tile_memory_mib != 0u)) {
+            const uint64_t tiles_eff    = (s->n_tiles > 0u) ? s->n_tiles : 1u;
+            const uint64_t per_tile_f32 = div_round_up(f32_bytes,      tiles_eff);
+            const uint64_t per_tile_q8  = div_round_up(q8_bytes,       tiles_eff);
+            const uint64_t kv_per_tile  = div_round_up(kv_f32_default, tiles_eff);
+            const uint64_t sessions     = (opts->sessions > 0u) ? opts->sessions : 1u;
+            const uint64_t combined     = per_tile_f32 + kv_per_tile * sessions;
+            const uint64_t tile_bytes   = opts->tile_memory_mib * 1024u * 1024u;
+            const double   util_pct     = (tile_bytes > 0u)
+                                          ? 100.0 * (double)combined / (double)tile_bytes
+                                          : 0.0;
+            printf("\n[tile_capacity_estimate] (estimate only)\n");
+            printf("  tile_memory_mib            = %llu\n",
+                   (unsigned long long)opts->tile_memory_mib);
+            printf("  sessions                   = %llu\n", (unsigned long long)sessions);
+            printf("  model_bytes_per_tile_f32   = %llu bytes  (",
+                   (unsigned long long)per_tile_f32);
+            print_gib(per_tile_f32); printf(")\n");
+            printf("  model_bytes_per_tile_q8    = %llu bytes  (",
+                   (unsigned long long)per_tile_q8);
+            print_gib(per_tile_q8); printf(")\n");
+            printf("  kv_bytes_per_tile_f32      = %llu bytes  (",
+                   (unsigned long long)kv_per_tile);
+            print_gib(kv_per_tile); printf(") [model max ctx, per session]\n");
+            printf("  combined_bytes_per_tile_f32= %llu bytes  (",
+                   (unsigned long long)combined);
+            print_gib(combined); printf(") [model_f32 + kv*sessions]\n");
+            printf("  combined_utilization_pct   = %.1f%%\n", util_pct);
+            printf("  tile_capacity_status       = %s\n",
+                   tile_capacity_status(combined, opts->tile_memory_mib));
+        }
+
+        /* M96: fabric bandwidth estimate section */
+        if ((opts != NULL) &&
+            ((opts->target_tps != 0u) || (opts->fabric_gib_sec > 0.0))) {
+            const uint64_t tiles_eff   = (s->n_tiles > 0u) ? s->n_tiles : 1u;
+            const uint64_t act_b       = s->d_model * 4u;
+            const uint64_t logits_b    = s->vocab_size * 4u;
+            const uint64_t fabric_b    = (tiles_eff > 1u)
+                                         ? (tiles_eff - 1u) * act_b + logits_b
+                                         : 0u;
+            const double   req_gib_sec = (opts->target_tps != 0u)
+                ? (double)fabric_b * (double)opts->target_tps / (1024.0 * 1024.0 * 1024.0)
+                : 0.0;
+            printf("\n[fabric_bandwidth_estimate] (estimate only)\n");
+            printf("  fabric_bytes_per_token     = %llu bytes\n",
+                   (unsigned long long)fabric_b);
+            if (opts->target_tps != 0u) {
+                printf("  target_tokens_per_sec      = %llu\n",
+                       (unsigned long long)opts->target_tps);
+                printf("  required_gib_sec           = %.4f\n", req_gib_sec);
+            }
+            if (opts->fabric_gib_sec > 0.0) {
+                printf("  fabric_available_gib_sec   = %.4f\n", opts->fabric_gib_sec);
+            }
+            printf("  fabric_bandwidth_status    = %s\n",
+                   fabric_bandwidth_status(req_gib_sec, opts->fabric_gib_sec));
+        }
+
     } else {
         /* JSON output */
         printf("{\n");
@@ -692,6 +817,55 @@ static void print_report_full(const model_shape *s, const char *dtype, int json_
         if (dtype != NULL) {
             printf(",\n  \"dtype_selected\": \"%s\"", dtype);
         }
+        /* M96: capacity/bandwidth JSON fields */
+        if ((opts != NULL) &&
+            ((opts->tile_memory_mib != 0u) || (opts->target_tps != 0u) ||
+             (opts->fabric_gib_sec > 0.0))) {
+            const uint64_t tiles_eff    = (s->n_tiles > 0u) ? s->n_tiles : 1u;
+            const uint64_t per_tile_f32 = div_round_up(f32_bytes,      tiles_eff);
+            const uint64_t per_tile_q8  = div_round_up(q8_bytes,       tiles_eff);
+            const uint64_t kv_per_tile  = div_round_up(kv_f32_default, tiles_eff);
+            const uint64_t sessions     = (opts->sessions > 0u) ? opts->sessions : 1u;
+            const uint64_t combined     = per_tile_f32 + kv_per_tile * sessions;
+            const uint64_t tile_bytes   = opts->tile_memory_mib * 1024u * 1024u;
+            const double   util_pct     = (tile_bytes > 0u)
+                                          ? 100.0 * (double)combined / (double)tile_bytes
+                                          : 0.0;
+            const uint64_t act_b        = s->d_model * 4u;
+            const uint64_t logits_b     = s->vocab_size * 4u;
+            const uint64_t fabric_b     = (tiles_eff > 1u)
+                                          ? (tiles_eff - 1u) * act_b + logits_b
+                                          : 0u;
+            const double   req_gib_sec  = (opts->target_tps != 0u)
+                ? (double)fabric_b * (double)opts->target_tps / (1024.0 * 1024.0 * 1024.0)
+                : 0.0;
+            printf(",\n  \"tile_capacity_estimate\": {\n");
+            printf("    \"tile_memory_mib\": %llu,\n",
+                   (unsigned long long)opts->tile_memory_mib);
+            printf("    \"sessions\": %llu,\n", (unsigned long long)sessions);
+            printf("    \"model_bytes_per_tile_f32\": %llu,\n",
+                   (unsigned long long)per_tile_f32);
+            printf("    \"model_bytes_per_tile_q8\": %llu,\n",
+                   (unsigned long long)per_tile_q8);
+            printf("    \"kv_bytes_per_tile_f32\": %llu,\n",
+                   (unsigned long long)kv_per_tile);
+            printf("    \"combined_bytes_per_tile_f32\": %llu,\n",
+                   (unsigned long long)combined);
+            printf("    \"combined_utilization_pct\": %.1f,\n", util_pct);
+            printf("    \"tile_capacity_status\": \"%s\"\n",
+                   tile_capacity_status(combined, opts->tile_memory_mib));
+            printf("  }");
+            printf(",\n  \"fabric_bandwidth_estimate\": {\n");
+            printf("    \"fabric_bytes_per_token\": %llu,\n",
+                   (unsigned long long)fabric_b);
+            printf("    \"target_tokens_per_sec\": %llu,\n",
+                   (unsigned long long)opts->target_tps);
+            printf("    \"required_gib_sec\": %.4f,\n", req_gib_sec);
+            printf("    \"fabric_available_gib_sec\": %.4f,\n", opts->fabric_gib_sec);
+            printf("    \"fabric_bandwidth_status\": \"%s\"\n",
+                   fabric_bandwidth_status(req_gib_sec, opts->fabric_gib_sec));
+            printf("  }");
+        }
         printf("\n}\n");
     }
 }
@@ -702,20 +876,21 @@ static void print_report_full(const model_shape *s, const char *dtype, int json_
 
 int main(int argc, char **argv)
 {
-    model_shape  shape;
-    const char  *preset     = NULL;
-    const char  *config     = NULL;
-    const char  *dtype      = NULL;
-    uint64_t     tiles      = 0u;
-    uint64_t     context    = 0u;
-    int          json_out   = 0;
-    int          use_manual = 0;
-    uint64_t     m_layers   = 0u;
-    uint64_t     m_dmodel   = 0u;
-    uint64_t     m_heads    = 0u;
-    uint64_t     m_dff      = 0u;
-    uint64_t     m_vocab    = 0u;
-    int          i          = 0;
+    model_shape   shape;
+    capacity_opts cap        = {0u, 0u, 0u, 0.0};
+    const char   *preset     = NULL;
+    const char   *config     = NULL;
+    const char   *dtype      = NULL;
+    uint64_t      tiles      = 0u;
+    uint64_t      context    = 0u;
+    int           json_out   = 0;
+    int           use_manual = 0;
+    uint64_t      m_layers   = 0u;
+    uint64_t      m_dmodel   = 0u;
+    uint64_t      m_heads    = 0u;
+    uint64_t      m_dff      = 0u;
+    uint64_t      m_vocab    = 0u;
+    int           i          = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -758,6 +933,35 @@ int main(int argc, char **argv)
         } else if ((strcmp(argv[i], "--vocab-size") == 0) && ((i + 1) < argc)) {
             if (parse_u64(argv[++i], &m_vocab) != 0) { usage(argv[0]); return 1; }
             use_manual = 1;
+        } else if ((strcmp(argv[i], "--tile-memory-mib") == 0) && ((i + 1) < argc)) {
+            if ((parse_u64(argv[++i], &cap.tile_memory_mib) != 0) ||
+                (cap.tile_memory_mib == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "--tile-memory-gib") == 0) && ((i + 1) < argc)) {
+            uint64_t gib = 0u;
+            if ((parse_u64(argv[++i], &gib) != 0) || (gib == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
+            cap.tile_memory_mib = gib * 1024u;
+        } else if ((strcmp(argv[i], "--sessions") == 0) && ((i + 1) < argc)) {
+            if ((parse_u64(argv[++i], &cap.sessions) != 0) || (cap.sessions == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "--target-tokens-per-sec") == 0) && ((i + 1) < argc)) {
+            if ((parse_u64(argv[++i], &cap.target_tps) != 0) || (cap.target_tps == 0u)) {
+                usage(argv[0]);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "--fabric-gib-sec") == 0) && ((i + 1) < argc)) {
+            if ((parse_double(argv[++i], &cap.fabric_gib_sec) != 0) ||
+                (cap.fabric_gib_sec <= 0.0)) {
+                usage(argv[0]);
+                return 1;
+            }
         } else {
             fprintf(stderr, "att1-size: unknown argument: %s\n", argv[i]);
             usage(argv[0]);
@@ -789,6 +993,33 @@ int main(int argc, char **argv)
         if (tiles != 0u)   { shape.n_tiles    = tiles; }
         if (context != 0u) { shape.max_seq_len = context; }
         print_report_preset(&shape, dtype);
+
+        /* M96: capacity/bandwidth summary lines for preset mode */
+        if (cap.tile_memory_mib != 0u) {
+            const uint64_t tiles_eff = (shape.n_tiles > 0u) ? shape.n_tiles : 1u;
+            const uint64_t per_tile  = div_round_up(shape.total_params * 4u, tiles_eff);
+            const uint64_t kv_def    = kv_bytes_f32(&shape, shape.max_seq_len);
+            const uint64_t kv_tile   = div_round_up(kv_def, tiles_eff);
+            const uint64_t sessions  = (cap.sessions > 0u) ? cap.sessions : 1u;
+            const uint64_t combined  = per_tile + kv_tile * sessions;
+            printf("tile_memory_mib=%llu\n", (unsigned long long)cap.tile_memory_mib);
+            print_bytes_line("model_bytes_per_tile", per_tile);
+            printf("tile_capacity_status=%s\n",
+                   tile_capacity_status(combined, cap.tile_memory_mib));
+        }
+        if ((cap.target_tps != 0u) || (cap.fabric_gib_sec > 0.0)) {
+            const uint64_t tiles_eff = (shape.n_tiles > 0u) ? shape.n_tiles : 1u;
+            const uint64_t act_b     = shape.d_model * 4u;
+            const uint64_t logits_b  = shape.vocab_size * 4u;
+            const uint64_t fabric_b  = (tiles_eff > 1u)
+                                       ? (tiles_eff - 1u) * act_b + logits_b
+                                       : 0u;
+            const double   req_gib   = (cap.target_tps != 0u)
+                ? (double)fabric_b * (double)cap.target_tps / (1024.0 * 1024.0 * 1024.0)
+                : 0.0;
+            printf("fabric_bandwidth_status=%s\n",
+                   fabric_bandwidth_status(req_gib, cap.fabric_gib_sec));
+        }
         return 0;
     }
 
@@ -828,6 +1059,6 @@ int main(int argc, char **argv)
     if (tiles != 0u)   { shape.n_tiles    = tiles; }
     if (context != 0u) { shape.max_seq_len = context; }
 
-    print_report_full(&shape, dtype, json_out);
+    print_report_full(&shape, dtype, json_out, &cap);
     return 0;
 }
