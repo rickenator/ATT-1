@@ -1064,11 +1064,111 @@ of `docs/aimu_pcie_command_requirements.md`).
 | Milestone | Title | Scope |
 |---|---|---|
 | M105 | PCIe command queue simulator | Python or C shim over POSIX shared memory that models the command ring buffer (§4), processes 64-byte command packets, writes completion records, and validates checksums; smoke test: submit `LOAD_TENSOR_TILE` + `EXEC_MATMUL` against the tiny dummy model and compare result to `att1-bench cpu-f32` |
-| M106 | AIMU device discovery simulator | Extend M105 with the §2 global registers and §3 per-tile register windows; host-side discovery library stub that reads `DEVICE_ID`, `TILE_COUNT`, tile capacity registers |
+| M106 | AIMU device discovery simulator | **Complete.** Implemented as an in-process C11 simulator (`include/att1_aimu_device.h`, `src/aimu_device.c`). See §14 for the full struct-to-register mapping. |
 | M107 | DMA descriptor simulator | Implement the §5 descriptor layout; validate host-to-AIMU tensor load round-trip; integrate with M105/M106 |
 | M108 | Command trace/counter integration | Wire the §7 counter registers and §8 trace buffer into the M105/M106 simulator; export trace records in `att1_trace_t`-compatible JSON for diff against `att1-bench` output |
 | M109 | Placement-report-to-command-plan mapper | Python tool that reads an M100 placement report and produces an ordered list of `LOAD_TENSOR_TILE` + `EXEC_*` commands with register field values filled in; validates command plan against placement report tensor/tile assignments |
 | M110 | Minimal PCIe/AIMU prototype design review | Engineering review: reconcile M104–M109 artifacts, finalize BAR0 offset assignments, resolve open questions from §14, produce hardware bringup checklist |
+
+---
+
+## 14. M106 In-Process Device Simulator
+
+M106 delivers a pure C11, in-process simulator for the device probe and tile
+enumeration registers defined in §2 and §3.  There is **no real PCIe bus, no
+MMIO, and no kernel driver** involved.  All register state lives in a
+heap-allocated `att1_aimu_device` struct that is created and destroyed by the
+host process.
+
+### 14.1 Struct-to-Register Field Mapping
+
+The table below maps each `att1_aimu_device` / `att1_aimu_tile_info` field to
+the BAR0 register it simulates.
+
+| C struct field | BAR0 register (§) | Offset |
+|---|---|---|
+| `att1_aimu_device.register_map_version` | `REGISTER_MAP_VERSION` (§2) | `0x0008` |
+| `att1_aimu_device.version` (major/minor/patch/build) | `DEVICE_VERSION` (§2) | `0x0004` |
+| `att1_aimu_device.feature_flags` | `FEATURE_FLAGS_LOW` / `FEATURE_FLAGS_HIGH` (§2) | `0x0010` / `0x0014` |
+| `att1_aimu_device.global_status` | `GLOBAL_STATUS` (§2) | `0x0038` |
+| `att1_aimu_device.global_error` | `ERROR_STATUS` (§9) | `0x0030` |
+| `att1_aimu_device.tile_count` | `TILE_COUNT` (§2) | `0x000C` |
+| `att1_aimu_tile_info.memory_capacity_bytes` | `TILE_MEMORY_CAPACITY_LOW/HIGH` (§3) | `0x8000 + N×0x800 + 0x0008/0x000C` |
+| `att1_aimu_tile_info.kv_capacity_bytes` | `TILE_KV_CAPACITY_LOW/HIGH` (§3) | `0x8000 + N×0x800 + 0x0010/0x0014` |
+| `att1_aimu_tile_info.supported_dtypes` | `SUPPORTED_DTYPES` (§3) | `0x8000 + N×0x800 + 0x0020` |
+| `att1_aimu_tile_info.supported_ops` | `SUPPORTED_OPS_LOW` (§3) | `0x8000 + N×0x800 + 0x0024` |
+| `att1_aimu_tile_info.state` | `TILE_STATUS` (§3) | `0x8000 + N×0x800 + 0x0000` |
+| `att1_aimu_tile_info.fabric_link_mask` | `FABRIC_LINK_MASK` (§3) | `0x8000 + N×0x800 + 0x0028` |
+| `att1_aimu_tile_info.max_sessions` | `MAX_SESSIONS` (§3) | `0x8000 + N×0x800 + 0x002C` |
+| `att1_aimu_tile_info.memory_used_bytes` | `TILE_MEMORY_USED_LOW/HIGH` (§3) | `0x8000 + N×0x800 + 0x0030/0x0034` |
+| `att1_aimu_tile_info.kv_used_bytes` | `TILE_KV_USED_LOW/HIGH` (§3) | `0x8000 + N×0x800 + 0x0038/0x003C` |
+| `att1_aimu_tile_info.error_code` | `TILE_ERROR_CODE` (§3) | `0x8000 + N×0x800 + 0x0004` |
+| `att1_aimu_tile_info.reset_count` | `TILE_RESET_COUNT` (§3) | `0x8000 + N×0x800 + 0x0040` |
+
+### 14.2 API Reference
+
+```c
+/* Lifecycle */
+att1_status_t att1_aimu_device_create(const att1_aimu_device_config *cfg,
+                                      att1_aimu_device **out);
+void          att1_aimu_device_destroy(att1_aimu_device *dev);
+
+/* Query */
+att1_status_t att1_aimu_device_query_info(const att1_aimu_device *dev,
+                                           att1_aimu_device_info *out);
+size_t        att1_aimu_device_tile_count(const att1_aimu_device *dev);
+att1_status_t att1_aimu_device_query_tile(const att1_aimu_device *dev,
+                                           size_t tile_id,
+                                           att1_aimu_tile_info *out);
+att1_status_t att1_aimu_device_validate_tile_id(const att1_aimu_device *dev,
+                                                 size_t tile_id);
+
+/* Capability checks */
+int           att1_aimu_device_supports_dtype(const att1_aimu_device *dev,
+                                               uint32_t dtype_bit);
+int           att1_aimu_device_supports_op(const att1_aimu_device *dev,
+                                            uint32_t op_bit);
+int           att1_aimu_device_tile_supports_dtype(const att1_aimu_device *dev,
+                                                    size_t tile_id,
+                                                    uint32_t dtype_bit);
+int           att1_aimu_device_tile_supports_op(const att1_aimu_device *dev,
+                                                 size_t tile_id,
+                                                 uint32_t op_bit);
+
+/* Reset */
+att1_status_t att1_aimu_device_reset(att1_aimu_device *dev);
+att1_status_t att1_aimu_device_reset_tile(att1_aimu_device *dev, size_t tile_id);
+
+/* Command-queue integration */
+att1_status_t att1_aimu_device_attach_cmdq(att1_aimu_device *dev,
+                                            att1_aimu_cmdq *cmdq);
+att1_status_t att1_aimu_device_snapshot_counters(const att1_aimu_device *dev,
+                                                  att1_aimu_cmdq_counters *out);
+
+/* Name helpers */
+const char *att1_aimu_dtype_name(uint32_t dtype_bit);
+const char *att1_aimu_op_name(uint32_t op_bit);
+const char *att1_aimu_feat_name(uint64_t feat_bit);
+const char *att1_aimu_tile_state_name(att1_aimu_tile_state state);
+```
+
+### 14.3 Using Device Capabilities for Placement Validation
+
+Future placement logic (M98–M102) can query the simulated device to validate a
+proposed tensor/session placement before issuing commands:
+
+```c
+/* Check that all tiles can handle the required dtype. */
+if (!att1_aimu_device_supports_dtype(dev, ATT1_AIMU_DTYPE_Q8)) { ... }
+
+/* Check that a specific tile has enough memory for the weight tensor. */
+att1_aimu_tile_info tile;
+att1_aimu_device_query_tile(dev, target_tile, &tile);
+if (tile.memory_capacity_bytes - tile.memory_used_bytes < required_bytes) { ... }
+
+/* Check that the target tile supports the required ops. */
+if (!att1_aimu_device_tile_supports_op(dev, target_tile, ATT1_AIMU_OP_ATTENTION)) { ... }
+```
 
 ---
 
