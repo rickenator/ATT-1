@@ -76,7 +76,7 @@ SIZE_OBJS := $(BUILD_DIR)/tools/att1-size.o $(COMMON_OBJS)
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test bak restore
+.PHONY: all clean test test-verbose bak restore
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -111,6 +111,12 @@ $(BUILD_DIR)/%.o: %.c
 
 test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
+		./$$test_bin || exit $$?; \
+	done
+
+test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TEST_BINS)
+	@for test_bin in $(TEST_BINS); do \
+		printf '\n=== %s ===\n' "$$test_bin"; \
 		./$$test_bin || exit $$?; \
 	done
 
