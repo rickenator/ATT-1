@@ -849,3 +849,74 @@ for M103 before hardware is available.
 - No change to the KV-MMU paged-memory protocol (`att1_kv_mmu.h`).
 - No power or thermal modeling.
 - No physical layer (electrical/optical interconnect) specification.
+
+---
+
+## 10. AIMU/PCIe Command Packet Requirements (M103)
+
+See [`docs/aimu_pcie_command_requirements.md`](aimu_pcie_command_requirements.md)
+for the full M103 specification.
+
+### 10.1 Summary
+
+M103 defines the binary command packet format and control protocol for the
+PCIe/AIMU prototype.  It extends the M97 tensor-level placement model into
+a concrete host↔AIMU communication layer.
+
+Key deliverables:
+
+| M103 section | Deliverable |
+|---|---|
+| §2 | Host/AIMU control plane: device discovery, tile enumeration, feature flags |
+| §3 | 64-byte command packet format (checksum, fence, dtype, op_params) |
+| §4 | 15 required command types (LOAD_TENSOR_TILE through QUERY_COUNTERS) |
+| §5 | Data movement model: weight-load DMA once, logit-only PCIe in hot path |
+| §6 | Memory model: tensor/KV/staging/command/trace regions, alignment rules |
+| §7 | Execution model: command lifecycle, fences, barriers, error propagation |
+| §8 | Counter/trace format: 64-byte snapshot mirroring `att1_trace_t` fields |
+| §9 | Relationship to M98–M102 placement reports |
+| §10 | Prototype options A–D (software simulator → FPGA → ASIC) |
+| §12 | Future milestone split: M104–M110 |
+
+### 10.2 Command Types (Summary)
+
+| `command_type` | Value | Purpose |
+|---|---|---|
+| `LOAD_TENSOR_TILE` | 0x01 | DMA tensor slab from host to tile local memory |
+| `VALIDATE_TENSOR_TILE` | 0x02 | Verify CRC32 of resident tensor |
+| `EXEC_MATMUL` | 0x10 | Local matrix-multiply (weight × activation) |
+| `EXEC_RMSNORM` | 0x11 | Local RMSNorm |
+| `EXEC_ROPE` | 0x12 | Local Rotary Position Embedding |
+| `EXEC_ATTENTION` | 0x13 | Local causal self-attention |
+| `EXEC_FFN` | 0x14 | Local FFN/SwiGLU |
+| `KV_APPEND` | 0x20 | Append K/V pair to tile KV cache |
+| `KV_READ` | 0x21 | Read K/V slice from tile KV cache |
+| `FABRIC_SEND` | 0x30 | Route activation to peer tile(s) |
+| `FABRIC_REDUCE` | 0x31 | Accumulate partial results across tiles |
+| `TRACE_SNAPSHOT` | 0x40 | Write counter record to trace memory |
+| `TILE_BARRIER` | 0x41 | Cross-tile synchronization barrier |
+| `RESET_TILE` | 0x50 | Clear session state, tensors, counters |
+| `QUERY_COUNTERS` | 0x51 | DMA performance counters to host |
+
+### 10.3 PCIe Hot-Path Rule
+
+During steady-state decode, PCIe carries **only**:
+1. Next-token ID (4 bytes, host → AIMU staging buffer)
+2. Control command packets (64 bytes each, host → command ring)
+3. Output logit vector (`vocab_size × 4` bytes, AIMU → host)
+
+Weight matrices, KV updates, and inter-tile activations never cross the
+PCIe bus during inference.  This is the hardware realization of the ATT-1
+near-memory execution principle.
+
+### 10.4 Relationship to the ATT-1 Simulator
+
+| ATT-1 simulator concept | PCIe/AIMU M103 command |
+|---|---|
+| `att1_shard_t` initialization | `LOAD_TENSOR_TILE` per shard |
+| `att1_transformer_block_forward` | `EXEC_RMSNORM` → `EXEC_ATTENTION` → `EXEC_FFN` per tile |
+| `att1_kv_cache_append` | `KV_APPEND` |
+| `att1_fabric_send` | `FABRIC_SEND` |
+| `att1_fabric_barrier` | `TILE_BARRIER` |
+| `att1_trace_snapshot` | `TRACE_SNAPSHOT` |
+| `check_placement_*_smoke()` tests | Placement-report-to-command-plan mapper (M109) |
