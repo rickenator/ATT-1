@@ -662,3 +662,39 @@ att1_infer_set_backend(infer, cuda_backend);  /* swap; triggers q4 prep   */
 
 `att1_cluster_infer_create_q4` does not accept "cuda-q4".  CUDA q4 cluster
 inference is Milestone 89.
+
+## Milestone 89: CUDA q4 cluster inference
+
+`--backend cuda-q4 --mode cluster` now exits zero on a CUDA-capable host.
+
+### Implementation
+
+- `cluster_backend_is_q4()` in `src/cluster_infer.c` extended to accept
+  "cuda-q4" in addition to "cpu-q4".  This enables `use_q4 = 1` in the decode
+  loop and causes `att1_cluster_infer_set_backend` to call `cluster_prepare_q4`
+  when swapping to cuda-q4 (idempotent; releases and reloads q4 views).
+- `cluster_matmul_q4()` static helper added: dispatches output-projection
+  matmul through `backend->ops->matmul_q4xf32` when non-NULL, with CPU fallback.
+- Output projection in `att1_cluster_infer_decode_token` routed through
+  `cluster_matmul_q4` (same vtable-or-fallback pattern as M88).
+- `att1-bench` `run_cluster` and `run_cluster_external`:
+  - cuda-q4 early-rejection blocks removed.
+  - `is_q4` check extended to include "cuda-q4".
+  - After `att1_cluster_infer_create_q4`, a cuda-q4 backend-swap block calls
+    `att1_cluster_infer_set_backend` when `backend_name == "cuda-q4"`.
+  - Error messages generalised from "cpu-q4" to "q4".
+- `tests/test_cuda_cluster_infer_q4.c`: 4 tests (no-silent-fallback, fabric
+  counters nonzero, logits match cpu-q4 cluster within `Q4_LOGIT_TOL=0.35f`,
+  generated tokens identical to cpu-q4 cluster).  Skipped on CPU-only builds.
+- `test_q4_bench.c` extended with `test_q4_bench_cuda_q4_cluster_status`:
+  cluster mode with `--tiles 2 --backend cuda-q4`; same CUDA-conditional logic
+  as the single-mode check.
+
+### Pattern: cuda-q4 cluster inference
+
+```c
+att1_cluster_infer_create_q4(model, &cfg, &infer);  /* load q4 weights (cpu-q4) */
+att1_backend_cuda_q4_create(&cuda_backend);         /* create cuda-q4 backend   */
+att1_cluster_infer_set_backend(infer, cuda_backend);/* swap; triggers q4 prep   */
+/* cuda_backend now owned by infer */
+```

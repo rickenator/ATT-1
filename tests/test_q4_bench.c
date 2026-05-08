@@ -250,7 +250,76 @@ static int test_q4_bench_cuda_q4_status(void)
     return 0;
 }
 
-/* Test 4: cpu-f32 on dummy model still works (regression guard). */
+/* Test 4 (M89): --backend cuda-q4 cluster mode.
+ * Succeeds when CUDA is available; fails clearly when CUDA is unavailable. */
+static int test_q4_bench_cuda_q4_cluster_status(void)
+{
+    int exit_code = 0;
+    char output[4096];
+
+    exit_code = system("./build/att1-bench"
+                       " --model " Q4_MODEL
+                       " --prompt " Q4_PROMPT
+                       " --tokens " Q4_TOKENS
+                       " --mode cluster"
+                       " --tiles 2"
+                       " --backend cuda-q4"
+                       " > build/q4bench_cudaq4_cluster.txt 2>&1");
+
+    if (att1_backend_cuda_available()) {
+        /* CUDA present: cluster cuda-q4 must succeed. */
+        if (exit_code != 0) {
+            if (read_file("build/q4bench_cudaq4_cluster.txt", output,
+                          sizeof(output)) == 0) {
+                fputs(output, stderr);
+            }
+            fputs("FAIL: cuda-q4 cluster bench should have exited zero with CUDA available\n",
+                  stderr);
+            return -1;
+        }
+        if (read_file("build/q4bench_cudaq4_cluster.txt", output,
+                      sizeof(output)) == 0) {
+            if (strstr(output, "backend=cuda-q4") == NULL) {
+                fputs("FAIL: cuda-q4 cluster bench output missing 'backend=cuda-q4'\n",
+                      stderr);
+                return -1;
+            }
+            if (strstr(output, "fabric_packets_sent=") != NULL) {
+                uint64_t packets = 0u;
+
+                if ((parse_u64_line(output, "fabric_packets_sent", &packets) == 0) &&
+                    (packets == 0u)) {
+                    fputs("FAIL: cuda-q4 cluster bench fabric_packets_sent is zero\n",
+                          stderr);
+                    return -1;
+                }
+            }
+        }
+        fputs("PASS: cuda-q4 backend bench cluster exits zero\n", stderr);
+    } else {
+        /* No CUDA: must exit non-zero with a clear error message. */
+        if (exit_code == 0) {
+            fputs("FAIL: cuda-q4 cluster bench should have exited non-zero without CUDA\n",
+                  stderr);
+            return -1;
+        }
+        if (read_file("build/q4bench_cudaq4_cluster.txt", output,
+                      sizeof(output)) == 0) {
+            if (strstr(output, "not supported") == NULL &&
+                strstr(output, "unsupported") == NULL &&
+                strstr(output, "error") == NULL &&
+                strstr(output, "unavailable") == NULL) {
+                fputs("FAIL: cuda-q4 cluster bench output has no error indication\n",
+                      stderr);
+                return -1;
+            }
+        }
+        fputs("PASS: cuda-q4 cluster backend fails clearly as unsupported\n", stderr);
+    }
+    return 0;
+}
+
+/* Test 5: cpu-f32 on dummy model still works (regression guard). */
 static int test_q4_bench_f32_path_unchanged(void)
 {
     if (run_command("./build/att1-bench"
@@ -272,10 +341,11 @@ int main(void)
 {
     int failures = 0;
 
-    failures += (test_q4_bench_single_exits_zero()   != 0) ? 1 : 0;
-    failures += (test_q4_bench_cluster_exits_zero()  != 0) ? 1 : 0;
-    failures += (test_q4_bench_cuda_q4_status()      != 0) ? 1 : 0;
-    failures += (test_q4_bench_f32_path_unchanged()  != 0) ? 1 : 0;
+    failures += (test_q4_bench_single_exits_zero()        != 0) ? 1 : 0;
+    failures += (test_q4_bench_cluster_exits_zero()       != 0) ? 1 : 0;
+    failures += (test_q4_bench_cuda_q4_status()           != 0) ? 1 : 0;
+    failures += (test_q4_bench_cuda_q4_cluster_status()   != 0) ? 1 : 0;
+    failures += (test_q4_bench_f32_path_unchanged()       != 0) ? 1 : 0;
 
     return (failures > 0) ? 1 : 0;
 }

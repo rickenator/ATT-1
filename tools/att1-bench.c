@@ -378,12 +378,8 @@ static int run_cluster_external(const att1_model      *model,
     size_t capacity = 0u;
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
-                (strcmp(backend_name, "cpu-q4") == 0);
-
-    if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
-        fputs("error: cuda-q4 cluster inference not supported\n", stderr);
-        return 1;
-    }
+                ((strcmp(backend_name, "cpu-q4") == 0) ||
+                 (strcmp(backend_name, "cuda-q4") == 0));
 
     if (ext_count >= (size_t)model->config.max_seq_len) {
         fputs("error: external token count fills or exceeds model max_seq_len\n",
@@ -419,12 +415,24 @@ static int run_cluster_external(const att1_model      *model,
     if (is_q4) {
         if (att1_cluster_infer_create_q4(model, &config, &infer) != ATT1_OK) {
             if (shard_plan_mode == ATT1_SHARD_PLAN_METADATA) {
-                fputs("error: metadata shard plan not supported with cpu-q4\n",
+                fputs("error: metadata shard plan not supported with q4\n",
                       stderr);
             } else {
-                fputs("error: cpu-q4 cluster create failed\n", stderr);
+                fputs("error: q4 cluster create failed\n", stderr);
             }
             goto cleanup;
+        }
+        if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
+            if (create_backend("cuda-q4", &backend) != ATT1_OK) {
+                fputs("error: cuda-q4 backend unavailable\n", stderr);
+                goto cleanup;
+            }
+            if (att1_cluster_infer_set_backend(infer, backend) != ATT1_OK) {
+                att1_backend_destroy(backend);
+                backend = NULL;
+                goto cleanup;
+            }
+            backend = NULL;
         }
     } else {
         if (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK) {
@@ -606,12 +614,8 @@ static int run_cluster(const att1_model *model,
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
-                (strcmp(backend_name, "cpu-q4") == 0);
-
-    if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
-        fputs("error: cuda-q4 cluster inference not supported\n", stderr);
-        return 1;
-    }
+                ((strcmp(backend_name, "cpu-q4") == 0) ||
+                 (strcmp(backend_name, "cuda-q4") == 0));
 
     if (!is_q4 && (backend_name != NULL)) {
         if (create_backend(backend_name, &backend) != ATT1_OK) {
@@ -637,12 +641,24 @@ static int run_cluster(const att1_model *model,
     if (is_q4) {
         if (att1_cluster_infer_create_q4(model, &config, &infer) != ATT1_OK) {
             if (shard_plan_mode == ATT1_SHARD_PLAN_METADATA) {
-                fputs("error: metadata shard plan not supported with cpu-q4\n",
+                fputs("error: metadata shard plan not supported with q4\n",
                       stderr);
             } else {
-                fputs("error: cpu-q4 cluster create failed\n", stderr);
+                fputs("error: q4 cluster create failed\n", stderr);
             }
             goto cleanup;
+        }
+        if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
+            if (create_backend("cuda-q4", &backend) != ATT1_OK) {
+                fputs("error: cuda-q4 backend unavailable\n", stderr);
+                goto cleanup;
+            }
+            if (att1_cluster_infer_set_backend(infer, backend) != ATT1_OK) {
+                att1_backend_destroy(backend);
+                backend = NULL;
+                goto cleanup;
+            }
+            backend = NULL;
         }
     } else {
         if (att1_cluster_infer_create(model, &config, &infer) != ATT1_OK) {
