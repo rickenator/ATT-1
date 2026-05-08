@@ -406,12 +406,12 @@ static int check_backend_identity(void)
         return -1;
     }
 
-    /* Inference ops must be NULL — cuda-q4 is matmul-only */
-    if ((backend->ops->rmsnorm_f32 != NULL) ||
-        (backend->ops->softmax_f32 != NULL) ||
-        (backend->ops->rope_f32 != NULL) ||
-        (backend->ops->ffn_swiglu_f32 != NULL)) {
-        fputs("identity: inference ops should be NULL on cuda-q4\n", stderr);
+    /* M88: inference ops must be populated — cuda-q4 is a full inference backend */
+    if ((backend->ops->rmsnorm_f32 == NULL) ||
+        (backend->ops->softmax_f32 == NULL) ||
+        (backend->ops->rope_f32 == NULL) ||
+        (backend->ops->ffn_swiglu_f32 == NULL)) {
+        fputs("identity: inference ops should be non-NULL on cuda-q4 (M88)\n", stderr);
         att1_backend_destroy(backend);
         return -1;
     }
