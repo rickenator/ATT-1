@@ -91,6 +91,7 @@ static const att1_backend_ops cpu_q8_ops = {
     cpu_q8_sync,
     cpu_q8_matmul_f32,
     cpu_q8_matmul_q8xf32,
+    NULL, /* matmul_q4xf32 not supported on cpu-q8 */
     cpu_q8_rmsnorm_f32,
     cpu_q8_softmax_f32,
     cpu_q8_rope_f32,

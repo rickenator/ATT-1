@@ -90,6 +90,7 @@ static const att1_backend_ops cpu_q4_ops = {
     cpu_q4_sync,
     cpu_q4_matmul_f32,
     NULL,                   /* matmul_q8xf32: not supported; NULL prevents silent q8 fallback */
+    NULL,                   /* matmul_q4xf32: q4 inference calls att1_matmul_q4xf32 directly */
     cpu_q4_rmsnorm_f32,
     cpu_q4_softmax_f32,
     cpu_q4_rope_f32,

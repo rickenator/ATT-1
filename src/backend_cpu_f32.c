@@ -96,6 +96,7 @@ static const att1_backend_ops cpu_f32_ops = {
     cpu_f32_sync,
     cpu_f32_matmul_f32,
     cpu_f32_matmul_q8xf32,
+    NULL, /* matmul_q4xf32 not supported on cpu-f32 */
     cpu_f32_rmsnorm_f32,
     cpu_f32_softmax_f32,
     cpu_f32_rope_f32,

@@ -112,6 +112,7 @@ static const att1_backend_ops fake_cpu_q8_ops = {
     fake_q8_sync,
     fake_q8_matmul_f32,
     fake_q8_matmul_q8xf32,
+    NULL, /* matmul_q4xf32 */
     fake_q8_rmsnorm_f32,
     fake_q8_softmax_f32,
     fake_q8_rope_f32,
@@ -125,6 +126,7 @@ static const att1_backend_ops fake_cpu_q8_unsupported_ops = {
     fake_q8_sync,
     fake_q8_matmul_f32,
     NULL,
+    NULL, /* matmul_q4xf32 */
     fake_q8_rmsnorm_f32,
     fake_q8_softmax_f32,
     fake_q8_rope_f32,

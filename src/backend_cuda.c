@@ -266,6 +266,97 @@ static int cuda_backend_matmul_q8xf32(att1_backend *backend,
 #endif
 }
 
+static int cuda_backend_matmul_q4xf32(att1_backend *backend,
+                                      float *dst,
+                                      const float *lhs,
+                                      size_t lhs_rows,
+                                      size_t lhs_cols,
+                                      const att1_q4_matrix *weights)
+{
+#ifdef ATT1_ENABLE_CUDA
+    float *dequant_rhs = NULL;
+    size_t row = 0u;
+    size_t grp = 0u;
+    size_t col = 0u;
+    size_t groups_per_row = 0u;
+    int status = -1;
+
+    if ((backend == NULL) || (backend->user_data == NULL) ||
+        (dst == NULL) || (lhs == NULL) || (weights == NULL) ||
+        (weights->packed == NULL) || (weights->scales == NULL)) {
+        return -1;
+    }
+    if ((lhs_rows == 0u) || (lhs_cols == 0u) ||
+        (weights->rows == 0u) || (weights->cols == 0u) ||
+        (lhs_cols != weights->cols) || (weights->group_size == 0u) ||
+        ((weights->cols % (size_t)weights->group_size) != 0u)) {
+        return -1;
+    }
+    if (weights->cols > ((size_t)-1) / weights->rows) {
+        return -1;
+    }
+
+    groups_per_row = weights->cols / (size_t)weights->group_size;
+
+    dequant_rhs = malloc(weights->cols * weights->rows * sizeof(*dequant_rhs));
+    if (dequant_rhs == NULL) {
+        return -1;
+    }
+
+    /* Dequantize q4 weights into transposed column-major layout for
+     * cublasSgemm, mirroring the q8 approach. Each group of group_size
+     * packed nibbles is expanded to float32 values and stored at
+     * dequant_rhs[col * weights->rows + row]. */
+    for (row = 0u; row < weights->rows; row++) {
+        const float *row_scales = &weights->scales[row * groups_per_row];
+        const uint8_t *row_packed =
+            &weights->packed[(row * weights->cols) / 2u];
+
+        for (grp = 0u; grp < groups_per_row; grp++) {
+            const float scale = row_scales[grp];
+            const uint8_t *grp_packed =
+                row_packed + (grp * (size_t)weights->group_size) / 2u;
+
+            for (col = 0u; col < (size_t)weights->group_size; col += 2u) {
+                const size_t abs_col = grp * (size_t)weights->group_size + col;
+                const uint8_t byte = grp_packed[col / 2u];
+                int8_t v0 = (int8_t)(byte & 0x0Fu);
+                int8_t v1 = (int8_t)((byte >> 4u) & 0x0Fu);
+
+                /* Sign-extend 4-bit signed values [-7, 7] */
+                if (v0 > 7) { v0 = (int8_t)(v0 - 16); }
+                if (v1 > 7) { v1 = (int8_t)(v1 - 16); }
+
+                /* Transposed: column-major layout for cublasSgemm */
+                dequant_rhs[abs_col * weights->rows + row] =
+                    (float)v0 * scale;
+                dequant_rhs[(abs_col + 1u) * weights->rows + row] =
+                    (float)v1 * scale;
+            }
+        }
+    }
+
+    status = cuda_backend_matmul_f32(backend,
+                                     dst,
+                                     lhs,
+                                     dequant_rhs,
+                                     lhs_rows,
+                                     weights->rows,
+                                     lhs_cols);
+
+    free(dequant_rhs);
+    return status;
+#else
+    (void)backend;
+    (void)dst;
+    (void)lhs;
+    (void)lhs_rows;
+    (void)lhs_cols;
+    (void)weights;
+    return -1;
+#endif
+}
+
 static int cuda_backend_rmsnorm_f32(att1_backend *backend,
                                     float *dst,
                                     const float *src,
@@ -614,6 +705,7 @@ static const att1_backend_ops cuda_backend_ops = {
     cuda_backend_sync,
     cuda_backend_matmul_f32,
     cuda_backend_matmul_q8xf32,
+    NULL, /* matmul_q4xf32: use cuda-q4 backend */
     cuda_backend_rmsnorm_f32,
     cuda_backend_softmax_f32,
     cuda_backend_rope_f32,
@@ -627,12 +719,28 @@ static const att1_backend_ops cuda_q8_backend_ops = {
     cuda_backend_sync,
     cuda_backend_matmul_f32,
     cuda_backend_matmul_q8xf32,
+    NULL, /* matmul_q4xf32: not supported on cuda-q8 */
     cuda_backend_rmsnorm_f32,
     cuda_backend_softmax_f32,
     cuda_backend_rope_f32,
     cuda_backend_ffn_swiglu_f32
 };
-
+/* M87: cuda-q4 backend — matmul_q4xf32 only; all inference ops NULL to
+ * prevent accidental use for full inference before CUDA q4 inference is
+ * implemented. */
+static const att1_backend_ops cuda_q4_backend_ops = {
+    "cuda-q4",
+    cuda_backend_alloc,
+    cuda_backend_free,
+    cuda_backend_sync,
+    cuda_backend_matmul_f32,
+    NULL, /* matmul_q8xf32: not supported on cuda-q4 */
+    cuda_backend_matmul_q4xf32,
+    NULL, /* rmsnorm_f32: cuda-q4 is matmul-only */
+    NULL, /* softmax_f32: cuda-q4 is matmul-only */
+    NULL, /* rope_f32: cuda-q4 is matmul-only */
+    NULL  /* ffn_swiglu_f32: cuda-q4 is matmul-only */
+};
 int att1_backend_cuda_available(void)
 {
 #ifdef ATT1_ENABLE_CUDA
@@ -693,6 +801,11 @@ att1_status_t att1_backend_cuda_q8_create(att1_backend **out_backend)
     return cuda_backend_create_with_ops(out_backend, &cuda_q8_backend_ops);
 }
 
+att1_status_t att1_backend_cuda_q4_create(att1_backend **out_backend)
+{
+    return cuda_backend_create_with_ops(out_backend, &cuda_q4_backend_ops);
+}
+
 att1_status_t att1_backend_cuda_copy_host_to_device(att1_backend *backend,
                                                     void *device_dst,
                                                     const void *host_src,
@@ -705,7 +818,8 @@ att1_status_t att1_backend_cuda_copy_host_to_device(att1_backend *backend,
 
 #ifdef ATT1_ENABLE_CUDA
     if ((backend->ops != &cuda_backend_ops) &&
-        (backend->ops != &cuda_q8_backend_ops)) {
+        (backend->ops != &cuda_q8_backend_ops) &&
+        (backend->ops != &cuda_q4_backend_ops)) {
         return ATT1_ERR_INVALID_ARG;
     }
 
@@ -732,7 +846,8 @@ att1_status_t att1_backend_cuda_copy_device_to_host(att1_backend *backend,
 
 #ifdef ATT1_ENABLE_CUDA
     if ((backend->ops != &cuda_backend_ops) &&
-        (backend->ops != &cuda_q8_backend_ops)) {
+        (backend->ops != &cuda_q8_backend_ops) &&
+        (backend->ops != &cuda_q4_backend_ops)) {
         return ATT1_ERR_INVALID_ARG;
     }
 

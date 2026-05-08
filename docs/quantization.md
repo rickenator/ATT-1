@@ -1403,6 +1403,48 @@ CUDA q4 kernel design and integration remain deferred to a future milestone.
 
 ---
 
+## CUDA q4 matmul prototype (M87)
+
+### Overview
+
+M87 adds `cuda_backend_matmul_q4xf32()` to the CUDA backend — a
+dequantize-on-CPU-then-cuBLAS approach identical in structure to the existing
+`cuda_backend_matmul_q8xf32()`.  This gives a CUDA-backed q4xf32 matmul with
+the CPU q4 reference as the correctness baseline, without requiring a custom
+CUDA kernel.
+
+### What was implemented
+
+- `int (*matmul_q4xf32)(...)` slot added to `att1_backend_ops`.
+- `cuda_backend_matmul_q4xf32()` in `src/backend_cuda.c`: for each weight row,
+  unpacks all groups (low nibble = even index, high nibble = odd index),
+  sign-extends 4-bit values to `int8_t`, multiplies by per-group float32
+  scale, stores in transposed column-major layout for `cublasSgemm`, then
+  delegates to `cuda_backend_matmul_f32()`.
+- New `cuda_q4_backend_ops` ("cuda-q4"): `matmul_q4xf32` filled in; all
+  inference ops (`rmsnorm_f32`, `softmax_f32`, `rope_f32`, `ffn_swiglu_f32`)
+  set to `NULL` to prevent accidental use for full inference.
+- `att1_backend_cuda_q4_create()` exported.
+- All CPU backends (`cpu-f32`, `cpu-q8`, `cpu-q4`) set `matmul_q4xf32=NULL`;
+  q4 inference still calls `att1_matmul_q4xf32()` directly.
+- `tests/test_cuda_matmul_q4.c` (8 test cases); non-CUDA builds skip CUDA
+  paths and verify `ATT1_ERR_UNSUPPORTED` on create.
+
+### Tolerance
+
+| Comparison | Tolerance |
+|------------|-----------|
+| CUDA q4 vs CPU q4 | `1e-4f` (same dequant path, f32 rounding only) |
+| CPU q4 vs CPU f32 | `0.35f` (`Q4_TOLERANCE`) |
+
+### Non-goals for M87
+
+- No CUDA q4 inference wiring (`att1_infer_create_q4` unchanged).
+- No custom CUDA dequantize kernel; dequantization runs on CPU.
+- `att1-bench --backend cuda-q4` still fails until M88.
+
+---
+
 ## CUDA q4 implementation plan (M86)
 
 ### Overview

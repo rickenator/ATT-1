@@ -30,6 +30,13 @@ typedef struct att1_backend_ops {
                          size_t lhs_cols,
                          const att1_q8_matrix *weights);
 
+    int (*matmul_q4xf32)(att1_backend *backend,
+                         float *dst,
+                         const float *lhs,
+                         size_t lhs_rows,
+                         size_t lhs_cols,
+                         const att1_q4_matrix *weights);
+
     int (*rmsnorm_f32)(att1_backend *backend,
                        float *dst,
                        const float *src,
@@ -65,6 +72,7 @@ att1_status_t att1_backend_cpu_q4_create(att1_backend **out_backend);
 int att1_backend_cuda_available(void);
 att1_status_t att1_backend_cuda_create(att1_backend **out_backend);
 att1_status_t att1_backend_cuda_q8_create(att1_backend **out_backend);
+att1_status_t att1_backend_cuda_q4_create(att1_backend **out_backend);
 att1_status_t att1_backend_cuda_copy_host_to_device(att1_backend *backend,
                                                     void *device_dst,
                                                     const void *host_src,

@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 86: CUDA q4 implementation plan (complete).
+Milestone 87: CUDA q4 matmul prototype (complete).
 
 ## Active Task
 
-Prepare Milestone 87: CUDA q4 matmul prototype.
+Prepare Milestone 88: CUDA q4 single-tile inference.
 
 ## Hard Rules
 
@@ -111,31 +111,28 @@ Prepare Milestone 87: CUDA q4 matmul prototype.
 - Milestone 84: public-model q4 source comparison report — `--att1-q4` and `--q4-tol` flags in `compare_att1_to_source.py`; q4 decode support in `compiler/read_att1.py`; q4 source comparison smoke test.
 - Milestone 85: public-model q4 backend smoke validation — `compiler/validate_public_q4_backends.py` added; cpu-q4 single/cluster validated; cuda-q4 explicitly unsupported; q4 backend smoke test (3 parts).
 - Milestone 86: CUDA q4 implementation plan — documentation-only; Option A/B/C design choices in `docs/quantization.md`; M87–M90 milestone split in `docs/cuda_backend.md`; no C or Makefile change.
+- Milestone 87: CUDA q4 matmul prototype — `cuda_backend_matmul_q4xf32()` (dequantize-on-CPU then cuBLAS); `cuda_q4_backend_ops` ("cuda-q4"); `att1_backend_cuda_q4_create()`; `matmul_q4xf32` slot in `att1_backend_ops`; all CPU backends updated to NULL; `tests/test_cuda_matmul_q4.c` (8 cases); 46 tests pass.
 
 ## Next Prompt for Codex
 
-Implement Milestone 87 only: CUDA q4 matmul prototype.
+Implement Milestone 88 only: CUDA q4 single-tile inference.
 
 Goal:
-Add CUDA-backed q4xf32 matmul behind the backend API, using CPU q4xf32 as the correctness reference.
+Wire the cuda-q4 backend into `att1_infer_create_q4()` so that single-tile
+decode runs on CUDA when a "cuda-q4" backend is provided.  Use the existing
+CPU q4 single-tile inference path as the correctness reference.
 
 Requirements:
 - Runtime remains C11.
 - Default make/make test must remain CPU-only and CUDA-free.
 - CUDA remains opt-in with make CUDA=1.
-- Do not implement CUDA q4 inference yet.
-- Do not implement CUDA q4 cluster.
+- Do not implement CUDA q4 cluster inference yet.
 - Do not change .att1 binary format.
 - Do not change CPU q4 behavior.
-- Do not change f32/q8 behavior.
-- Use existing q4 wire format:
-  - group_size
-  - signed int4 range
-  - low-nibble even index / high-nibble odd index
-  - per-group f32 scales
-- Add CUDA q4xf32 matmul support only.
-- Compare CUDA q4xf32 output against CPU q4xf32 within documented tolerance.
-- CUDA q4 selected paths must not silently fall back to CPU q4, q8, or f32.
+- Do not change f32/q8/cuda-f32/cuda-q8 behavior.
+- `att1_infer_create_q4()` must accept a "cuda-q4" backend.
+- `att1-bench --backend cuda-q4 --mode single` must exit zero.
+- CUDA q4 logits must match CPU q4 within Q4_TOLERANCE=0.35f.
 - Update docs/quantization.md.
 - Update docs/cuda_backend.md.
 - Update docs/OPERATION_LOG.md.

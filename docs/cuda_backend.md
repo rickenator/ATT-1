@@ -590,3 +590,34 @@ nibble split and signed `[-7, 7]` range directly.
 | M88 | CUDA q4 single-tile inference; `--backend cuda-q4 --mode single` exits zero |
 | M89 | CUDA q4 cluster inference; `--backend cuda-q4 --mode cluster` exits zero |
 | M90 | Backend matrix + `validate_public_q4_backends.py --include-cuda` pass for cuda-q4 |
+
+## Milestone 87: CUDA q4 matmul prototype
+
+`cuda_backend_matmul_q4xf32()` implemented using the
+pre-dequantize-on-CPU-then-cuBLAS approach (Option B from M86 plan).
+
+### Implementation
+
+- Dequantizes the entire weight matrix to float32 on the CPU before the cuBLAS
+  call.  For each weight row, iterates over groups of `group_size` packed
+  nibbles: low nibble = even column index, high nibble = odd column index.
+  Sign-extends 4-bit values from `[0,15]` to signed `[-7,7]` by subtracting 16
+  when the nibble value > 7.  Multiplies by the per-group float32 scale.
+- Stores the result in **transposed column-major** layout
+  (`dequant_rhs[col * rows + row]`) matching the `cublasSgemm` column-major
+  convention used by the existing q8 path.
+- Delegates to `cuda_backend_matmul_f32()` for the cuBLAS SGEMM call.
+- `cuda_q4_backend_ops` ("cuda-q4"): `matmul_q4xf32` populated; all inference
+  ops (`rmsnorm_f32`, `softmax_f32`, `rope_f32`, `ffn_swiglu_f32`) set to NULL
+  to prevent accidental use for full inference before M88.
+- `att1_backend_cuda_q4_create()` exported.
+
+### Tolerance
+
+CUDA q4 vs CPU q4: `1e-4f` (identical dequant algorithm, f32 arithmetic
+rounding only).  CPU q4 vs CPU f32: `0.35f` (quantisation loss).
+
+### Deferred
+
+Custom CUDA dequantize-on-the-fly kernel deferred to a future milestone.
+Inference wiring (`att1_infer_create_q4` CUDA path) deferred to M88.
