@@ -3557,6 +3557,164 @@ static int check_placement_proposal_smoke(void)
     return 0;
 }
 
+/*
+ * check_placement_scenarios_smoke() — M102
+ *
+ * Python-skippable.  Exercises compiler/propose_tensor_scenarios.py with
+ * eight scenarios:
+ *
+ *   1. Valid fixture → exit 0; output contains "PASS" capacity status.
+ *   2. Generate gpt-oss q4 8-tile 16 GiB report via att1-size → exit 0.
+ *   3. Scenario tool on gpt-oss 16 GiB report → exit 0 (32/64/128 GiB
+ *      SKUs provide PASS scenarios in the default tile-memory-gib list).
+ *   4. Comma-separated list parsing works: --tile-memory-gib 16,32,64
+ *      --tile-count 1,2,4 → exit 0.
+ *   5. Invalid tile memory value (abc) → exit non-zero.
+ *   6. Invalid tile count value (0) → exit non-zero.
+ *   7. Malformed placement report → exit non-zero.
+ *   8. JSON output mode: valid fixture + --report-json produces a JSON
+ *      file containing "original", "scenarios", and "recommendation".
+ */
+static int check_placement_scenarios_smoke(void)
+{
+    char output[65536];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        puts("SKIP: Python 3 unavailable -- placement scenario tests skipped");
+        return 0;
+    }
+
+    /* 1. Valid fixture: exit 0; output contains "PASS". */
+    if (run_command(
+            "python3 compiler/propose_tensor_scenarios.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " > build/m102_tiny_scenarios.txt 2>&1") != 0) {
+        fputs("placement_scenarios: tiny-dummy should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m102_tiny_scenarios.txt",
+                  output, sizeof(output)) != 0) {
+        fputs("placement_scenarios: cannot read tiny output\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "PASS") == NULL) {
+        fputs("placement_scenarios: tiny-dummy output missing PASS scenario\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: tiny-dummy produces PASS scenarios");
+
+    /* 2. Generate gpt-oss q4 8-tile 16 GiB report. */
+    if (run_command(
+            "./build/att1-size --preset gpt-oss-120b-shape"
+            " --dtype q4 --tiles 8 --context 8192"
+            " --tile-memory-gib 16"
+            " --placement-report-json build/m102_gptoss.json"
+            " > build/m102_gptoss_size.txt 2>&1") != 0) {
+        fputs("placement_scenarios: att1-size gpt-oss 16 GiB failed\n", stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: gpt-oss q4 8-tile 16 GiB report generated");
+
+    /* 3. Scenario tool on gpt-oss 16 GiB → exit 0 (32/64 GiB SKUs are PASS). */
+    if (run_command(
+            "python3 compiler/propose_tensor_scenarios.py"
+            " --report build/m102_gptoss.json"
+            " > build/m102_gptoss_scenarios.txt 2>&1") != 0) {
+        fputs("placement_scenarios: gpt-oss scenarios should exit 0"
+              " (PASS scenarios in 32/64 GiB SKUs)\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m102_gptoss_scenarios.txt",
+                  output, sizeof(output)) != 0) {
+        fputs("placement_scenarios: cannot read gpt-oss scenario output\n",
+              stderr);
+        return -1;
+    }
+    if (strstr(output, "PASS") == NULL) {
+        fputs("placement_scenarios: gpt-oss scenario output missing PASS row\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: gpt-oss 16 GiB base proposes larger SKUs with PASS");
+
+    /* 4. Comma-separated list parsing: --tile-memory-gib and --tile-count. */
+    if (run_command(
+            "python3 compiler/propose_tensor_scenarios.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --tile-memory-gib 16,32,64"
+            " --tile-count 1,2,4"
+            " > build/m102_list_parse.txt 2>&1") != 0) {
+        fputs("placement_scenarios: comma-separated list parsing failed\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: comma-separated list parsing works");
+
+    /* 5. Invalid tile memory value → exit non-zero. */
+    if (run_command(
+            "python3 compiler/propose_tensor_scenarios.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --tile-memory-gib abc"
+            " > build/m102_bad_mem.txt 2>&1") == 0) {
+        fputs("placement_scenarios: invalid tile memory should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: invalid tile memory exits non-zero");
+
+    /* 6. Invalid tile count value (0 is not positive) → exit non-zero. */
+    if (run_command(
+            "python3 compiler/propose_tensor_scenarios.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --tile-count 0"
+            " > build/m102_bad_count.txt 2>&1") == 0) {
+        fputs("placement_scenarios: invalid tile count should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: invalid tile count exits non-zero");
+
+    /* 7. Malformed report → exit non-zero. */
+    if (run_command(
+            "echo 'not_valid_json' | python3"
+            " compiler/propose_tensor_scenarios.py"
+            " --report /dev/stdin"
+            " > build/m102_malformed.txt 2>&1") == 0) {
+        fputs("placement_scenarios: malformed report should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: malformed report exits non-zero");
+
+    /* 8. JSON output contains original, scenarios, recommendation. */
+    if (run_command(
+            "python3 compiler/propose_tensor_scenarios.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --tile-memory-gib 16,32"
+            " --tile-count 1,2"
+            " --report-json build/m102_tiny_out.json"
+            " > build/m102_tiny_json_out.txt 2>&1") != 0) {
+        fputs("placement_scenarios: JSON mode failed on valid fixture\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m102_tiny_out.json", output, sizeof(output)) != 0) {
+        fputs("placement_scenarios: cannot read JSON output\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"original\"")       == NULL) ||
+        (strstr(output, "\"scenarios\"")      == NULL) ||
+        (strstr(output, "\"recommendation\"") == NULL)) {
+        fputs("placement_scenarios: JSON output missing required keys\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_scenarios: JSON output has original scenarios recommendation");
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -3589,7 +3747,8 @@ int main(void)
         (check_tile_capacity_smoke()      != 0) ||
         (check_placement_validator_smoke() != 0) ||
         (check_placement_report_smoke()   != 0) ||
-        (check_placement_proposal_smoke() != 0)) {
+        (check_placement_proposal_smoke() != 0) ||
+        (check_placement_scenarios_smoke() != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

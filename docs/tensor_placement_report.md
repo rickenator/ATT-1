@@ -970,3 +970,113 @@ When `--report-json PATH` is used:
 - Proposals are advisory only; the tool does not modify the placement report
   or generate a new one.
 - No automatic remediation or placement rebalancing.
+
+---
+
+## 12. Placement Scenario Comparison Tool (Milestone 102)
+
+`compiler/propose_tensor_scenarios.py` reads an M100 placement report JSON
+and generates candidate placement/capacity scenarios for AIMU tile planning.
+It compares tile SKU sizes, tile counts, context lengths, and session counts
+without changing runtime execution.
+
+### 12.1 Usage
+
+```
+python3 compiler/propose_tensor_scenarios.py --report PATH [OPTIONS]
+```
+
+Options:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--report PATH` | (required) | M98/M100 placement report JSON |
+| `--tile-memory-gib LIST` | 16,32,64,128 | Comma-separated tile memory sizes in GiB |
+| `--tile-count LIST` | derived | Comma-separated tile counts |
+| `--context LIST` | from report | Comma-separated context lengths |
+| `--sessions LIST` | from report | Comma-separated session counts |
+| `--target-tokens-per-sec N` | — | Target decode rate for fabric estimate |
+| `--fabric-gib-sec LIST` | from report | Fabric bandwidth targets in GiB/sec |
+| `--report-json PATH` | — | Write machine-readable JSON output |
+
+### 12.2 Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | At least one PASS capacity scenario found |
+| 1 | No PASS capacity scenario found among all candidates |
+| 2 | Report could not be parsed (malformed JSON, missing fields, or I/O error) |
+
+### 12.3 Scenario Metrics
+
+Each generated scenario includes:
+
+| Field | Description |
+|---|---|
+| `tile_count` | Number of AIMU tiles |
+| `tile_memory_gib` | Per-tile memory in GiB |
+| `context_length` | Context window tokens |
+| `sessions` | Concurrent session count |
+| `model_bytes_per_tile` | Model weight bytes distributed to this tile |
+| `kv_bytes_per_tile` | KV cache bytes at given context/sessions |
+| `total_bytes_per_tile` | Sum of model + KV bytes |
+| `utilization_percent` | `total_bytes / tile_memory × 100` |
+| `capacity_status` | `PASS` (≤ 80 %), `WARN` (80–100 %), `FAIL` (> 100 %) |
+| `estimated_fabric_gib_sec` | Estimated fabric bandwidth at target TPS |
+| `fabric_status` | `PASS / WARN / FAIL / UNKN` relative to fabric target |
+| `recommendation_score` | Higher is better; FAIL capacity = 0 |
+
+### 12.4 Ranking Criteria
+
+Scenarios are sorted by `recommendation_score` (descending):
+
+1. `capacity_status == PASS` first, then `WARN`, then `FAIL`
+2. Lower tile count preferred (lower cross-tile fabric traffic)
+3. Smaller tile memory SKU preferred (lower cost)
+4. Lower KV pressure (lower kv_fraction)
+
+### 12.5 Human-Readable Output
+
+The tool prints:
+
+1. **Original report summary** — dtype, tile count, model/KV bytes, context,
+   sessions
+2. **Scenario comparison table** — up to 30 rows, sorted by
+   `recommendation_score`; the recommended row is marked `<-- recommended`
+3. **Recommended scenario** — expanded detail for the top-ranked PASS (or WARN)
+   scenario
+4. **Notes** — SKU economics and fabric scaling guidance
+
+### 12.6 JSON Output Format (`--report-json`)
+
+```json
+{
+  "original": {
+    "model_name": "",
+    "dtype": "q4",
+    "tile_count": 8,
+    "tile_memory_mib": 16384,
+    "context_length": 8192,
+    "sessions": 1,
+    "total_model_bytes": 135291068416,
+    "total_kv_bytes": 75161927680
+  },
+  "scenarios": [ { ... }, ... ],
+  "recommendation": { ... },
+  "pass_count": 12,
+  "total_count": 32
+}
+```
+
+Each entry in `"scenarios"` contains all fields from §12.3.
+
+### 12.7 Non-Goals for M102
+
+- No execution scheduling change.
+- No binary format change.
+- No CUDA change.
+- No model weight download or external network access.
+- Scenarios are advisory only; the tool does not modify the placement report
+  or generate a new one.
+- Fabric bandwidth estimates are linear approximations only; they do not
+  account for packet batching, latency, or topology.
