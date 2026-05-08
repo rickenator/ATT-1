@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 85: public-model q4 backend smoke validation (complete).
+Milestone 86: CUDA q4 implementation plan (complete).
 
 ## Hard Rules
 
@@ -103,6 +103,7 @@ Milestone 85: public-model q4 backend smoke validation (complete).
 - Milestone 83: public-model q4 conversion path — `--model-dir` auto-discovery of `model.safetensors` in converter; `compiler/fixtures/m83_model_dir/` fixture; `compiler/validate_public_q4.py` manual validator; `check_public_q4_smoke()` in `test_bench_smoke.c`; `docs/quantization.md` M83 section. CUDA q4 unsupported. `make test` passes.
 - Milestone 84: public-model q4 source comparison report — `--att1-q4` and `--q4-tol` flags added to `compare_att1_to_source.py`; static weight comparison (max_abs_error, mean_abs_error, topk_overlap); cpu-q4 bench forward comparison against f32 reference; q4 tolerance policy (max_abs_error < 4.0 informational) documented in `docs/quantization.md`; `check_q4_source_comparison()` smoke test added to `test_bench_smoke.c`. `make test` passes.
 - Milestone 85: public-model q4 backend smoke validation — `compiler/validate_public_q4_backends.py` added; cpu-q4 single/cluster pass with report fields (backend, mode, shard_plan, generated_tokens, last_token, timing, kv counters, fabric counters); cuda-q4 explicitly unsupported (verified via `--include-cuda`); cluster `fabric_packets_sent > 0` enforced; `check_public_q4_backend_smoke()` (3-part: text report, JSON report, cuda-q4 unsupported check) added to `test_bench_smoke.c`; `docs/quantization.md` M85 section and `docs/real_model_conversion.md` M85 row added. `make test` passes.
+- Milestone 86: CUDA q4 implementation plan — documentation-only; `docs/quantization.md` §"CUDA q4 implementation plan (M86)" added (wire-format recap, Option A/B/C design choices, memory/layout concerns, M87 test plan, M87–M90 milestone split); `docs/cuda_backend.md` §"Milestone 86" added (current status, recommended approach, no-silent-fallback policy, wire format contract, milestone split); no C source change, no Makefile change, no `.att1` format change. `make test` passes.
 
 ## Next Prompt for Codex
 

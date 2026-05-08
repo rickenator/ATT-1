@@ -536,3 +536,57 @@ float32 model weights. Activations remain float32.
 `tests/test_q8_bench.c` also validates `att1-bench --mode cluster --backend
 cuda-q8` output labeling, counter sanity, last-token agreement with CPU q8
 cluster, and unsupported-path behavior on CPU-only builds.
+
+## Milestone 86: CUDA q4 implementation plan
+
+Documentation-only.  No CUDA q4 kernel or C source changes.
+
+### Current status
+
+`--backend cuda-q4` is explicitly unsupported through M85.  Selecting it exits
+non-zero with `error: cuda-q4 backend is not supported`.  This remains true
+until M88.
+
+### Recommended approach
+
+**M87 prototype:** dequantize-on-the-fly custom CUDA kernel
+(`cuda_backend_matmul_q4xf32`).  Each thread group reads packed nibbles and
+per-group float32 scales from global memory, dequantizes to float32 in
+registers, and accumulates the dot product without allocating an intermediate
+f32 weight buffer.  This matches the CPU dequantize-then-multiply approach and
+preserves the memory-reduction benefit of q4.
+
+A pre-dequantize path (unpack q4 → f32 device buffer, then cuBLAS) is
+acceptable as a correctness-first fallback if the custom kernel is blocked.
+
+CUTLASS-style tiled kernels are deferred past M90.
+
+### Backend name and no-silent-fallback policy
+
+The CUDA q4 backend must:
+- set `ops->name = "cuda-q4"`,
+- register a non-NULL `matmul_q4xf32` device function,
+- never fall back to the CPU q4 path silently.
+
+Any attempt to run CUDA q4 on a CPU-only build must exit non-zero with a clear
+`unsupported` message on stderr, consistent with current behavior.
+
+### Wire format passed to CUDA
+
+The kernel receives exactly the on-disk layout:
+- packed nibble bytes (`rows * cols / 2` bytes, contiguous),
+- float32 scale array (`rows * (cols / group_size) * 4` bytes, immediately
+  after packed bytes),
+- `group_size` as a launch parameter (32 by default, from `tensor.flags & 0xFF`).
+
+No reformatting or transposing at load time.  The kernel handles the low/high
+nibble split and signed `[-7, 7]` range directly.
+
+### Milestone split
+
+| Milestone | Scope |
+|-----------|-------|
+| M87 | Custom dequantize-on-the-fly CUDA q4×f32 matmul kernel; unit tests vs CPU q4; no inference |
+| M88 | CUDA q4 single-tile inference; `--backend cuda-q4 --mode single` exits zero |
+| M89 | CUDA q4 cluster inference; `--backend cuda-q4 --mode cluster` exits zero |
+| M90 | Backend matrix + `validate_public_q4_backends.py --include-cuda` pass for cuda-q4 |

@@ -1400,3 +1400,110 @@ validator records such rows as `status=unsupported` and does not count them
 toward the overall pass/fail.
 
 CUDA q4 kernel design and integration remain deferred to a future milestone.
+
+---
+
+## CUDA q4 implementation plan (M86)
+
+### Overview
+
+This milestone is documentation-only.  It specifies the CUDA q4 design
+before any CUDA q4 kernel or runtime code is written, so that M87+ can
+proceed with a clear contract.
+
+### Current CPU q4 wire format (recap)
+
+| Property          | Value |
+|-------------------|-------|
+| dtype enum        | `ATT1_MODEL_DTYPE_Q4 = 3` |
+| group size        | 32 elements (default); stored in `tensor.flags & 0xFF` |
+| signed range      | `[-7, 7]` (symmetric, no zero-point) |
+| nibble order      | low nibble = even index, high nibble = odd index |
+| packed bytes      | `rows * cols / 2` bytes, all packed bytes first |
+| scale bytes       | `rows * (cols / group_size) * 4` bytes, all scales after packed bytes |
+| scale dtype       | float32, one per group |
+| shape convention  | `[out_dim, in_dim]` (transposed vs f32 ATT-1 layout) |
+| loader validation | group_size power-of-two, cols % group_size == 0, overflow-safe |
+
+The CUDA implementation must respect this wire format exactly.  No new
+fields, no format version bump for M87–M90.
+
+### CUDA q4 implementation choices
+
+#### Option A: dequantize-on-the-fly inside a custom CUDA kernel
+
+Each warp/thread reads packed nibbles and scales from global memory,
+dequantizes to float32 in registers, and accumulates the dot product
+without storing an intermediate f32 weight buffer.
+
+- Pro: lowest peak VRAM; matches the CPU dequantize-then-multiply approach.
+- Pro: natural path for group-scale fusion.
+- Con: requires a custom kernel; cannot reuse cuBLAS.
+- **Recommended for M87.**
+
+#### Option B: pre-dequantize q4 → f32 on device, then cuBLAS
+
+A setup kernel unpacks all nibbles to f32 into a device scratch buffer;
+`cublasSgemm` then operates on f32 weights.
+
+- Pro: reuses the existing cuBLAS path with minimal new code.
+- Con: doubles VRAM for the weight tile; eliminates the memory-reduction
+  benefit of q4 for activations on-device.
+- Con: the setup kernel is still a custom kernel.
+- Acceptable as a correctness-first fallback if Option A is blocked.
+
+#### Option C: CUTLASS-style tiled kernel (future)
+
+Fully tiled GEMM with shared-memory staging, vectorized loads of packed
+nibbles, and double-buffered dequantization.
+
+- Pro: highest throughput.
+- Con: significant engineering investment; not appropriate for M87.
+- Deferred to M90+ or a dedicated AIMU kernel phase.
+
+**Decision:** M87 uses Option A (dequantize-on-the-fly custom kernel) as
+the first prototype.  Option B is the fallback.  Option C is deferred.
+
+### Memory and layout concerns
+
+| Concern | Requirement |
+|---------|-------------|
+| Packed bytes alignment | `cudaMalloc` returns 256-byte aligned; no special handling needed |
+| Scale array transfer | copy `packed_bytes + scale_bytes` in one `cudaMemcpy`; decode offset in kernel |
+| Group-size handling | pass `group_size` as a kernel launch parameter; reject non-32 values until tested |
+| Coalesced reads | packed bytes are contiguous; threads in a warp should read consecutive 32-byte groups |
+| No silent CPU fallback | CUDA q4 backend must set `ops->name = "cuda-q4"` and `matmul_q4xf32` to a non-NULL device function; any fallback to CPU is a hard error |
+| Scale precision | float32 scales; no half-precision scales in M87 |
+
+### Recommended first CUDA q4 milestone (M87 scope)
+
+M87 adds only a CUDA q4 matmul prototype:
+
+1. `cuda_backend_matmul_q4xf32()` — custom kernel, Option A.
+2. Unit tests in `tests/test_cuda_matmul_q4.c` (see test plan below).
+3. No q4 inference, no `att1_infer_create_q4()` CUDA path, no cluster.
+4. `att1-bench --backend cuda-q4` continues to fail until M88.
+5. CPU q4 behavior unchanged.
+
+### Test plan (M87)
+
+| Test case | Description |
+|-----------|-------------|
+| tiny hand-checkable | 4×4 q4 matrix × f32 vector; expected output computed by hand |
+| deterministic medium | 64×32 q4 matrix; result matches `att1_matmul_q4xf32` CPU reference |
+| zero rows | all-zero packed bytes and zero scales; output must be all-zero |
+| saturation values | packed bytes with nibble values `0x7` and `0x8` (signed -8 clamped to -7); verify scale application |
+| invalid metadata | null pointer, zero rows/cols, cols not multiple of group_size; expect non-zero return |
+| CUDA unavailable | test skips gracefully with `SKIP: CUDA not available`; CPU q4 path unchanged |
+
+Tolerance: CUDA q4 vs CPU q4 max absolute error < `Q4_TOLERANCE` (currently
+`0.35f`); same threshold as the CPU q4 matmul test.
+
+### Future milestone split
+
+| Milestone | Scope |
+|-----------|-------|
+| M87 | CUDA q4 matmul prototype — custom dequantize-on-the-fly kernel; unit tests vs CPU q4 reference |
+| M88 | CUDA q4 single-tile inference — `att1_infer_create_q4()` CUDA path; `att1-bench --backend cuda-q4 --mode single` exits zero |
+| M89 | CUDA q4 cluster inference — `att1_cluster_infer_create_q4()` CUDA path; `att1-bench --backend cuda-q4 --mode cluster` exits zero; `fabric_packets_sent > 0` |
+| M90 | CUDA q4 benchmark and matrix integration — `test_backend_matrix` entries for cuda-q4 single and cluster; `validate_public_q4_backends.py --include-cuda` passes instead of reporting unsupported |
