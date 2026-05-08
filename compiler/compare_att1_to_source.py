@@ -74,7 +74,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _THIS_DIR)
 
 from read_att1 import (  # noqa: E402
-    read_att1_model, DTYPE_F32, DTYPE_Q8, Att1ReadError
+    read_att1_model, DTYPE_F32, DTYPE_Q8, DTYPE_Q4, Att1ReadError
 )
 from load_safetensors import _coerce_bf16, _coerce_f16  # noqa: E402
 
@@ -309,6 +309,8 @@ def _compare_static(safetensors_path, att1_model, cfg_dict, verbose):
             dst_vals = att1_t.f32_values
         elif att1_t.dtype == DTYPE_Q8:
             dst_vals = att1_t.dequantize()
+        elif att1_t.dtype == DTYPE_Q4:
+            dst_vals = att1_t.dequantize()
         else:
             return 0, 0.0, 0.0, [], f"unsupported dtype for {dst_name!r}"
 
@@ -488,7 +490,7 @@ def _load_weights_numpy(att1_model):
     for t in att1_model.tensors:
         if t.dtype == DTYPE_F32:
             vals = t.f32_values
-        elif t.dtype == DTYPE_Q8:
+        elif t.dtype in (DTYPE_Q8, DTYPE_Q4):
             vals = t.dequantize()
         else:
             continue
@@ -620,6 +622,25 @@ def _format_report_text(rpt):
             emit("q8_error", q8s["error"])
         lines.append("")
 
+    q4s = rpt.get("q4_static")
+    if q4s:
+        lines.append("# q4 static comparison")
+        emit("att1_q4",              q4s["att1_path"])
+        emit("att1_q4_version",      q4s["att1_version"])
+        emit("q4_dtype",             q4s["dtype"])
+        emit("q4_backend",           q4s["backend"])
+        emit("q4_tensors_checked",   q4s["tensors_checked"])
+        emit("q4_max_abs_error",     f"{q4s['max_abs_error']:.3e}")
+        emit("q4_max_rel_error",     f"{q4s['max_rel_error']:.3e}")
+        emit("q4_mean_abs_error",    f"{q4s['mean_abs_error']:.3e}")
+        emit("q4_tolerance",         f"{q4s['tolerance']:.3e}")
+        emit("q4_topk_overlap",      str(q4s.get("topk_overlap", "n/a")))
+        emit("q4_status",            q4s["status"])
+        emit("q4_note",              q4s["note"])
+        if q4s.get("error"):
+            emit("q4_error", q4s["error"])
+        lines.append("")
+
     fwd = rpt.get("forward")
     if fwd:
         lines.append("# forward pass")
@@ -649,6 +670,20 @@ def _format_report_text(rpt):
             emit("q8_bench_backend",    fwd["q8_backend"])
             emit("q8_bench_error",      fwd["q8_bench_error"])
             emit("q8_status",           fwd["q8_status"])
+            lines.append("")
+        if fwd.get("q4_bench_last_token") is not None:
+            lines.append("# q4 forward pass")
+            emit("q4_bench_last_token", fwd["q4_bench_last_token"])
+            emit("q4_bench_backend",    "cpu-q4")
+            emit("q4_forward_match",
+                 "yes" if fwd["q4_forward_match"] else "note (token divergence may be expected for q4)")
+            emit("q4_forward_note",     fwd["q4_note"])
+            lines.append("")
+        elif fwd.get("q4_bench_error"):
+            lines.append("# q4 forward pass")
+            emit("q4_bench_backend",    "cpu-q4")
+            emit("q4_bench_error",      fwd["q4_bench_error"])
+            emit("q4_status",           fwd["q4_status"])
             lines.append("")
         if fwd.get("error"):
             emit("forward_error",        fwd["error"])
@@ -740,6 +775,9 @@ def _resolve_paths(args):
     ]
     if att1_q8_path:
         path_items.append(("att1-q8", att1_q8_path))
+    att1_q4_path = getattr(args, "att1_q4", None)
+    if att1_q4_path:
+        path_items.append(("att1-q4", att1_q4_path))
 
     for label, path in path_items:
         if not path:
@@ -755,6 +793,8 @@ def _resolve_paths(args):
         raise ValueError(f"ATT-1 f32 artifact not found: {att1_f32_path!r}")
     if att1_q8_path and not os.path.isfile(att1_q8_path):
         raise ValueError(f"ATT-1 q8 artifact not found: {att1_q8_path!r}")
+    if att1_q4_path and not os.path.isfile(att1_q4_path):
+        raise ValueError(f"ATT-1 q4 artifact not found: {att1_q4_path!r}")
 
     if not source_model_path:
         source_model_path = os.path.dirname(os.path.abspath(config_path))
@@ -765,6 +805,7 @@ def _resolve_paths(args):
         "safetensors": safetensors_path,
         "att1_f32": att1_f32_path,
         "att1_q8": att1_q8_path,
+        "att1_q4": att1_q4_path,
     }
 
 
@@ -902,7 +943,85 @@ def run_harness(args):
             "per_tensor":      pt_q8,
         }
 
-    # -------- forward-pass comparison (numpy required) --------
+    # -------- static q4 comparison (optional) --------
+    rpt_q4 = None
+    if paths.get("att1_q4"):
+        try:
+            att1_q4 = read_att1_model(paths["att1_q4"])
+        except Att1ReadError as exc:
+            print(f"error: cannot load ATT-1 q4 model: {exc}", file=sys.stderr)
+            return {}, 1
+
+        n_q4, max_q4, rel_q4, pt_q4, q4_err = _compare_static(
+            paths["safetensors"], att1_q4, att1_cfg, args.verbose
+        )
+
+        # mean_abs_error across all per-tensor means
+        mean_q4 = 0.0
+        if pt_q4:
+            mean_q4 = sum(e["max_abs_error"] for e in pt_q4) / len(pt_q4)
+
+        # top-k overlap: compare sorted top-k indices of source vs q4 for
+        # largest eligible tensor (skip if numpy absent)
+        topk_overlap = None
+        if _HAVE_NUMPY and pt_q4 and not q4_err:
+            try:
+                _topk = 5
+                # Find the largest q4 tensor for top-k overlap check.
+                biggest = max(
+                    (t for t in att1_q4.tensors if t.dtype == DTYPE_Q4),
+                    key=lambda t: t.shape[0] * t.shape[1],
+                    default=None,
+                )
+                if biggest is not None:
+                    plan = _build_plan(att1_cfg)
+                    item = next(
+                        (x for x in plan if x["target"] == biggest.name), None
+                    )
+                    if item is not None:
+                        hdr, doff = _load_safetensors_header(paths["safetensors"])
+                        src_vals = _load_st_tensor(
+                            paths["safetensors"], hdr, doff, item["source"]
+                        )
+                        if item["transpose"]:
+                            r, c = item["source_shape"]
+                            src_vals = tuple(_transpose_2d(list(src_vals), r, c))
+                        src_arr = np.array(src_vals, dtype=np.float32)
+                        q4_arr  = np.array(biggest.dequantize(), dtype=np.float32)
+                        topk_src = set(np.argsort(-np.abs(src_arr))[:_topk].tolist())
+                        topk_q4  = set(np.argsort(-np.abs(q4_arr))[:_topk].tolist())
+                        topk_overlap = len(topk_src & topk_q4)
+            except Exception:  # noqa: BLE001
+                topk_overlap = None
+
+        if q4_err:
+            fail_msgs.append(f"q4 static: {q4_err}")
+            q4_tol_ok = False
+        else:
+            q4_tol_ok = max_q4 < args.q4_tol
+            if not q4_tol_ok:
+                fail_msgs.append(
+                    f"q4 static: max_abs_error {max_q4:.3e} exceeds "
+                    f"tolerance {args.q4_tol:.3e}"
+                )
+
+        rpt_q4 = {
+            "att1_path":       paths["att1_q4"],
+            "att1_version":    att1_q4.version,
+            "dtype":           "q4",
+            "backend":         "cpu-q4",
+            "tensors_checked": n_q4,
+            "max_abs_error":   max_q4,
+            "max_rel_error":   rel_q4,
+            "mean_abs_error":  mean_q4,
+            "topk_overlap":    topk_overlap,
+            "tolerance":       args.q4_tol,
+            "status":          "pass" if (not q4_err and q4_tol_ok) else "fail",
+            "note":            ("q4 grouped int4 g32; larger error than q8 expected; "
+                                "token divergence from f32 ref may occur"),
+            "error":           q4_err,
+            "per_tensor":      pt_q4,
+        }
     rpt_fwd = None
     if _HAVE_NUMPY:
         ref_error = None
@@ -961,6 +1080,26 @@ def run_harness(args):
                         file=sys.stderr,
                     )
 
+        # q4 bench comparison (token divergence from f32 ref is expected; not
+        # a hard failure — reported as a note)
+        q4_bench_next = None
+        q4_bench_err  = None
+        q4_match      = None
+        q4_fwd_status = "skip"
+        if paths.get("att1_q4") and ref_error is None:
+            q4_bench_next, _, q4_bench_err = _call_att1_bench_generic(
+                paths["att1_q4"], prompt_ids, "cpu-q4"
+            )
+            if not q4_bench_err:
+                q4_match = (ref_next == q4_bench_next)
+                q4_fwd_status = "pass" if q4_match else "note"
+                if not q4_match:
+                    print(
+                        "note: q4 last_token differs from f32 ref; "
+                        "token divergence may be expected for q4",
+                        file=sys.stderr,
+                    )
+
         rpt_fwd = {
             "reference":           reference,
             "prompt_ids":          prompt_ids,
@@ -978,6 +1117,12 @@ def run_harness(args):
             "q8_status":           q8_fwd_status,
             "q8_note":             ("q8 argmax may differ from f32 ref "
                                     "for near-tied logits"),
+            "q4_bench_last_token": q4_bench_next,
+            "q4_bench_error":      q4_bench_err,
+            "q4_forward_match":    q4_match,
+            "q4_status":           q4_fwd_status,
+            "q4_note":             ("q4 token divergence from f32 ref may be "
+                                    "expected; check top-k overlap for confidence"),
             "next_token_result":   f32_fwd_status,
             "error":               ref_error,
         }
@@ -1000,6 +1145,7 @@ def run_harness(args):
         },
         "f32_static":  rpt_f32,
         "q8_static":   rpt_q8,
+        "q4_static":   rpt_q4,
         "forward":     rpt_fwd,
         "result":      overall,
     }
@@ -1031,6 +1177,17 @@ def run_harness(args):
                 print(f"q8_tensors_checked:  {n_q8}")
                 print(f"q8_max_abs_error:    {max_q8:.3e}")
                 print(f"q8_max_rel_error:    {rel_q8:.3e}")
+        if rpt_q4:
+            print(f"att1_q4:     {paths['att1_q4']}")
+            if q4_err:
+                print(f"q4_error:    {q4_err}", file=sys.stderr)
+            else:
+                print(f"q4_tensors_checked:  {n_q4}")
+                print(f"q4_max_abs_error:    {max_q4:.3e}")
+                print(f"q4_max_rel_error:    {rel_q4:.3e}")
+                print(f"q4_mean_abs_error:   {mean_q4:.3e}")
+                if rpt_q4.get("topk_overlap") is not None:
+                    print(f"q4_topk_overlap:     {rpt_q4['topk_overlap']}")
         if rpt_fwd:
             print(f"reference:           {rpt_fwd['reference']}")
             if rpt_fwd["error"]:
@@ -1046,6 +1203,10 @@ def run_harness(args):
                 print(f"q8_bench_last_token: {rpt_fwd['q8_bench_last_token']}")
                 print(f"q8_forward_match:    "
                       f"{'yes' if rpt_fwd['q8_forward_match'] else 'warn (quantisation rounding)'}")
+            if rpt_fwd["q4_bench_last_token"] is not None:
+                print(f"q4_bench_last_token: {rpt_fwd['q4_bench_last_token']}")
+                print(f"q4_forward_match:    "
+                      f"{'yes' if rpt_fwd['q4_forward_match'] else 'note (token divergence may be expected for q4)'}")
         else:
             print("numpy_forward:       skipped (numpy not available)")
         print(f"result:              {overall}")
@@ -1105,6 +1266,12 @@ def main():
               "only for fixture source; omit to run f32-only)")
     )
     parser.add_argument(
+        "--att1-q4", default=None,
+        dest="att1_q4",
+        help=("Converted q4 ATT-1 model (optional); enables q4 static + "
+              "cpu-q4 bench comparison against source/f32 reference")
+    )
+    parser.add_argument(
         "--prompt-ids", default=[5], dest="prompt_ids",
         type=lambda s: _parse_ids(s) or parser.error(f"bad prompt-ids: {s!r}"),
         help="Comma-separated prompt token IDs (default: 5)"
@@ -1130,6 +1297,10 @@ def main():
     parser.add_argument(
         "--q8-tol", default=0.6, type=float, dest="q8_tol",
         help="Max abs error tolerance for q8 static check (default: 0.6)"
+    )
+    parser.add_argument(
+        "--q4-tol", default=4.0, type=float, dest="q4_tol",
+        help="Max abs error tolerance for q4 static check (default: 4.0)"
     )
     parser.add_argument(
         "--report", action="store_true",

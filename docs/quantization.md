@@ -1248,3 +1248,73 @@ deferred to M84.
 | (old M83 row replaced above) |
 | M84 | Public-model q4 validation report: extend `compare_att1_to_source.py` to accept a q4 artifact; static and forward-pass tolerance checks vs f32/q8 references; structured report |
 | M85 | CUDA q4 planning/prototype: define CUDA q4 kernel approach, memory layout on device, and integration points with the existing CUDA backend |
+
+---
+
+## Q4 source comparison and tolerance policy (M84)
+
+### Overview
+
+`compare_att1_to_source.py` now accepts `--att1-q4 <path>` to compare a q4
+`.att1` artifact against its SafeTensors source weights and against the f32
+reference forward pass.  Two new CLI flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--att1-q4 PATH` | (omitted) | Path to the q4 `.att1` artifact to compare |
+| `--q4-tol FLOAT` | 4.0 | Max-abs-error hard threshold for q4 static check |
+
+When `--att1-q4` is provided the harness:
+
+1. **Static weight comparison** — dequantizes each q4 tensor and compares
+   element-by-element to the transposed source weight; records
+   `max_abs_error`, `max_rel_error`, `mean_abs_error`, and per-tensor stats.
+2. **Top-k overlap** (numpy) — for the largest q4 tensor, reports the number
+   of top-5 indices (by absolute magnitude) shared between the source tensor
+   and the dequantized q4 tensor.
+3. **cpu-q4 bench forward** — runs `att1-bench` with the q4 artifact and
+   compares the argmax token against the source f32 reference.
+
+### Tolerance table
+
+| Comparison | Hard threshold | Policy |
+|------------|---------------|--------|
+| F32 vs F32 | 0 (exact) | Must match — any difference is a bug |
+| F32 vs Q8  | 0.6 (default `--q8-tol`) | Hard fail above threshold |
+| F32 vs Q4  | 4.0 (default `--q4-tol`) | Informational; larger error is expected |
+| Q8 forward token vs F32 | match preferred | Mismatch is `warn`, not `fail` |
+| Q4 forward token vs F32 | divergence expected | Mismatch is `note`, not `fail` |
+
+The q4 tolerance is *informational*: `max_abs_error < 4.0` is expected to pass
+for grouped-int4 g32 with well-behaved weights, but a value slightly above 4.0
+is not necessarily a quantisation bug — inspect the per-tensor breakdown and
+check whether the outlier tensor is an embedding or output projection.
+
+### Why token divergence is expected for Q4
+
+4-bit quantisation concentrates more error per weight than 8-bit.  Near-tied
+logit pairs (where $|l_i - l_j| < \delta$ for small $\delta$) can flip the
+argmax token.  This is a fundamental property of low-bit quantisation and does
+not indicate a broken conversion.  Use `--report` + `q4_topk_overlap` to gain
+confidence that the important weight structure is preserved.
+
+### Manual usage with a large public model
+
+Assuming SmolLM2-135M has been converted to all three formats:
+
+```sh
+python3 compiler/compare_att1_to_source.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --att1-q4  ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --report \
+    --report-json ~/Models/att1/SmolLM2-135M/compare_q4.json
+```
+
+This will print a structured text report (`--report`) **and** write the full
+structured JSON to `compare_q4.json`.  The JSON contains `f32_static`,
+`q8_static`, `q4_static`, and `forward` keys suitable for automated analysis.
+
+CUDA q4 backend and per-tensor top-k overlap improvements are deferred to M85.

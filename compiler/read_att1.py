@@ -51,6 +51,10 @@ _MAX_DIMS         = 4
 
 DTYPE_F32 = 1
 DTYPE_Q8  = 2
+DTYPE_Q4  = 3
+
+# Default q4 group size (must match ATT1_Q4_GROUP_SIZE_DEFAULT in att1_quant.h)
+_Q4_GROUP_SIZE_DEFAULT = 32
 
 
 class Att1ReadError(Exception):
@@ -99,6 +103,7 @@ class Att1Tensor:
         "name", "dtype", "ndims", "shape",
         "_raw",       # bytes: raw payload blob
         "_data_base", # int: byte offset into file data where tensor data starts
+        "flags",      # u32 from descriptor (low byte = q4 group_size)
     )
 
     def __init__(self, name, dtype, ndims, shape, raw_payload):
@@ -107,6 +112,7 @@ class Att1Tensor:
         self.ndims = ndims
         self.shape = shape    # list[int]
         self._raw  = raw_payload
+        self.flags = 0        # overwritten by reader from descriptor
 
     # -- F32 -------------------------------------------------------------------
 
@@ -161,11 +167,20 @@ class Att1Tensor:
         return struct.unpack(f"<{rows}f", self._raw[scale_off: scale_off + rows * 4])
 
     def dequantize(self):
+        """Reconstruct flat float32 values from quantised storage.
+
+        Supports DTYPE_Q8 (per-row int8 + scale) and DTYPE_Q4 (grouped nibble).
+        """
+        if self.dtype == DTYPE_Q8:
+            return self._dequantize_q8()
+        if self.dtype == DTYPE_Q4:
+            return self._dequantize_q4()
+        raise Att1ReadError(
+            f"dequantize: unsupported dtype {self.dtype} for tensor {self.name!r}"
+        )
+
+    def _dequantize_q8(self):
         """Reconstruct flat float32 values from q8 int8 + per-row scales."""
-        if self.dtype != DTYPE_Q8:
-            raise Att1ReadError(
-                f"dequantize called on non-Q8 tensor {self.name!r}"
-            )
         rows    = self.shape[0]
         cols    = self.shape[1]
         ints    = self.q8_int_values
@@ -177,9 +192,91 @@ class Att1Tensor:
                 result.append(float(ints[row * cols + col]) * s)
         return tuple(result)
 
+    # -- Q4 -------------------------------------------------------------------
+
+    def q4_group_size(self):
+        """Group size encoded in the descriptor flags field (low 8 bits).
+
+        Stored in Att1Tensor via the optional ``flags`` attribute added by
+        the reader.  Falls back to the default of 32 if not set.
+        """
+        raw = getattr(self, "flags", 0) & 0xFF
+        return raw if raw > 0 else _Q4_GROUP_SIZE_DEFAULT
+
+    @property
+    def q4_rows(self):
+        if self.dtype != DTYPE_Q4:
+            raise Att1ReadError(f"q4_rows called on non-Q4 tensor {self.name!r}")
+        return self.shape[0]
+
+    @property
+    def q4_cols(self):
+        if self.dtype != DTYPE_Q4:
+            raise Att1ReadError(f"q4_cols called on non-Q4 tensor {self.name!r}")
+        return self.shape[1]
+
+    def _dequantize_q4(self):
+        """Reconstruct flat float32 values from grouped q4 nibble storage.
+
+        Wire layout (matches C att1_matmul_q4xf32 / make_q4_fixture.py):
+            packed bytes  :  rows * cols // 2
+            scale floats  :  rows * (cols // group_size) * 4
+
+        Nibble convention: low nibble = even index, high nibble = odd index.
+        Signed int4 range [-7, 7] (bias −7 not used; raw nibble is 2-complement
+        trimmed to 4 bits and sign-extended).
+        """
+        if self.dtype != DTYPE_Q4:
+            raise Att1ReadError(
+                f"_dequantize_q4 called on non-Q4 tensor {self.name!r}"
+            )
+        rows = self.shape[0]
+        cols = self.shape[1]
+        group_size = self.q4_group_size()
+
+        if cols % group_size != 0:
+            raise Att1ReadError(
+                f"q4 tensor {self.name!r}: cols={cols} not divisible by "
+                f"group_size={group_size}"
+            )
+
+        n_groups_per_row = cols // group_size
+        packed_bytes     = rows * cols // 2
+        scale_offset     = packed_bytes
+        n_scales         = rows * n_groups_per_row
+
+        packed = struct.unpack_from(f"<{packed_bytes}B", self._raw, 0)
+        scales = struct.unpack_from(f"<{n_scales}f",    self._raw, scale_offset)
+
+        result = []
+        idx    = 0  # nibble index (0 = even, 1 = odd within each byte)
+        for row in range(rows):
+            for col in range(cols):
+                byte_pos = (row * cols + col) // 2
+                byte_val = packed[byte_pos]
+                if (row * cols + col) % 2 == 0:
+                    nibble = byte_val & 0x0F
+                else:
+                    nibble = (byte_val >> 4) & 0x0F
+                # Sign-extend 4-bit signed nibble.
+                if nibble >= 8:
+                    nibble -= 16
+
+                group_idx = row * n_groups_per_row + col // group_size
+                s = scales[group_idx]
+                result.append(float(nibble) * s)
+        return tuple(result)
+
     def __repr__(self):
         shape_s = "×".join(str(d) for d in self.shape)
-        dtype_s = "f32" if self.dtype == DTYPE_F32 else "q8"
+        if self.dtype == DTYPE_F32:
+            dtype_s = "f32"
+        elif self.dtype == DTYPE_Q8:
+            dtype_s = "q8"
+        elif self.dtype == DTYPE_Q4:
+            dtype_s = "q4"
+        else:
+            dtype_s = f"dtype{self.dtype}"
         return f"Att1Tensor({self.name!r}, dtype={dtype_s}, shape=[{shape_s}])"
 
 
@@ -303,8 +400,11 @@ def read_att1_model(path):
                 f"(offset={t_offset}, nbytes={t_nbytes}, data_size={data_size})"
             )
 
-        raw = data[data_offset + t_offset: data_offset + t_offset + t_nbytes]
-        tensors.append(Att1Tensor(name, dtype, ndims, shape, raw))
+        raw   = data[data_offset + t_offset: data_offset + t_offset + t_nbytes]
+        flags = _u32(data, dp + 120)
+        t     = Att1Tensor(name, dtype, ndims, shape, raw)
+        t.flags = flags
+        tensors.append(t)
 
     return Att1Model(path, version, cfg, tensors)
 
@@ -342,7 +442,7 @@ def _cli_main():
             sys.exit(1)
         if t.dtype == DTYPE_F32:
             vals = t.f32_values
-        elif t.dtype == DTYPE_Q8:
+        elif t.dtype in (DTYPE_Q8, DTYPE_Q4):
             vals = t.dequantize()
         else:
             print(f"unsupported dtype {t.dtype}", file=sys.stderr)

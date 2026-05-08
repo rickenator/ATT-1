@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 83: public-model q4 conversion path (complete).
+Milestone 84: public-model q4 source comparison report (complete).
 
 ## Hard Rules
 
@@ -101,6 +101,7 @@ Milestone 83: public-model q4 conversion path (complete).
 - Milestone 79: CPU q4 cluster inference integration — `att1_cluster_infer_create_q4()` added to `src/cluster_infer.c` and declared in `include/att1_cluster_infer.h`; `att1_cluster_q4_layer` typedef mirrors q8 counterpart; `cluster_prepare_q4()` performs zero-copy views via `att1_model_view_tensor_q4()` and `att1_model_view_output_norm()`; `att1_cluster_infer_decode_token()` has a `use_q4` branch calling `att1_transformer_block_forward_backend_q4()` in the layer loop and `att1_matmul_q4xf32()` directly for output projection; `att1_cluster_infer_set_backend()` updated to call `cluster_prepare_q4()` when a `cpu-q4` backend is supplied; `ATT1_SHARD_PLAN_METADATA` returns `ATT1_ERR_UNSUPPORTED` for q4 cluster (no runtime-quantize path needed since q4 is always file-loaded); `tests/test_cluster_infer_q4.c` added (8 cases: create and decode, backend name, logit count, f32-model rejected, f32 path unchanged, position advances, fabric packets nonzero, metadata plan rejected); no CUDA q4, no q4 converter CLI flag. `make test` passes (61 tests).
 - Milestone 82: public-model q4 conversion plan — documentation-only spec for converting `HuggingFaceTB/SmolLM2-135M` to a q4 `.att1` artifact; 211 eligible q4 tensors (7 per layer × 30 + output.weight), tok_embeddings and norms stay F32, group_size=32; size estimates F32 ≈ 540 MB / Q8 ≈ 235 MB / Q4 ≈ 190 MB; tolerance targets (F32 vs Q4 < 4.0, F32 vs Q8 < 1.0); validation flow, failure cases, CUDA q4 unsupported note; M83–M85 future milestone split; `docs/quantization.md`, `docs/real_model_conversion.md`, `docs/real_tiny_model_import.md` updated. No C source change. No Makefile change. No `.att1` format change. `make test` passes.
 - Milestone 83: public-model q4 conversion path — `--model-dir` auto-discovery of `model.safetensors` in converter; `compiler/fixtures/m83_model_dir/` fixture; `compiler/validate_public_q4.py` manual validator; `check_public_q4_smoke()` in `test_bench_smoke.c`; `docs/quantization.md` M83 section. CUDA q4 unsupported. `make test` passes.
+- Milestone 84: public-model q4 source comparison report — `--att1-q4` and `--q4-tol` flags added to `compare_att1_to_source.py`; static weight comparison (max_abs_error, mean_abs_error, topk_overlap); cpu-q4 bench forward comparison against f32 reference; q4 tolerance policy (max_abs_error < 4.0 informational) documented in `docs/quantization.md`; `check_q4_source_comparison()` smoke test added to `test_bench_smoke.c`. `make test` passes.
 
 ## Next Prompt for Codex
 
@@ -166,6 +167,14 @@ Milestone 23 complete:
 - Default CPU-only build remains CUDA-free.
 - CUDA=1 tests pass on RTX 3090 host.
 - Full CUDA q8 inference is still not implemented.
+
+Milestone 84 complete:
+- `compiler/compare_att1_to_source.py`: `--att1-q4 PATH` and `--q4-tol FLOAT` flags; static weight comparison with max_abs_error, mean_abs_error, topk_overlap (numpy); cpu-q4 bench forward comparison against f32 reference; `q4_static` key in JSON report; q4 token divergence treated as `note` not `fail`.
+- `compiler/read_att1.py`: full q4 decode support (`_dequantize_q4()`) — unpacks nibbles, sign-extends, multiplies by group scale; `Att1Tensor.flags` field reads `flags` from descriptor byte offset 120.
+- `check_q4_source_comparison()` added to `tests/test_bench_smoke.c`; Python-skippable; 3-part test: key=value, --report, --report-json.
+- `docs/quantization.md` §"Q4 source comparison and tolerance policy (M84)" added.
+- `docs/real_model_conversion.md` M84 table row added.
+- `make test` passes.
 
 Milestone 83 complete:
 - `compiler/convert_llama_to_att1.py`: auto-discovers `model.safetensors` inside `--model-dir` when `--safetensors` is not specified and `--weight-format q4` (or q8) is used.

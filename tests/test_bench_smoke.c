@@ -1872,6 +1872,115 @@ static int check_q4_conversion(void)
 }
 
 /*
+ * check_q4_source_comparison() — M84
+ *
+ * Python-skippable.  Requires numpy.  Validates the q4 static comparison and
+ * forward-pass bench path in compare_att1_to_source.py using the checked-in
+ * m63 fixture and the real_tiny_q4 artifact:
+ *   1. Key=value output with --att1-q4: checks q4_tensors_checked,
+ *      q4_max_abs_error, q4_bench_last_token, result=pass.
+ *   2. --report with --att1-q4: checks q4_status and report: ok.
+ *   3. --report-json with --att1-q4: checks JSON keys q4_static and forward.
+ *
+ * The real_tiny_q4 artifact is the m63 fixture converted to q4 (M81), stored
+ * at models/real_tiny_q4/model.att1.
+ */
+static int check_q4_source_comparison(void)
+{
+    char output[16384];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+    if (run_command("python3 -c 'import numpy' > /dev/null 2>&1") != 0) {
+        return 0; /* skip — numpy not installed */
+    }
+
+    /* 1. Key=value comparison with --att1-q4. */
+    if (run_command(
+            "python3 compiler/compare_att1_to_source.py"
+            " --safetensors compiler/fixtures/m63_llama_2l.safetensors"
+            " --config compiler/fixtures/m63_llama_config.json"
+            " --att1-f32 models/m63_f32/model.att1"
+            " --att1-q4 models/real_tiny_q4/model.att1"
+            " --prompt-ids 5,20,40"
+            " > build/m84_q4_kv.txt 2>&1") != 0) {
+        fputs("q4_source_comparison: key=value run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m84_q4_kv.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "q4_tensors_checked:") == NULL) {
+        fputs("q4_source_comparison: q4_tensors_checked missing\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "q4_max_abs_error:") == NULL) {
+        fputs("q4_source_comparison: q4_max_abs_error missing\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "q4_bench_last_token:") == NULL) {
+        fputs("q4_source_comparison: q4_bench_last_token missing\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "result:              pass") == NULL) {
+        fputs("q4_source_comparison: result not pass\n", stderr);
+        return -1;
+    }
+
+    /* 2. --report output. */
+    if (run_command(
+            "python3 compiler/compare_att1_to_source.py"
+            " --safetensors compiler/fixtures/m63_llama_2l.safetensors"
+            " --config compiler/fixtures/m63_llama_config.json"
+            " --att1-f32 models/m63_f32/model.att1"
+            " --att1-q4 models/real_tiny_q4/model.att1"
+            " --prompt-ids 5,20,40"
+            " --report"
+            " > build/m84_q4_report.txt 2>&1") != 0) {
+        fputs("q4_source_comparison: --report run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m84_q4_report.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "q4_status:") == NULL) {
+        fputs("q4_source_comparison: q4_status missing from report\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "report:              ok") == NULL) {
+        fputs("q4_source_comparison: report: ok missing\n", stderr);
+        return -1;
+    }
+
+    /* 3. --report-json output. */
+    if (run_command(
+            "python3 compiler/compare_att1_to_source.py"
+            " --safetensors compiler/fixtures/m63_llama_2l.safetensors"
+            " --config compiler/fixtures/m63_llama_config.json"
+            " --att1-f32 models/m63_f32/model.att1"
+            " --att1-q4 models/real_tiny_q4/model.att1"
+            " --prompt-ids 5,20,40"
+            " --report-json build/m84_q4_rpt.json"
+            " > /dev/null 2>&1") != 0) {
+        fputs("q4_source_comparison: --report-json run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m84_q4_rpt.json", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "\"q4_static\"") == NULL) ||
+        (strstr(output, "\"forward\"")   == NULL) ||
+        (strstr(output, "\"result\"")    == NULL)) {
+        fputs("q4_source_comparison: JSON missing expected keys\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * check_public_q4_smoke() — M83
  *
  * Python-skippable.  Validates the --model-dir auto-discovery path for q4
@@ -2275,6 +2384,7 @@ int main(void)
         (check_bf16_coercion()            != 0) ||
         (check_q8_conversion()            != 0) ||
         (check_q4_conversion()            != 0) ||
+        (check_q4_source_comparison()     != 0) ||
         (check_public_q4_smoke()          != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
