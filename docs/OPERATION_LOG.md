@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 81: q4 Python converter integration (complete).
+Milestone 82: public-model q4 conversion plan (complete).
 
 ## Hard Rules
 
@@ -99,6 +99,7 @@ Milestone 81: q4 Python converter integration (complete).
 
 - Milestone 78: CPU q4 single-tile inference integration — `att1_infer_create_q4()` added; `cpu-q4` backend (`src/backend_cpu_q4.c`) registered with `matmul_q8xf32=NULL` to prevent silent q8 fallback; zero-copy q4 weight views via `att1_model_view_tensor_q4()` and `att1_model_view_validate_decoder_q4()`; q4 attention forward (`att1_attention_forward_backend_q4()`) and transformer block forward (`att1_transformer_block_forward_backend_q4()`) added calling `att1_matmul_q4xf32()` directly; q4 output projection in `att1_infer_decode_token()`; `tests/test_infer_q4.c` added (7 cases: create and decode, backend name, logit count, f32-model rejection, q4 rejected by f32 create, position advance, f32 path unchanged); `models/q4_tiny/model.att1` fixture shapes corrected (non-square weight matrices stored with output rows first); no CUDA q4, no q4 cluster, no q4 converter CLI flag. `make test` passes (53 tests).
 - Milestone 79: CPU q4 cluster inference integration — `att1_cluster_infer_create_q4()` added to `src/cluster_infer.c` and declared in `include/att1_cluster_infer.h`; `att1_cluster_q4_layer` typedef mirrors q8 counterpart; `cluster_prepare_q4()` performs zero-copy views via `att1_model_view_tensor_q4()` and `att1_model_view_output_norm()`; `att1_cluster_infer_decode_token()` has a `use_q4` branch calling `att1_transformer_block_forward_backend_q4()` in the layer loop and `att1_matmul_q4xf32()` directly for output projection; `att1_cluster_infer_set_backend()` updated to call `cluster_prepare_q4()` when a `cpu-q4` backend is supplied; `ATT1_SHARD_PLAN_METADATA` returns `ATT1_ERR_UNSUPPORTED` for q4 cluster (no runtime-quantize path needed since q4 is always file-loaded); `tests/test_cluster_infer_q4.c` added (8 cases: create and decode, backend name, logit count, f32-model rejected, f32 path unchanged, position advances, fabric packets nonzero, metadata plan rejected); no CUDA q4, no q4 converter CLI flag. `make test` passes (61 tests).
+- Milestone 82: public-model q4 conversion plan — documentation-only spec for converting `HuggingFaceTB/SmolLM2-135M` to a q4 `.att1` artifact; 211 eligible q4 tensors (7 per layer × 30 + output.weight), tok_embeddings and norms stay F32, group_size=32; size estimates F32 ≈ 540 MB / Q8 ≈ 235 MB / Q4 ≈ 190 MB; tolerance targets (F32 vs Q4 < 4.0, F32 vs Q8 < 1.0); validation flow, failure cases, CUDA q4 unsupported note; M83–M85 future milestone split; `docs/quantization.md`, `docs/real_model_conversion.md`, `docs/real_tiny_model_import.md` updated. No C source change. No Makefile change. No `.att1` format change. `make test` passes.
 
 ## Next Prompt for Codex
 
@@ -164,6 +165,15 @@ Milestone 23 complete:
 - Default CPU-only build remains CUDA-free.
 - CUDA=1 tests pass on RTX 3090 host.
 - Full CUDA q8 inference is still not implemented.
+
+Milestone 82 complete:
+- Documentation-only; no C source change, no Makefile change, no `.att1` format change.
+- Full q4 public-model conversion plan for `HuggingFaceTB/SmolLM2-135M` added to `docs/quantization.md` §"Public-model q4 conversion plan (M82)".
+- Covered: source compatibility requirements, local directory layout, 211 eligible q4 tensors (7 per layer × 30 + output.weight), F32 tensors (tok_embeddings + norms), group_size=32 policy, scale/packing/determinism rules, size estimates (F32 ≈ 540 MB, Q8 ≈ 235 MB, Q4 ≈ 190 MB), tolerance expectations (F32 vs Q4 < 4.0), validation flow, failure cases, CUDA q4 unsupported.
+- M83–M85 future milestone split defined.
+- `docs/real_model_conversion.md` §"Public-model q4 conversion plan (Milestone 82)" and future table entry added.
+- `docs/real_tiny_model_import.md` §"M82" added.
+- `make test` passes (no test count change; documentation-only milestone).
 
 Milestone 81 complete:
 - `compiler/convert_llama_to_att1.py` extended with `--weight-format q4` support.

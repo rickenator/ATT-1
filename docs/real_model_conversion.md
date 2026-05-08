@@ -587,6 +587,56 @@ No tokenizer assets, public weights, or generated public `.att1` artifacts
 are committed.  Runtime remains C11, the `.att1` format is unchanged, q4 is
 not implemented, and BPE/SentencePiece parsing remains out of C.
 
+## Public-model q4 conversion plan (Milestone 82)
+
+Documentation-only specification.  No C source change.  No Makefile change.
+No `.att1` format change.  No public artifacts committed.
+
+**Goal:** define the complete conversion and validation plan for producing a
+q4 `.att1` artifact from `HuggingFaceTB/SmolLM2-135M` before any code is
+written, so that M83 can proceed without design ambiguity.
+
+### Q4 eligibility (SmolLM2-135M)
+
+- All 2D projection and output tensors are q4-eligible: 7 tensors per layer
+  × 30 layers + `output.weight` = **211 q4 tensors**.
+- `tok_embeddings.weight`, all norm vectors, stay F32.
+- `group_size = 32` (default); all eligible `in_dim` values (576, 1536) are
+  divisible by 32.
+- GQA wk/wv tensors (`[576, 192]` F32) satisfy eligibility: in_dim = 576 ≥ 32.
+
+### Expected artifact paths (outside Git)
+
+```
+~/Models/SmolLM2-135M/model.safetensors   # source, BF16, ≈ 270 MB
+~/Models/att1/SmolLM2-135M/model_f32.att1 # ≈ 540 MB
+~/Models/att1/SmolLM2-135M/model_q8.att1  # ≈ 235 MB
+~/Models/att1/SmolLM2-135M/model_q4.att1  # ≈ 190 MB  (M83)
+```
+
+### Expected size reduction
+
+| Format | ≈ Size | vs F32 |
+|--------|--------|--------|
+| F32 | 540 MB | 1× |
+| Q8 | 235 MB | 2.3× smaller |
+| Q4 | 190 MB | 2.8× smaller |
+
+The gain is limited because the embedding table (≈ 108 MB F32) stays F32 in
+all formats.  The projection-layer-only Q4 reduction is ≈ 5.3× vs F32.
+
+### Tolerance expectations
+
+| Comparison | Static max_abs_error target | Token divergence |
+|------------|---------------------------|-----------------|
+| F32 vs Q8 | < 1.0 | Low |
+| F32 vs Q4 | < 4.0 | Moderate |
+| Q8 vs Q4 | < 3.5 | Similar to F32 vs Q4 |
+
+Full specification (nibble order, scale storage, determinism rules, failure
+cases, validation commands) is in `docs/quantization.md` §"Public-model q4
+conversion plan (M82)".
+
 ### Future milestone sequence
 
 | Milestone | Goal |
@@ -627,3 +677,4 @@ not implemented, and BPE/SentencePiece parsing remains out of C.
 | M79 | CPU q4 cluster inference: `att1_cluster_infer_create_q4()`, q4 cluster decode, `test_cluster_infer_q4`. |
 | M80 | q4 benchmark and trace integration: `att1-bench --backend cpu-q4` single and cluster, `test_q4_bench`, `test_backend_matrix` extended, `cuda-q4` rejected at arg-parse. |
 | M81 | q4 Python converter integration: `--weight-format q4` in `convert_llama_to_att1.py`; `models/real_tiny_q4/model.att1` from m63 fixture (vocab=64, d_model=32); `check_real_tiny_q4` in `test_converter_validation.c`; `check_q4_conversion` smoke test. |
+| M82 | Public-model q4 conversion plan: documentation-only spec for converting SmolLM2-135M to q4 `.att1`; eligible tensors, group-size policy, size estimates (≈190 MB vs ≈540 MB F32), tolerance expectations, validation flow, and failure cases documented in `docs/quantization.md`. |

@@ -2148,6 +2148,33 @@ required by `att1_matmul_q4xf32`.
 
 ---
 
+## M82 — public-model q4 conversion plan (complete)
+
+**Goal:** Specify how `HuggingFaceTB/SmolLM2-135M` will be converted to a q4
+`.att1` artifact before any implementation code is written.
+
+Documentation-only.  No C source change.  No Makefile change.  No `.att1`
+format change.  No public weights or artifacts committed.
+
+**Key decisions:**
+
+- `group_size = 32` (default); all eligible `in_dim` values (576, 1536) are
+  divisible by 32.
+- 211 q4 tensors per artifact (7 per layer × 30 layers + `output.weight`).
+- `tok_embeddings.weight` and all norm vectors remain F32.
+- GQA wk/wv shapes (`[576, 192]` F32) are q4-eligible; in_dim = 576 ≥ 32.
+- Expected artifact size: F32 ≈ 540 MB, Q8 ≈ 235 MB, Q4 ≈ 190 MB.
+- Tolerance targets: F32 vs Q4 max_abs_error < 4.0; F32 vs Q8 < 1.0.
+- CUDA q4 remains unsupported.
+
+Full spec in `docs/quantization.md` §"Public-model q4 conversion plan (M82)"
+and `docs/real_model_conversion.md` §"Public-model q4 conversion plan
+(Milestone 82)".
+
+`make test` passes after M82.
+
+---
+
 ## Related Documents
 
 - [real_model_conversion.md](real_model_conversion.md) — existing converter

@@ -1007,3 +1007,183 @@ python3 compiler/convert_llama_to_att1.py \
 |------|------|----------|
 | `check_real_tiny_q4` | `test_converter_validation.c` | inspect q4 fields, cpu-q4 single + cluster on checked-in artifact |
 | `check_q4_conversion` | `test_bench_smoke.c` | Python-skippable: convert, inspect, cpu-q4 single + cluster from m63 fixture |
+
+---
+
+## Public-model q4 conversion plan (M82)
+
+This section specifies how `HuggingFaceTB/SmolLM2-135M` (the selected public
+model from M64–M65) will be converted to a q4 `.att1` artifact.  No
+implementation changes are made in M82; the implementation is deferred to M83.
+
+### Source model requirements
+
+| Field | Expected value |
+|-------|---------------|
+| `model_type` | `llama` |
+| `hidden_size` (`d_model`) | 576 |
+| `intermediate_size` (`d_ff`) | 1536 |
+| `num_hidden_layers` | 30 |
+| `num_attention_heads` | 9 |
+| `num_key_value_heads` | 3 (GQA 3:1) |
+| `vocab_size` | 49152 |
+| Source dtype | BF16 (coerced to F32 by `load_safetensors.py`) |
+| Safetensors shards | 1 (`model.safetensors`, ≈ 270 MB) |
+
+Verify compatibility before conversion:
+
+```sh
+python3 compiler/check_llama_compat.py ~/Models/SmolLM2-135M
+```
+
+Expected output: `compat: pass`, `required_changes: none`.
+
+### Local directory layout
+
+```
+~/Models/SmolLM2-135M/          # source weights — NOT in Git
+    model.safetensors            # ≈ 270 MB BF16
+    config.json
+    tokenizer.json
+    tokenizer_config.json
+    special_tokens_map.json
+
+~/Models/att1/SmolLM2-135M/     # generated artifacts — NOT in Git
+    model_f32.att1               # ≈ 540 MB
+    model_q8.att1                # ≈ 235 MB
+    model_q4.att1                # ≈ 190 MB  (M83 adds this)
+    prompt.ids                   # external token IDs file
+    source_comparison.json       # optional compare report
+```
+
+### Q4 eligibility rules
+
+A tensor is stored as q4 if all of the following hold:
+
+1. 2D tensor (not 1D norm vector).
+2. Name is not `tok_embeddings.weight`.
+3. The in-dimension (`f32_shape[0]`, or the q4 `cols` dimension after
+   transpose) is ≥ `ATT1_Q4_GROUP_SIZE_MIN` (16) and divisible by
+   `group_size` (32).
+
+For SmolLM2-135M with `group_size=32` the eligible tensors in each layer are:
+
+| ATT-1 name | F32 shape `[in, out]` | Q4 shape `[out, in]` |
+|------------|----------------------|---------------------|
+| `layers.N.attention.wq.weight` | `[576, 576]` | `[576, 576]` |
+| `layers.N.attention.wk.weight` | `[576, 192]` | `[192, 576]` |
+| `layers.N.attention.wv.weight` | `[576, 192]` | `[192, 576]` |
+| `layers.N.attention.wo.weight` | `[576, 576]` | `[576, 576]` |
+| `layers.N.feed_forward.w_gate.weight` | `[576, 1536]` | `[1536, 576]` |
+| `layers.N.feed_forward.w_up.weight` | `[576, 1536]` | `[1536, 576]` |
+| `layers.N.feed_forward.w_down.weight` | `[1536, 576]` | `[576, 1536]` |
+
+Plus `output.weight` (lm_head): F32 ATT-1 shape `[576, 49152]`, q4 shape
+`[49152, 576]`.  Total: 7 tensors × 30 layers + 1 = **211 q4 tensors**.
+
+Tensors that remain F32:
+
+| Tensor | Reason |
+|--------|--------|
+| `tok_embeddings.weight` | Explicitly excluded by eligibility rule |
+| `layers.N.attention_norm.weight` | 1D (576 elements); not 2D |
+| `layers.N.ffn_norm.weight` | 1D (576 elements); not 2D |
+| `output_norm.weight` | 1D (576 elements); not 2D |
+
+### Q4 quantization policy
+
+| Parameter | Value |
+|-----------|-------|
+| Group size | 32 (`ATT1_Q4_GROUP_SIZE_DEFAULT`) |
+| Range | Symmetric signed int4, `[-7, 7]` (zero point = 0) |
+| Scale storage | One float32 scale per group, stored after all packed bytes |
+| Packing | Low nibble = even-index element, high nibble = odd-index element |
+| Scale for zero group | 1.0 (avoids NaN during dequantization) |
+| Non-finite input | Rejected by `_q4_quantize()` (converter aborts) |
+| Determinism | Given fixed `group_size` and float32 source values, output is bit-exact across runs |
+
+### Expected artifact sizes (SmolLM2-135M)
+
+| Format | Projection tensors | Embed + norms | Total | vs F32 |
+|--------|--------------------|---------------|-------|--------|
+| F32 | ≈ 430 MB | ≈ 110 MB | ≈ 540 MB | 1× |
+| Q8 | ≈ 130 MB | ≈ 110 MB | ≈ 235 MB | ≈ 2.3× smaller |
+| Q4 | ≈ 80 MB | ≈ 110 MB | ≈ 190 MB | ≈ 2.8× smaller, ≈ 1.25× vs Q8 |
+
+Note: the embedding table (`tok_embeddings.weight`, ≈ 108 MB F32) is the
+largest single tensor and stays F32 in all three formats.  This limits the
+overall Q4/Q8 ratio; the projection-tensor-only reduction is ≈ 5.3× F32→Q4.
+
+### Tolerance expectations
+
+These are forward projections based on m63 fixture results and standard q4
+behaviour; they will be validated in M84.
+
+| Comparison | Static max_abs_error | Token divergence |
+|-----------|---------------------|-----------------|
+| F32 vs Q8 | < 1.0 | Low; most high-confidence next tokens match |
+| F32 vs Q4 | < 4.0 | Moderate; expect occasional divergence on uncertain positions |
+| Q8 vs Q4 | < 3.5 | Similar to F32 vs Q4 |
+
+### Validation flow (M83+)
+
+```sh
+# 1. Compatibility check
+python3 compiler/check_llama_compat.py ~/Models/SmolLM2-135M
+
+# 2. Convert to q4
+python3 compiler/convert_llama_to_att1.py \
+    --config ~/Models/SmolLM2-135M/config.json \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --weight-format q4 \
+    --out ~/Models/att1/SmolLM2-135M/model_q4.att1
+
+# 3. Inspect
+./build/att1-inspect ~/Models/att1/SmolLM2-135M/model_q4.att1
+# expect: 211 dtype_name=q4 tensors, quant=grouped-q4-g32
+
+# 4. cpu-q4 single bench
+./build/att1-bench \
+    --model ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokenizer external --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 5 --mode single --backend cpu-q4
+
+# 5. cpu-q4 cluster bench
+./build/att1-bench \
+    --model ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokenizer external --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 5 --mode cluster --tiles 2 --backend cpu-q4
+
+# 6. Source comparison (numpy required)
+python3 compiler/compare_att1_to_source.py \
+    --safetensors ~/Models/SmolLM2-135M/model.safetensors \
+    --config ~/Models/SmolLM2-135M/config.json \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --report
+```
+
+Source comparison with a q4 artifact is not yet wired into
+`compare_att1_to_source.py`; that is deferred to M84.
+
+### Failure cases
+
+| Failure | Symptom | Cause |
+|---------|---------|-------|
+| Unsupported source dtype | Converter aborts; `LoadError` from `load_safetensors.py` | INT8, INT32, or other non-coercible dtype in safetensors |
+| Shape not q4-eligible | Converter aborts with `ValueError` in `_is_q4_eligible()` | `in_dim < 16` or `in_dim % group_size != 0` |
+| Unsupported group size | Converter aborts | `group_size` not a power of two in `[16, 128]`; `cols % group_size != 0` in loader |
+| Missing config field | Converter aborts with `KeyError` in config resolver | `hidden_size`, `num_hidden_layers`, etc. absent from `config.json` |
+| Disk too small | OS error during write | `model_q4.att1` requires ≈ 190 MB; ensure ≥ 250 MB free |
+| RAM too small | OS kill or OOM during conversion | Loading all BF16 weights at once requires ≈ 270–540 MB RAM; ensure ≥ 1 GB free |
+
+CUDA q4 inference is not supported and will be rejected at argument-parse time
+(`--backend cuda-q4` exits with a clear error; see M80).
+
+### Future milestones
+
+| Milestone | Goal |
+|-----------|------|
+| M83 | Public-model q4 converter path: run `--weight-format q4` on SmolLM2-135M; validate `model_q4.att1` with `att1-inspect` and cpu-q4 single + cluster bench |
+| M84 | Public-model q4 validation report: extend `compare_att1_to_source.py` to accept a q4 artifact; static and forward-pass tolerance checks vs f32/q8 references; structured report |
+| M85 | CUDA q4 planning/prototype: define CUDA q4 kernel approach, memory layout on device, and integration points with the existing CUDA backend |
