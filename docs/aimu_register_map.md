@@ -1066,7 +1066,7 @@ of `docs/aimu_pcie_command_requirements.md`).
 | M105 | PCIe command queue simulator | Python or C shim over POSIX shared memory that models the command ring buffer (§4), processes 64-byte command packets, writes completion records, and validates checksums; smoke test: submit `LOAD_TENSOR_TILE` + `EXEC_MATMUL` against the tiny dummy model and compare result to `att1-bench cpu-f32` |
 | M106 | AIMU device discovery simulator | **Complete.** Implemented as an in-process C11 simulator (`include/att1_aimu_device.h`, `src/aimu_device.c`). See §14 for the full struct-to-register mapping. |
 | M107 | DMA descriptor simulator | **Complete.** Implemented as an in-process C11 simulator (`include/att1_aimu_dma.h`, `src/aimu_dma.c`). See §15 for the full descriptor-to-register mapping. |
-| M108 | Command trace/counter integration | Wire the §7 counter registers and §8 trace buffer into the M105/M106 simulator; export trace records in `att1_trace_t`-compatible JSON for diff against `att1-bench` output |
+| M108 | Command trace/counter integration | **Complete.** Implemented as an in-process C11 unified snapshot layer (`include/att1_aimu_trace.h`, `src/aimu_trace.c`). See §16 for the full snapshot-to-register mapping. |
 | M109 | Placement-report-to-command-plan mapper | Python tool that reads an M100 placement report and produces an ordered list of `LOAD_TENSOR_TILE` + `EXEC_*` commands with register field values filled in; validates command plan against placement report tensor/tile assignments |
 | M110 | Minimal PCIe/AIMU prototype design review | Engineering review: reconcile M104–M109 artifacts, finalize BAR0 offset assignments, resolve open questions from §14, produce hardware bringup checklist |
 
@@ -1279,6 +1279,99 @@ Use `att1_aimu_device_query_tile()` to bound `byte_length` against the tile's
 `att1_aimu_dma_submit()`.  This is not enforced automatically by M107 (the
 DMA simulator does not hold a device reference); the integration is the
 caller's responsibility.
+
+---
+
+## 16. M108 In-Process Trace/Counter Snapshot
+
+M108 delivers a pure C11, in-process unified snapshot layer that aggregates
+counter state from the M105 command queue, M106 device/tile, and M107 DMA
+simulators into a single `att1_aimu_trace_snapshot` struct.  There is **no
+real PCIe bus, no MMIO, and no kernel driver** involved.
+
+### 16.1 Snapshot Struct Sub-Fields and Register Mapping
+
+| Sub-struct field | C type | Maps to M104 §/register |
+|---|---|---|
+| `meta.trace_version` | `uint32_t` | §8 TRACE_CONTROL (version) |
+| `meta.snapshot_id` | `uint32_t` | §8 TRACE_SNAPSHOT_CONTROL sequence |
+| `meta.device_id` | `uint32_t` | §2 DEVICE_ID |
+| `meta.tile_count` | `uint32_t` | §2 TILE_COUNT |
+| `meta.event_count` | `uint64_t` | §8 TRACE_WRITE_PTR (placeholder) |
+| `meta.dropped_events` | `uint64_t` | §8 TRACE_DROPPED_EVENTS (placeholder) |
+| `meta.status` | `uint32_t` | ATT1_AIMU_TRACE_STATUS_* |
+| `cmdq.commands_submitted` | `uint64_t` | §7 CNT_COMMANDS_ISSUED |
+| `cmdq.commands_completed` | `uint64_t` | §7 CNT_COMMANDS_COMPLETED |
+| `cmdq.commands_failed` | `uint64_t` | §7 (derived: non-OK, non-unsupported) |
+| `cmdq.queue_full_count` | `uint64_t` | §4 CQ_STATUS queue-full events |
+| `cmdq.unsupported_commands` | `uint64_t` | §9 ERR_UNSUPPORTED_OP occurrences |
+| `cmdq.fence_value` | `uint64_t` | §4 CQ_FENCE_VALUE |
+| `device.device_resets` | `uint64_t` | §2 RESET_CONTROL device-level resets |
+| `device.tile_resets` | `uint64_t` | §3 TILE_RESET_CONTROL (sum across tiles) |
+| `device.tile_errors` | `uint64_t` | §3 TILE_STATUS.state == ERROR (count) |
+| `dma.dma_submitted` | `uint64_t` | §5 DMA_STATUS submitted descriptors |
+| `dma.dma_completed` | `uint64_t` | §5 DMA_STATUS completed descriptors |
+| `dma.dma_failed` | `uint64_t` | §5 DMA_ERROR_STATUS total |
+| `dma.bytes_host_to_device` | `uint64_t` | §7 (derived H2D byte counter) |
+| `dma.bytes_device_to_host` | `uint64_t` | §7 (derived D2H byte counter) |
+| `dma.bytes_device_to_device` | `uint64_t` | §7 (derived D2D byte counter) |
+| `dma.alignment_failures` | `uint64_t` | §9 ERR_ALIGNMENT DMA occurrences |
+| `dma.range_failures` | `uint64_t` | §9 ERR_DMA_FAULT occurrences |
+| `dma.unsupported_flags` | `uint64_t` | §9 ERR_INVALID_COMMAND flag rejects |
+| `fabric.packets_sent` | `uint64_t` | §6 FABRIC_PACKET_COUNTER_LO/HI (placeholder) |
+| `fabric.packets_received` | `uint64_t` | §6 (derived, placeholder) |
+| `fabric.payload_bytes_sent` | `uint64_t` | §6 FABRIC_PAYLOAD_BYTES_LO/HI (placeholder) |
+| `fabric.payload_bytes_received` | `uint64_t` | §6 (derived, placeholder) |
+| `fabric.congestion_events` | `uint64_t` | §6 FABRIC_CONGESTION_COUNTER (placeholder) |
+
+### 16.2 Status Codes
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `ATT1_AIMU_TRACE_STATUS_OK` | `0` | All sources were non-NULL in `snapshot_all` |
+| `ATT1_AIMU_TRACE_STATUS_PARTIAL` | `1` | One or more sources were NULL (skipped) |
+| `ATT1_AIMU_TRACE_STATUS_EMPTY` | `2` | No snapshot has been taken since create/reset |
+
+### 16.3 API Reference
+
+| Function | Returns | Effect |
+|---|---|---|
+| `att1_aimu_trace_create(out)` | `ATT1_OK` | Allocate trace; status = EMPTY |
+| `att1_aimu_trace_destroy(t)` | void | Free trace; NULL safe |
+| `att1_aimu_trace_snapshot_cmdq(t, q)` | `ATT1_OK` | Copy `q->counters` → `snapshot.cmdq`; no snapshot_id change |
+| `att1_aimu_trace_snapshot_device(t, dev)` | `ATT1_OK` | Derive device/tile counters; update `meta.tile_count` |
+| `att1_aimu_trace_snapshot_dma(t, sim)` | `ATT1_OK` | Copy `sim->counters` → `snapshot.dma` |
+| `att1_aimu_trace_snapshot_all(t, q, dev, dma)` | `ATT1_OK` | Snapshot all non-NULL sources; increment `snapshot_id`; set `status` |
+| `att1_aimu_trace_get_snapshot(t, out)` | `ATT1_OK` | Copy `t->snapshot` → `*out` |
+| `att1_aimu_trace_reset(t)` | `ATT1_OK` | Zero trace-local snapshot; does not reset source simulators |
+| `att1_aimu_trace_render(snap, f)` | `ATT1_OK` | Write human-readable summary to `FILE *f` |
+| `att1_aimu_trace_status_name(s)` | `const char *` | "OK", "PARTIAL", "EMPTY", or "UNKNOWN" |
+
+### 16.4 Snapshot Behaviour
+
+- `snapshot_cmdq`, `snapshot_device`, and `snapshot_dma` each update only
+  their respective sub-struct fields.  They do **not** increment `snapshot_id`
+  and do **not** mutate any counter in the source simulator.
+- `snapshot_all` calls all three individual functions (skipping NULL sources),
+  then increments `snapshot_id`, then sets `status` to `OK` if all three
+  sources were non-NULL or `PARTIAL` otherwise.
+- `reset` clears the trace-local snapshot to zero and restores `status = EMPTY`
+  and `trace_version = ATT1_AIMU_TRACE_VERSION`.  It does **not** call
+  `att1_aimu_dma_reset_counters`, `att1_aimu_cmdq` resets, or any device reset.
+- Fabric counters are always zero in M108; they will be wired in M109+ when the
+  fabric simulator exposes its own counter API.
+
+### 16.5 Relationship to M109 Placement-to-Command-Plan Mapper
+
+The M109 mapper will consume `att1_aimu_trace_snapshot` structs as post-execution
+evidence that a command plan ran correctly:
+
+1. Before execution: record a baseline snapshot via `snapshot_all`.
+2. Submit the command plan via M105 `att1_aimu_cmdq_submit` + `dispatch_one`.
+3. After execution: record a second snapshot and compute the delta.
+4. Validate that `cmdq.commands_completed` increased by the expected count,
+   `dma.bytes_host_to_device` reflects the tensor sizes in the placement report,
+   and `device.tile_errors` remains zero.
 
 ---
 
