@@ -3226,6 +3226,149 @@ static int check_placement_validator_smoke(void)
     return 0;
 }
 
+/*
+ * check_placement_report_smoke() — M100
+ *
+ * Exercises att1-size --placement-report-json with nine scenarios:
+ *
+ *  1. tiny-dummy (default f32, 1 tile): exit 0; existing preset output
+ *     unchanged; JSON report file created.
+ *  2. M99 validator passes on the tiny-dummy report: exit 0,
+ *     "validation: pass".
+ *  3. gpt-oss-120b-shape (q4, 8 tiles, ctx 8192): exit 0; JSON created.
+ *  4. M99 validator passes on the gpt-oss report: exit 0.
+ *  5. JSON report has required top-level keys: report_version, header,
+ *     tiles, tensors, warnings, failures, remediation.
+ *  6. header contains tile_count, dtype, quantization_family.
+ *  7. tiles array is non-empty; tensors array is non-empty.
+ *  8. Bad output path fails cleanly (non-zero exit).
+ *  9. Existing --preset tiny-dummy (no placement report) still exits 0
+ *     and produces preset output.
+ */
+static int check_placement_report_smoke(void)
+{
+    char output[65536];
+
+    /* 1. tiny-dummy: exit 0; creates JSON file. */
+    if (run_command(
+            "./build/att1-size --preset tiny-dummy"
+            " --placement-report-json build/m100_tiny_smoke.json"
+            " > build/m100_tiny_smoke.txt 2>&1") != 0) {
+        fputs("placement_report: tiny-dummy exited non-zero\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m100_tiny_smoke.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "preset=tiny-dummy") == NULL) {
+        fputs("placement_report: tiny-dummy missing preset line\n", stderr);
+        return -1;
+    }
+
+    /* 2. M99 validator passes on tiny-dummy report. */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report build/m100_tiny_smoke.json"
+            " > build/m100_tiny_valid.txt 2>&1") != 0) {
+        fputs("placement_report: M99 validator failed on tiny-dummy report\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m100_tiny_valid.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: pass") == NULL) {
+        fputs("placement_report: tiny-dummy report missing 'validation: pass'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 3. gpt-oss-120b-shape (q4, 8 tiles): exit 0; JSON created. */
+    if (run_command(
+            "./build/att1-size --preset gpt-oss-120b-shape"
+            " --tiles 8 --context 8192 --dtype q4"
+            " --placement-report-json build/m100_gptoss_smoke.json"
+            " > build/m100_gptoss_smoke.txt 2>&1") != 0) {
+        fputs("placement_report: gpt-oss exited non-zero\n", stderr);
+        return -1;
+    }
+
+    /* 4. M99 validator passes on gpt-oss report. */
+    if (run_command(
+            "python3 compiler/validate_tensor_placement_report.py"
+            " --report build/m100_gptoss_smoke.json"
+            " > build/m100_gptoss_valid.txt 2>&1") != 0) {
+        fputs("placement_report: M99 validator failed on gpt-oss report\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m100_gptoss_valid.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if (strstr(output, "validation: pass") == NULL) {
+        fputs("placement_report: gpt-oss report missing 'validation: pass'\n",
+              stderr);
+        return -1;
+    }
+
+    /* 5+6+7. Inspect tiny-dummy JSON for required top-level keys and content. */
+    if (read_file("build/m100_tiny_smoke.json", output, sizeof(output)) != 0) {
+        fputs("placement_report: cannot read tiny-dummy JSON\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"report_version\"")    == NULL) ||
+        (strstr(output, "\"header\"")            == NULL) ||
+        (strstr(output, "\"tiles\"")             == NULL) ||
+        (strstr(output, "\"tensors\"")           == NULL) ||
+        (strstr(output, "\"warnings\"")          == NULL) ||
+        (strstr(output, "\"failures\"")          == NULL) ||
+        (strstr(output, "\"remediation\"")       == NULL)) {
+        fputs("placement_report: tiny-dummy JSON missing required keys\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"tile_count\"")        == NULL) ||
+        (strstr(output, "\"dtype\"")             == NULL) ||
+        (strstr(output, "\"quantization_family\"") == NULL)) {
+        fputs("placement_report: tiny-dummy header missing expected fields\n",
+              stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"tile_id\"")           == NULL) ||
+        (strstr(output, "\"tensor_name\"")       == NULL)) {
+        fputs("placement_report: tiny-dummy JSON missing tile_id or tensor_name\n",
+              stderr);
+        return -1;
+    }
+
+    /* 8. Bad output path exits non-zero. */
+    if (run_command(
+            "./build/att1-size --preset tiny-dummy"
+            " --placement-report-json /nonexistent/dir/report.json"
+            " > build/m100_badpath.txt 2>&1") == 0) {
+        fputs("placement_report: bad output path should fail\n", stderr);
+        return -1;
+    }
+
+    /* 9. Existing --preset tiny-dummy (no --placement-report-json) unchanged. */
+    if (run_command(
+            "./build/att1-size --preset tiny-dummy"
+            " > build/m100_compat.txt 2>&1") != 0) {
+        fputs("placement_report: existing preset mode failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m100_compat.txt", output, sizeof(output)) != 0) {
+        return -1;
+    }
+    if ((strstr(output, "preset=tiny-dummy")      == NULL) ||
+        (strstr(output, "total_params=")          == NULL) ||
+        (strstr(output, "model_bytes_f32=")       == NULL)) {
+        fputs("placement_report: existing preset output changed\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -3256,7 +3399,8 @@ int main(void)
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0) ||
         (check_tile_capacity_smoke()      != 0) ||
-        (check_placement_validator_smoke() != 0)) {
+        (check_placement_validator_smoke() != 0) ||
+        (check_placement_report_smoke()   != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

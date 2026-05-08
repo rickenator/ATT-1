@@ -758,3 +758,75 @@ When `--report-json PATH` is used, the output file contains:
 The `status` field is `"pass"` or `"fail"`.  `total_errors` and
 `total_warnings` are non-negative integers.  `warnings` and `failures` are
 lists of violation records (same schema as §4.2 `violations`).
+
+---
+
+## 10. Report Emitter: att1-size --placement-report-json (Milestone 100)
+
+`att1-size` (the sizing/estimation tool) can emit a tensor-level placement
+report JSON file via `--placement-report-json PATH`.
+
+### 10.1 Usage
+
+```
+./build/att1-size --preset tiny-dummy \
+    [--tiles N] [--context N] [--dtype f32|q8|q4] \
+    [--tile-memory-mib N] [--sessions N] \
+    [--target-tokens-per-sec N] [--fabric-gib-sec N] \
+    --placement-report-json PATH
+```
+
+Works with all three input modes: `--preset`, `--config`, and manual shape
+arguments.  The `--placement-report-json` option is independent of `--json`
+(the existing machine-readable scaling report) — both can be used together.
+
+### 10.2 Report Content
+
+The emitted JSON follows the M98 schema (§1–§8 above) and passes the M99
+validator (`compiler/validate_tensor_placement_report.py`).
+
+**Header (§1):** model name, config source (`preset`/`config`/`config`),
+dtype (f16 is mapped to f32 since the validator does not accept f16),
+quantization family, shape summary, tile count, context length, sessions,
+tile memory capacity and fabric bandwidth if provided.
+
+**Tile records (§2):** one record per tile.  Uses layer-wise placement:
+tile `t` owns `ceil(n_layers / tile_count)` consecutive layers.  Tile 0
+holds `tok_embeddings`; the last tile holds `output_norm` and `lm_head`.
+Computes `model_bytes` (dtype-aware), `kv_bytes` (f32, per session),
+`activation_bytes_per_token`, `logits_bytes_per_token`,
+`fabric_payload_bytes_per_token` and `fabric_packets_per_token`.
+`capacity_status` and `bandwidth_status` are `UNKNOWN` when no tile memory
+or fabric bandwidth limit is provided; otherwise `PASS` / `WARN` / `FAIL`
+as per the §2 thresholds.
+
+**Tensor records (§3):** one record per major weight tensor per tile:
+`tok_embeddings`, per-layer `wq`, `wk`, `wv`, `wo`, `w_gate`, `w_up`,
+`w_down`, `attention_norm`, `ffn_norm`, plus `output.norm` and `output.weight`
+(lm_head) on the last tile.  All tensors use `replication_policy = unique`
+(layer-wise, no row-slicing).  `slice_start = 0`, `slice_end = dim0` (the
+full first dimension), so q4 group-size alignment rules are always satisfied.
+Norm vectors are always emitted as `dtype = f32` regardless of model dtype.
+
+**Warnings / failures (§4):** capacity overflow and bandwidth overflow tiles
+are recorded in `failures[]`; marginal tiles (WARN) in `warnings[]`.
+Synthetic/non-executable presets generate a warning entry.
+
+### 10.3 Passes M99 Validator
+
+- `--preset tiny-dummy`: validator exits 0, `validation: pass` (0 errors,
+  0 warnings with no capacity/bandwidth limits specified).
+- `--preset gpt-oss-120b-shape --tiles 8 --context 8192 --dtype q4`:
+  validator exits 0, `validation: pass` (1 synthetic warning, 0 errors).
+- Reports with capacity overflow tiles are valid JSON; the failures array
+  is populated but the report itself is well-formed.
+
+### 10.4 Non-goals for M100
+
+- No execution scheduling change.
+- No binary format change.
+- No CUDA change.
+- No q4/q8/f32 tolerance change.
+- The emitter uses architectural estimates, not measured tensor sizes;
+  it does not read or write `.att1` model files.
+- No cross-tile tensor slicing (all placements are full-tensor, layer-wise).

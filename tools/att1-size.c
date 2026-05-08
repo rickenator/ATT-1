@@ -80,7 +80,9 @@ static void usage(const char *argv0)
            "  --tile-memory-gib N      Per-tile SRAM budget in GiB (sets mib = N*1024)\n"
            "  --sessions N             Concurrent KV sessions for pressure estimate\n"
            "  --target-tokens-per-sec N  Target decode rate (tokens/sec)\n"
-           "  --fabric-gib-sec N       Fabric bandwidth (GiB/sec) for PASS/WARN/FAIL check\n",
+           "  --fabric-gib-sec N       Fabric bandwidth (GiB/sec) for PASS/WARN/FAIL check\n"
+           "\nM100 placement report:\n"
+           "  --placement-report-json PATH  Write M98-schema tensor placement report JSON to PATH\n",
            argv0, argv0, argv0);
 }
 
@@ -870,6 +872,615 @@ static void print_report_full(const model_shape *s, const char *dtype, int json_
     }
 }
 
+/* =========================================================================
+ * M100: Tensor-level placement report JSON emission
+ * ===================================================================== */
+
+/* Q4 default group size for placement report alignment checks. */
+#define M100_Q4_GS  32u
+
+/* Max per-tile issues tracked for warnings/failures arrays. */
+#define M100_MAX_ISSUES 512u
+
+/*
+ * Map user-supplied dtype to a validator-accepted dtype string.
+ * f16 is mapped to f32 because the M99 validator does not accept f16.
+ */
+static const char *m100_dtype(const char *dtype)
+{
+    if ((dtype == NULL) ||
+        (strcmp(dtype, "f32") == 0) ||
+        (strcmp(dtype, "f16") == 0)) {
+        return "f32";
+    }
+    if (strcmp(dtype, "q8")   == 0) { return "q8";   }
+    if (strcmp(dtype, "q4")   == 0) { return "q4";   }
+    if (strcmp(dtype, "bf16") == 0) { return "bf16"; }
+    return "f32";
+}
+
+/* Quantization family string for the given report dtype. */
+static const char *m100_qfamily(const char *dr)
+{
+    if (strcmp(dr, "q8") == 0) { return "per_row_q8";   }
+    if (strcmp(dr, "q4") == 0) { return "per_group_q4"; }
+    return "none";
+}
+
+/* Packed bytes for a matrix (rows * cols) under dr. */
+static uint64_t m100_packed(uint64_t rows, uint64_t cols, const char *dr)
+{
+    if (strcmp(dr, "q8") == 0) { return rows * cols; }
+    if (strcmp(dr, "q4") == 0) { return (rows * cols + 1u) / 2u; }
+    return rows * cols * 4u;
+}
+
+/* Q4 scale bytes: rows * ceil(cols / group_size) * sizeof(f16). */
+static uint64_t m100_scale(uint64_t rows, uint64_t cols)
+{
+    return rows * ((cols + M100_Q4_GS - 1u) / M100_Q4_GS) * 2u;
+}
+
+/* Packed bytes for a 1D vector (always treated as f32). */
+static uint64_t m100_vec_bytes(uint64_t dim)
+{
+    return dim * 4u;
+}
+
+/*
+ * Compute model storage bytes for tile_model_params under dr.
+ * Norms are always f32 (norm_bytes passed separately).
+ */
+static uint64_t m100_tile_model_bytes(uint64_t mat_params, uint64_t norm_bytes,
+                                      const char *dr)
+{
+    uint64_t mat_bytes;
+    if (strcmp(dr, "q8") == 0) { mat_bytes = mat_params; }
+    else if (strcmp(dr, "q4") == 0) { mat_bytes = (mat_params + 1u) / 2u; }
+    else { mat_bytes = mat_params * 4u; }
+    return mat_bytes + norm_bytes;
+}
+
+/*
+ * Emit one tensor placement record to fp.
+ *
+ * sep   — pointer to separator flag; set to 1 after first record.
+ * dim1  — 0 for 1D tensors (norms); > 0 for 2D matrices.
+ * 1D tensors are always emitted as dtype=f32 / quantization=none.
+ * All tensors use slice_axis=0, slice_start=0, slice_end=dim0 (no
+ * cross-tile splitting in layer-wise placement).
+ */
+static void m100_emit_tensor(
+        FILE *fp, int *sep,
+        uint64_t tid, const char *name, const char *cat, uint64_t layer,
+        uint64_t dim0, uint64_t dim1,   /* dim1=0 → 1D */
+        const char *dr, uint64_t owner_tile)
+{
+    const int   is_1d    = (dim1 == 0u);
+    const char *eff_dr   = is_1d ? "f32" : dr;
+    uint64_t    packed   = 0u;
+    uint64_t    scale    = 0u;
+
+    if (*sep) { fputs(",\n", fp); }
+    *sep = 1;
+
+    if (is_1d) {
+        packed = m100_vec_bytes(dim0);
+    } else {
+        packed = m100_packed(dim0, dim1, dr);
+        if (strcmp(dr, "q4") == 0) {
+            scale = m100_scale(dim0, dim1);
+        }
+    }
+
+    fprintf(fp,
+            "    {\n"
+            "      \"tensor_id\": %llu,\n"
+            "      \"tensor_name\": \"%s\",\n"
+            "      \"tensor_category\": \"%s\",\n"
+            "      \"layer\": %llu,\n",
+            (unsigned long long)tid, name, cat,
+            (unsigned long long)layer);
+
+    if (is_1d) {
+        fprintf(fp,
+                "      \"source_shape\": [%llu],\n"
+                "      \"placed_shape\": [%llu],\n",
+                (unsigned long long)dim0, (unsigned long long)dim0);
+    } else {
+        fprintf(fp,
+                "      \"source_shape\": [%llu, %llu],\n"
+                "      \"placed_shape\": [%llu, %llu],\n",
+                (unsigned long long)dim0, (unsigned long long)dim1,
+                (unsigned long long)dim0, (unsigned long long)dim1);
+    }
+
+    fprintf(fp, "      \"dtype\": \"%s\",\n", eff_dr);
+
+    if (strcmp(eff_dr, "q4") == 0) {
+        fprintf(fp,
+                "      \"quantization\": \"per_group_q4\",\n"
+                "      \"quantization_group_size\": %u,\n"
+                "      \"scale_bytes\": %llu,\n"
+                "      \"packed_bytes\": %llu,\n",
+                (unsigned)M100_Q4_GS,
+                (unsigned long long)scale,
+                (unsigned long long)packed);
+    } else if (strcmp(eff_dr, "q8") == 0) {
+        fprintf(fp,
+                "      \"quantization\": \"per_row_q8\",\n"
+                "      \"quantization_group_size\": 0,\n"
+                "      \"scale_bytes\": 0,\n"
+                "      \"packed_bytes\": %llu,\n",
+                (unsigned long long)packed);
+    } else {
+        fprintf(fp,
+                "      \"quantization\": \"none\",\n"
+                "      \"quantization_group_size\": 0,\n"
+                "      \"scale_bytes\": 0,\n"
+                "      \"packed_bytes\": %llu,\n",
+                (unsigned long long)packed);
+    }
+
+    fprintf(fp,
+            "      \"owner_tile\": %llu,\n"
+            "      \"owner_aimu\": %llu,\n"
+            "      \"slice_axis\": 0,\n"
+            "      \"slice_start\": 0,\n"
+            "      \"slice_end\": %llu,\n"
+            "      \"replication_policy\": \"unique\",\n"
+            "      \"routing_requirements\": \"none\",\n"
+            "      \"reduction_behavior\": \"none\",\n"
+            "      \"checksum\": \"0x0000000000000000\",\n"
+            "      \"placement_status\": \"placed\"\n"
+            "    }",
+            (unsigned long long)owner_tile,
+            (unsigned long long)owner_tile,
+            (unsigned long long)dim0);
+}
+
+/*
+ * Issue record used to accumulate per-tile capacity/bandwidth issues
+ * while writing the tiles section so they can be re-emitted in the
+ * warnings/failures arrays.
+ */
+typedef struct m100_issue {
+    int    is_error;      /* 1 = failures[], 0 = warnings[] */
+    char   msg[320];
+} m100_issue;
+
+/*
+ * write_placement_report_json() — M100
+ *
+ * Emit a tensor-level placement report JSON file conforming to the M98
+ * schema.  The report is generated from the estimated model shape and
+ * capacity options; it does not execute any inference.
+ *
+ * Returns 0 on success, -1 on error (message already printed to stderr).
+ */
+static int write_placement_report_json(
+        const char        *path,
+        const model_shape *s,
+        const char        *dtype_arg,
+        const capacity_opts *opts)
+{
+    FILE       *fp         = NULL;
+    const char *dr         = m100_dtype(dtype_arg);
+    const char *qf         = m100_qfamily(dr);
+    uint64_t    tile_count = (s->n_tiles > 0u) ? s->n_tiles : 1u;
+    uint64_t    ctx        = s->max_seq_len;
+    uint64_t    sessions   = ((opts != NULL) && (opts->sessions > 0u))
+                             ? opts->sessions : 1u;
+    uint64_t    lpt;    /* layers per tile (ceiling) */
+    uint64_t    t;
+    uint64_t    l;
+    uint64_t    tid;    /* running tensor_id counter */
+    int         tsep;   /* tensor-array separator flag */
+
+    /* Issue accumulator (capacity/bandwidth problems found during tile pass) */
+    m100_issue  issues[M100_MAX_ISSUES];
+    uint64_t    n_issues  = 0u;
+    int         n_warn    = 0;
+    int         n_fail    = 0;
+    int         first_sym = 1; /* synthetic-warning emitted flag */
+
+    (void)first_sym;
+
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        fprintf(stderr, "att1-size: cannot open --placement-report-json: %s\n",
+                path);
+        return -1;
+    }
+
+    lpt = div_round_up(s->n_layers, tile_count);
+
+    /* ================================================================
+     * Report header
+     * ============================================================= */
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"report_version\": 1,\n");
+    fprintf(fp, "  \"header\": {\n");
+    fprintf(fp, "    \"model_name\": \"%s\",\n",    s->name);
+    fprintf(fp, "    \"artifact_path\": \"\",\n");
+    fprintf(fp, "    \"config_source\": \"%s\",\n",
+            s->is_preset ? "preset" : "config");
+    fprintf(fp, "    \"dtype\": \"%s\",\n",              dr);
+    fprintf(fp, "    \"quantization_family\": \"%s\",\n", qf);
+    fprintf(fp, "    \"n_layers\": %llu,\n",   (unsigned long long)s->n_layers);
+    fprintf(fp, "    \"d_model\": %llu,\n",    (unsigned long long)s->d_model);
+    fprintf(fp, "    \"n_heads\": %llu,\n",    (unsigned long long)s->n_heads);
+    fprintf(fp, "    \"n_kv_heads\": %llu,\n", (unsigned long long)s->n_heads);
+    fprintf(fp, "    \"ffn_hidden\": %llu,\n", (unsigned long long)s->d_ff);
+    fprintf(fp, "    \"vocab_size\": %llu,\n", (unsigned long long)s->vocab_size);
+    fprintf(fp, "    \"tile_count\": %llu,\n", (unsigned long long)tile_count);
+
+    if ((opts != NULL) && (opts->tile_memory_mib > 0u)) {
+        fprintf(fp, "    \"tile_memory_mib\": %llu,\n",
+                (unsigned long long)opts->tile_memory_mib);
+    } else {
+        fprintf(fp, "    \"tile_memory_mib\": null,\n");
+    }
+    fprintf(fp, "    \"target_context_length\": %llu,\n", (unsigned long long)ctx);
+    fprintf(fp, "    \"target_sessions\": %llu,\n",       (unsigned long long)sessions);
+
+    if ((opts != NULL) && (opts->target_tps > 0u)) {
+        fprintf(fp, "    \"target_tokens_per_sec\": %llu,\n",
+                (unsigned long long)opts->target_tps);
+    } else {
+        fprintf(fp, "    \"target_tokens_per_sec\": null,\n");
+    }
+    if ((opts != NULL) && (opts->fabric_gib_sec > 0.0)) {
+        fprintf(fp, "    \"fabric_gib_sec\": %.4f,\n", opts->fabric_gib_sec);
+    } else {
+        fprintf(fp, "    \"fabric_gib_sec\": null,\n");
+    }
+    fprintf(fp, "    \"placement_policy\": \"layer_wise\",\n");
+    fprintf(fp, "    \"report_timestamp\": null\n");
+    fprintf(fp, "  },\n");
+
+    /* ================================================================
+     * Tile summary records
+     * ============================================================= */
+    fprintf(fp, "  \"tiles\": [\n");
+
+    for (t = 0u; t < tile_count; t++) {
+        const uint64_t first_layer = t * lpt;
+        uint64_t       last_layer;
+        uint64_t       tile_layers;
+        uint64_t       mat_params;
+        uint64_t       norm_bytes_tile;
+        uint64_t       tile_model_bytes;
+        uint64_t       kv_bytes_per_sess;
+        uint64_t       act_bytes;
+        uint64_t       logits_bytes;
+        uint64_t       fabric_bytes;
+        uint64_t       fabric_pkts;
+        uint64_t       combined;
+        uint64_t       tile_mem_bytes;
+        double         util_pct;
+        const char    *cap_stat;
+        double         req_gib;
+        const char    *bw_stat;
+        uint64_t       tcount;
+
+        if (first_layer >= s->n_layers) {
+            /* Empty tile (more tiles than layers). */
+            last_layer  = (s->n_layers > 0u) ? (s->n_layers - 1u) : 0u;
+            tile_layers = 0u;
+        } else {
+            const uint64_t end0 = first_layer + lpt - 1u;
+            last_layer  = (end0 < s->n_layers) ? end0 : (s->n_layers - 1u);
+            tile_layers = last_layer - first_layer + 1u;
+        }
+
+        /* Weight matrix parameter count for this tile. */
+        {
+            const uint64_t attn_per  = 4u * s->d_model * s->d_model;
+            const uint64_t ffn_per   = 2u * s->d_model * s->d_ff
+                                       + s->d_ff * s->d_model;
+            mat_params = tile_layers * (attn_per + ffn_per);
+            if (t == 0u) {
+                mat_params += s->vocab_size * s->d_model; /* tok_embeddings */
+            }
+            if (t == (tile_count - 1u)) {
+                mat_params += s->d_model * s->vocab_size; /* lm_head */
+            }
+        }
+        /* Norm vectors are always f32 regardless of model dtype. */
+        norm_bytes_tile = tile_layers * 2u * s->d_model * 4u; /* attn+ffn norm per layer */
+        if (t == (tile_count - 1u)) {
+            norm_bytes_tile += s->d_model * 4u; /* output_norm */
+        }
+        tile_model_bytes = m100_tile_model_bytes(mat_params, norm_bytes_tile, dr);
+
+        /* KV cache: f32, K+V, per session. */
+        kv_bytes_per_sess = tile_layers * ctx * s->n_heads * s->head_dim * 2u * 4u;
+
+        /* Per-token activation/logit traffic. */
+        act_bytes    = s->d_model * 4u;
+        logits_bytes = (t == (tile_count - 1u)) ? (s->vocab_size * 4u) : 0u;
+        fabric_bytes = (t < (tile_count - 1u))  ? act_bytes             : 0u;
+        fabric_pkts  = (t < (tile_count - 1u))  ? 1u                    : 0u;
+
+        /* Capacity. */
+        combined      = tile_model_bytes + kv_bytes_per_sess * sessions;
+        tile_mem_bytes = ((opts != NULL) && (opts->tile_memory_mib > 0u))
+                         ? opts->tile_memory_mib * 1024u * 1024u : 0u;
+        util_pct = (tile_mem_bytes > 0u)
+                   ? 100.0 * (double)combined / (double)tile_mem_bytes
+                   : 0.0;
+        cap_stat = tile_capacity_status(combined,
+                       (opts != NULL) ? opts->tile_memory_mib : 0u);
+
+        /* Bandwidth. */
+        req_gib = ((opts != NULL) && (opts->target_tps > 0u))
+                  ? (double)fabric_bytes * (double)opts->target_tps
+                    / (1024.0 * 1024.0 * 1024.0)
+                  : 0.0;
+        bw_stat = fabric_bandwidth_status(
+                      req_gib,
+                      (opts != NULL) ? opts->fabric_gib_sec : 0.0);
+
+        /* Collect issues. */
+        if ((strcmp(cap_stat, "FAIL") == 0) && (n_issues < M100_MAX_ISSUES)) {
+            issues[n_issues].is_error = 1;
+            snprintf(issues[n_issues].msg, sizeof(issues[n_issues].msg),
+                     "tile %llu capacity overflow: combined=%.0f bytes, "
+                     "limit=%llu bytes (%.1f%%)",
+                     (unsigned long long)t,
+                     (double)combined,
+                     (unsigned long long)tile_mem_bytes,
+                     util_pct);
+            n_issues++;
+            n_fail++;
+        } else if ((strcmp(cap_stat, "WARN") == 0) &&
+                   (n_issues < M100_MAX_ISSUES)) {
+            issues[n_issues].is_error = 0;
+            snprintf(issues[n_issues].msg, sizeof(issues[n_issues].msg),
+                     "tile %llu capacity warning: utilization %.1f%%",
+                     (unsigned long long)t, util_pct);
+            n_issues++;
+            n_warn++;
+        }
+        if ((strcmp(bw_stat, "FAIL") == 0) && (n_issues < M100_MAX_ISSUES)) {
+            issues[n_issues].is_error = 1;
+            snprintf(issues[n_issues].msg, sizeof(issues[n_issues].msg),
+                     "tile %llu bandwidth overflow: required %.4f GiB/s, "
+                     "available %.4f GiB/s",
+                     (unsigned long long)t,
+                     req_gib,
+                     (opts != NULL) ? opts->fabric_gib_sec : 0.0);
+            n_issues++;
+            n_fail++;
+        } else if ((strcmp(bw_stat, "WARN") == 0) &&
+                   (n_issues < M100_MAX_ISSUES)) {
+            issues[n_issues].is_error = 0;
+            snprintf(issues[n_issues].msg, sizeof(issues[n_issues].msg),
+                     "tile %llu bandwidth warning: required %.4f GiB/s",
+                     (unsigned long long)t, req_gib);
+            n_issues++;
+            n_warn++;
+        }
+
+        /* Tensor count estimate for this tile. */
+        tcount = tile_layers * 9u; /* 4 attn + 3 ffn + 2 norms per layer */
+        if (t == 0u)               { tcount++;  } /* tok_embeddings */
+        if (t == (tile_count - 1u)) { tcount += 2u; } /* output_norm + lm_head */
+
+        if (t > 0u) { fputs(",\n", fp); }
+        fprintf(fp,
+                "    {\n"
+                "      \"tile_id\": %llu,\n"
+                "      \"aimu_id\": %llu,\n"
+                "      \"layer_range_start\": %llu,\n"
+                "      \"layer_range_end\": %llu,\n"
+                "      \"assigned_tensor_count\": %llu,\n"
+                "      \"assigned_tensor_slice_count\": %llu,\n"
+                "      \"model_bytes\": %llu,\n"
+                "      \"kv_bytes\": %llu,\n"
+                "      \"activation_bytes_per_token\": %llu,\n"
+                "      \"logits_bytes_per_token\": %llu,\n"
+                "      \"fabric_payload_bytes_per_token\": %llu,\n"
+                "      \"fabric_packets_per_token\": %llu,\n"
+                "      \"memory_utilization_percent\": %.2f,\n"
+                "      \"capacity_status\": \"%s\",\n"
+                "      \"bandwidth_status\": \"%s\"\n"
+                "    }",
+                (unsigned long long)t,
+                (unsigned long long)t,
+                (unsigned long long)(first_layer < s->n_layers ? first_layer : 0u),
+                (unsigned long long)last_layer,
+                (unsigned long long)tcount,
+                (unsigned long long)tcount,
+                (unsigned long long)tile_model_bytes,
+                (unsigned long long)kv_bytes_per_sess,
+                (unsigned long long)act_bytes,
+                (unsigned long long)logits_bytes,
+                (unsigned long long)fabric_bytes,
+                (unsigned long long)fabric_pkts,
+                util_pct,
+                cap_stat,
+                bw_stat);
+    }
+    fprintf(fp, "\n  ],\n");
+
+    /* ================================================================
+     * Tensor placement records
+     * ============================================================= */
+    fprintf(fp, "  \"tensors\": [\n");
+    tsep = 0;
+    tid  = 0u;
+
+    for (t = 0u; t < tile_count; t++) {
+        const uint64_t first_layer = t * lpt;
+        uint64_t       last_layer;
+        char           nbuf[128];
+
+        if (first_layer >= s->n_layers) {
+            last_layer = (s->n_layers > 0u) ? (s->n_layers - 1u) : 0u;
+        } else {
+            const uint64_t end0 = first_layer + lpt - 1u;
+            last_layer = (end0 < s->n_layers) ? end0 : (s->n_layers - 1u);
+        }
+
+        /* tok_embeddings lives on tile 0. */
+        if (t == 0u) {
+            m100_emit_tensor(fp, &tsep,
+                    tid++, "tok_embeddings.weight", "embedding",
+                    0u, s->vocab_size, s->d_model, dr, 0u);
+        }
+
+        /* Per-layer weights. */
+        for (l = first_layer;
+             (l <= last_layer) && (l < s->n_layers);
+             l++) {
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.attention.wq.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "attention_q",
+                    l, s->d_model, s->d_model, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.attention.wk.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "attention_k",
+                    l, s->d_model, s->d_model, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.attention.wv.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "attention_v",
+                    l, s->d_model, s->d_model, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.attention.wo.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "attention_o",
+                    l, s->d_model, s->d_model, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.feed_forward.w_gate.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "ffn_gate",
+                    l, s->d_ff, s->d_model, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.feed_forward.w_up.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "ffn_up",
+                    l, s->d_ff, s->d_model, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.feed_forward.w_down.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "ffn_down",
+                    l, s->d_model, s->d_ff, dr, t);
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.attention_norm.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "norm",
+                    l, s->d_model, 0u, dr, t); /* 1D */
+
+            snprintf(nbuf, sizeof(nbuf),
+                     "layers.%llu.ffn_norm.weight",
+                     (unsigned long long)l);
+            m100_emit_tensor(fp, &tsep, tid++, nbuf, "norm",
+                    l, s->d_model, 0u, dr, t); /* 1D */
+        }
+
+        /* output_norm and lm_head live on the last tile. */
+        if (t == (tile_count - 1u)) {
+            const uint64_t final_l = (s->n_layers > 0u)
+                                     ? (s->n_layers - 1u) : 0u;
+            m100_emit_tensor(fp, &tsep,
+                    tid++, "output.norm", "norm",
+                    final_l, s->d_model, 0u, dr, t); /* 1D */
+            m100_emit_tensor(fp, &tsep,
+                    tid++, "output.weight", "lm_head",
+                    final_l, s->vocab_size, s->d_model, dr, t);
+        }
+    }
+    fprintf(fp, "\n  ],\n");
+
+    /* ================================================================
+     * Validation metadata (informational; filled by M99 validator)
+     * ============================================================= */
+    fprintf(fp, "  \"validation\": {},\n");
+
+    /* ================================================================
+     * Warnings array
+     * ============================================================= */
+    fprintf(fp, "  \"warnings\": [");
+    {
+        int    first = 1;
+        uint64_t wi;
+
+        /* Synthetic / non-executable model warning. */
+        if (s->is_synthetic) {
+            fprintf(fp,
+                    "\n    {\"rule\": 0, \"severity\": \"warning\", "
+                    "\"message\": "
+                    "\"synthetic/non-executable preset '%s': "
+                    "estimates are architectural projections only\"}",
+                    s->name);
+            first = 0;
+            n_warn++;
+        }
+        for (wi = 0u; wi < n_issues; wi++) {
+            if (!issues[wi].is_error) {
+                if (!first) { fputs(",", fp); }
+                first = 0;
+                /* Escape any double-quotes in the message (unlikely). */
+                fprintf(fp,
+                        "\n    {\"rule\": 0, \"severity\": \"warning\", "
+                        "\"message\": \"%s\"}",
+                        issues[wi].msg);
+            }
+        }
+        (void)first;
+    }
+    fprintf(fp, "\n  ],\n");
+
+    /* ================================================================
+     * Failures array
+     * ============================================================= */
+    fprintf(fp, "  \"failures\": [");
+    {
+        int    first = 1;
+        uint64_t wi;
+        for (wi = 0u; wi < n_issues; wi++) {
+            if (issues[wi].is_error) {
+                if (!first) { fputs(",", fp); }
+                first = 0;
+                fprintf(fp,
+                        "\n    {\"rule\": 0, \"severity\": \"error\", "
+                        "\"message\": \"%s\"}",
+                        issues[wi].msg);
+            }
+        }
+        (void)first;
+    }
+    fprintf(fp, "\n  ],\n");
+
+    /* ================================================================
+     * Remediation suggestions
+     * ============================================================= */
+    fprintf(fp, "  \"remediation\": [");
+    if (n_fail > 0) {
+        fprintf(fp,
+                "\n    {\"message\": "
+                "\"reduce --tile-memory-mib, add more --tiles, or use a "
+                "lower-bandwidth dtype such as q4\"}");
+    }
+    fprintf(fp, "\n  ]\n");
+    fprintf(fp, "}\n");
+
+    fclose(fp);
+    return 0;
+}
+
 /* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
@@ -877,20 +1488,21 @@ static void print_report_full(const model_shape *s, const char *dtype, int json_
 int main(int argc, char **argv)
 {
     model_shape   shape;
-    capacity_opts cap        = {0u, 0u, 0u, 0.0};
-    const char   *preset     = NULL;
-    const char   *config     = NULL;
-    const char   *dtype      = NULL;
-    uint64_t      tiles      = 0u;
-    uint64_t      context    = 0u;
-    int           json_out   = 0;
-    int           use_manual = 0;
-    uint64_t      m_layers   = 0u;
-    uint64_t      m_dmodel   = 0u;
-    uint64_t      m_heads    = 0u;
-    uint64_t      m_dff      = 0u;
-    uint64_t      m_vocab    = 0u;
-    int           i          = 0;
+    capacity_opts cap              = {0u, 0u, 0u, 0.0};
+    const char   *preset           = NULL;
+    const char   *config           = NULL;
+    const char   *dtype            = NULL;
+    const char   *placement_report = NULL;  /* --placement-report-json PATH */
+    uint64_t      tiles            = 0u;
+    uint64_t      context          = 0u;
+    int           json_out         = 0;
+    int           use_manual       = 0;
+    uint64_t      m_layers         = 0u;
+    uint64_t      m_dmodel         = 0u;
+    uint64_t      m_heads          = 0u;
+    uint64_t      m_dff            = 0u;
+    uint64_t      m_vocab          = 0u;
+    int           i                = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -962,6 +1574,8 @@ int main(int argc, char **argv)
                 usage(argv[0]);
                 return 1;
             }
+        } else if ((strcmp(argv[i], "--placement-report-json") == 0) && ((i + 1) < argc)) {
+            placement_report = argv[++i];
         } else {
             fprintf(stderr, "att1-size: unknown argument: %s\n", argv[i]);
             usage(argv[0]);
@@ -1020,6 +1634,10 @@ int main(int argc, char **argv)
             printf("fabric_bandwidth_status=%s\n",
                    fabric_bandwidth_status(req_gib, cap.fabric_gib_sec));
         }
+        if ((placement_report != NULL) &&
+            (write_placement_report_json(placement_report, &shape, dtype, &cap) != 0)) {
+            return 1;
+        }
         return 0;
     }
 
@@ -1060,5 +1678,9 @@ int main(int argc, char **argv)
     if (context != 0u) { shape.max_seq_len = context; }
 
     print_report_full(&shape, dtype, json_out, &cap);
+    if ((placement_report != NULL) &&
+        (write_placement_report_json(placement_report, &shape, dtype, &cap) != 0)) {
+        return 1;
+    }
     return 0;
 }
