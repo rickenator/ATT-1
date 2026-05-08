@@ -2106,6 +2106,48 @@ the existing M59/M60 tokenizer smoke tests.
 
 ---
 
+## M81 — q4 Python converter integration (complete)
+
+**Goal:** Extend `compiler/convert_llama_to_att1.py` with `--weight-format q4`
+to convert real F32 safetensors weights to ATT-1 grouped q4 format, producing
+a checked-in `models/real_tiny_q4/model.att1` artifact validated via cpu-q4
+single and cluster inference.
+
+**Fixture selection:** The tiny LLaMA fixture (`d_model=8`) is incompatible
+with q4 quantization because `ATT1_Q4_GROUP_SIZE_MIN=16 > 8`.  The m63 fixture
+(`vocab=64, d_model=32, d_ff=64, n_layers=2`) is used instead.
+
+**Q4 weight layout:** The converter transposes all eligible 2D matrices from
+the ATT-1 f32 `[in_dim, out_dim]` layout to the q4 `[out_dim, in_dim]` layout
+required by `att1_matmul_q4xf32`.
+
+**Files changed:**
+- `compiler/convert_llama_to_att1.py` — `--weight-format q4`, new q4 functions
+- `models/real_tiny_q4/model.att1` — generated and checked-in
+- `tests/test_converter_validation.c` — `check_real_tiny_q4()` added
+- `tests/test_bench_smoke.c` — `check_q4_conversion()` smoke test added
+
+**Validation:**
+
+```sh
+./build/att1-inspect models/real_tiny_q4/model.att1
+# shows dtype_name=q4, quant=grouped-q4-g32 for all 15 projection matrices
+
+./build/att1-bench --model models/real_tiny_q4/model.att1 \
+    --tokenizer external --input-token-ids "1,3,5" \
+    --tokens 2 --mode single --backend cpu-q4
+# exits 0; backend=cpu-q4
+
+./build/att1-bench --model models/real_tiny_q4/model.att1 \
+    --tokenizer external --input-token-ids "1,3,5" \
+    --tokens 2 --mode cluster --tiles 2 --backend cpu-q4
+# exits 0; fabric_packets_sent > 0
+```
+
+`make test` passes after M81.
+
+---
+
 ## Related Documents
 
 - [real_model_conversion.md](real_model_conversion.md) — existing converter

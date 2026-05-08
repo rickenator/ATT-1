@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 80: q4 benchmark and trace integration.
+Milestone 81: q4 Python converter integration (complete).
 
 ## Hard Rules
 
@@ -164,6 +164,18 @@ Milestone 23 complete:
 - Default CPU-only build remains CUDA-free.
 - CUDA=1 tests pass on RTX 3090 host.
 - Full CUDA q8 inference is still not implemented.
+
+Milestone 81 complete:
+- `compiler/convert_llama_to_att1.py` extended with `--weight-format q4` support.
+- New functions: `_is_q4_eligible()`, `_q4_quantize()`, `_make_q4_tensor_from_f32()`, `build_real_q4_tensors()`, `build_att1_q4_from_safetensors()`.
+- Q4 weight layout convention: q4 tensor stored as `[out_dim, in_dim]` (transposed relative to f32 ATT-1 `[in_dim, out_dim]`), matching `att1_matmul_q4xf32` semantics.
+- `_descriptor()` fixed to use `tensor.get("flags", 0)` instead of hardcoded `0`, so group_size is written to the descriptor flags field.
+- `_build_att1_bytes_from_tensors()` extended with q4 shape and nbytes validation.
+- `_shard_record_bytes()` updated to flag q4 as quantized.
+- Fixture: `models/real_tiny_q4/model.att1` generated from `compiler/fixtures/m63_llama_2l.safetensors` (vocab=64, d_model=32, d_ff=64, n_layers=2, group_size=32). Tiny fixture (d_model=8) is incompatible with q4 (group_size_min=16).
+- `tests/test_converter_validation.c` extended with `check_real_tiny_q4()`: inspect, cpu-q4 single, cpu-q4 cluster validations.
+- `tests/test_bench_smoke.c` extended with `check_q4_conversion()` (Python-skippable): convert, inspect, cpu-q4 single, cpu-q4 cluster.
+- `make test` passes (71 PASS lines, 0 failures).
 
 Milestone 80 complete:
 - `att1-bench --backend cpu-q4 --mode single` exits zero on q4 fixture; output includes `backend=cpu-q4`.

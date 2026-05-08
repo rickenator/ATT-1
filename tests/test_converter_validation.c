@@ -5,6 +5,7 @@
  * M48: Validation of checked-in tiny f32 safetensors conversion artifact.
  * M49: Validation of checked-in tiny q8 safetensors conversion artifact.
  * M60: Validation of real tiny f32/q8 artifacts with pretokenized external input.
+ * M81: Validation of real_tiny_q4 artifact (from m63 fixture, cpu-q4 paths).
  *
  * Uses checked-in .att1 fixtures only; no Python is required at test time.
  *
@@ -25,6 +26,7 @@
 #define MODEL_PATH "models/converted_stub_meta/model.att1"
 #define REAL_TINY_MODEL_PATH "models/real_tiny_f32/model.att1"
 #define REAL_TINY_Q8_MODEL_PATH "models/real_tiny_q8/model.att1"
+#define REAL_TINY_Q4_MODEL_PATH "models/real_tiny_q4/model.att1"
 #define REAL_TINY_PROMPT "\001"
 #define TOKENS     "8"
 #define TILES      "2"
@@ -626,13 +628,114 @@ static int check_real_tiny_pretokenized(void)
 
 /* --------------------------------------------------------------- main ------- */
 
+/*
+ * check_real_tiny_q4() — M81
+ *
+ * Validates the real_tiny_q4 artifact (converted from m63 safetensors fixture:
+ * vocab=64, d_model=32, d_ff=64, n_layers=2) via cpu-q4 single and cluster
+ * inference paths using externally pretokenized IDs.
+ *
+ * Token IDs: 1, 3, 5 — all within vocab_size=64.
+ * No Python is required at test time; the artifact is checked in.
+ */
+static int check_real_tiny_q4(void)
+{
+    char     out[4096];
+    uint64_t pkts = 0u;
+
+    /* Write a fixture token IDs file (one ID per line). */
+    {
+        FILE *fp = fopen("build/m81_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("m81: could not create token IDs fixture file\n", stderr);
+            return -1;
+        }
+        fputs("1\n3\n5\n", fp);
+        fclose(fp);
+    }
+
+    /* --- inspect: verify q4 dtype fields and m63 config --- */
+    if (run_command("./build/att1-inspect " REAL_TINY_Q4_MODEL_PATH
+                    " > build/m81_inspect.txt 2>&1") != 0) {
+        fputs("m81: att1-inspect failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m81_inspect.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "vocab_size=64")  == NULL) ||
+        (strstr(out, "d_model=32")     == NULL) ||
+        (strstr(out, "n_layers=2")     == NULL) ||
+        (strstr(out, "tensor_count=21") == NULL)) {
+        fputs("m81: inspect config fields check failed\n", stderr);
+        return -1;
+    }
+    if ((strstr(out, "tensor name=layers.0.attention.wq.weight dtype=3 shape=[32,32]") == NULL) ||
+        (strstr(out, "tensor name=layers.0.ffn.w_gate.weight dtype=3 shape=[64,32]")  == NULL) ||
+        (strstr(out, "tensor name=layers.0.ffn.w_down.weight dtype=3 shape=[32,64]")  == NULL) ||
+        (strstr(out, "tensor name=output.weight dtype=3 shape=[64,32]")               == NULL) ||
+        (strstr(out, "quant=grouped-q4-g32") == NULL)) {
+        fputs("m81: inspect q4 tensor fields check failed\n", stderr);
+        return -1;
+    }
+
+    /* --- cpu-q4 single-tile bench --- */
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q4_MODEL_PATH
+                    " --tokens 2 --mode single --backend cpu-q4"
+                    " --tokenizer external --tokens-file build/m81_ids.txt"
+                    " > build/m81_q4_single.txt 2>&1") != 0) {
+        fputs("m81: cpu-q4 single failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m81_q4_single.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=single")       == NULL) ||
+        (strstr(out, "backend=cpu-q4")    == NULL) ||
+        (strstr(out, "tokenizer=external") == NULL) ||
+        (strstr(out, "prompt_tokens=3")   == NULL) ||
+        (strstr(out, "generated_tokens=2") == NULL)) {
+        fputs("m81: cpu-q4 single output check failed\n", stderr);
+        return -1;
+    }
+
+    /* --- cpu-q4 cluster bench --- */
+    if (run_command("./build/att1-bench --model " REAL_TINY_Q4_MODEL_PATH
+                    " --tokens 2 --mode cluster --tiles " TILES
+                    " --backend cpu-q4"
+                    " --tokenizer external --tokens-file build/m81_ids.txt"
+                    " > build/m81_q4_cluster.txt 2>&1") != 0) {
+        fputs("m81: cpu-q4 cluster failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m81_q4_cluster.txt", out, sizeof(out)) != 0) {
+        return -1;
+    }
+    if ((strstr(out, "mode=cluster")        == NULL) ||
+        (strstr(out, "backend=cpu-q4")      == NULL) ||
+        (strstr(out, "tokenizer=external")  == NULL) ||
+        (strstr(out, "tiles=2")             == NULL) ||
+        (strstr(out, "prompt_tokens=3")     == NULL) ||
+        (strstr(out, "generated_tokens=2")  == NULL) ||
+        (parse_u64_line(out, "fabric_packets_sent", &pkts) != 0) ||
+        (pkts == 0u)) {
+        fputs("m81: cpu-q4 cluster output check failed\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/* --------------------------------------------------------------- main ------- */
+
 int main(void)
 {
     if ((check_inspect()                  != 0) ||
         (check_bench_consistency()        != 0) ||
         (check_real_tiny_f32()            != 0) ||
         (check_real_tiny_q8()             != 0) ||
-        (check_real_tiny_pretokenized()   != 0)) {
+        (check_real_tiny_pretokenized()   != 0) ||
+        (check_real_tiny_q4()             != 0)) {
         fputs("converter validation test failed\n", stderr);
         return 1;
     }

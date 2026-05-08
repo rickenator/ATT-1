@@ -67,9 +67,11 @@ _VERSION      = 1
 _HEADER_SIZE  = 80
 _CONFIG_SIZE  = 36   # 9 × uint32 LE
 _DESC_SIZE    = 128
-_DTYPE_F32    = 1
-_DTYPE_Q8     = 2
-_SHARD_REC_SZ = 120  # ATT1_SHARD_META_RECORD_SIZE
+_DTYPE_F32              = 1
+_DTYPE_Q8               = 2
+_DTYPE_Q4               = 3
+_Q4_GROUP_SIZE_DEFAULT  = 32
+_SHARD_REC_SZ           = 120  # ATT1_SHARD_META_RECORD_SIZE
 
 # ---------------------------------------------------------------------------
 # Supported architectures
@@ -277,6 +279,81 @@ def _is_q8_eligible(name: str, shape: list[int]) -> bool:
     return (len(shape) == 2) and (name != "tok_embeddings.weight")
 
 
+def _is_q4_eligible(name: str, shape: list[int],
+                   group_size: int = _Q4_GROUP_SIZE_DEFAULT) -> bool:
+    """True for 2D tensors (not tok_embeddings) where the q4 cols dimension
+    (= f32_rows = shape[0]) is divisible by group_size and >= group_size."""
+    if len(shape) != 2 or name == "tok_embeddings.weight":
+        return False
+    q4_cols = shape[0]   # q4 stores [out_dim, in_dim]; in_dim = f32 rows
+    return (q4_cols >= group_size) and (q4_cols % group_size == 0)
+
+
+def _q4_quantize(float_values, rows: int, cols: int,
+                 group_size: int = _Q4_GROUP_SIZE_DEFAULT):
+    """Quantize a row-major [rows, cols] float array to ATT-1 q4 wire format.
+
+    Returns (packed_bytes, scale_bytes) as bytes objects.
+
+    Nibble convention: packed[i//2] low nibble = element i (even),
+                       high nibble = element i+1 (odd).
+    Signed int4 range: [-7, 7].  Scale = max_abs / 7.0 (1.0 for zero groups).
+    Wire layout: ALL packed bytes first, then ALL scale bytes.
+    """
+    n_groups_per_row = cols // group_size
+    packed = bytearray(rows * cols // 2)
+    scales_list: list[float] = []
+
+    for r in range(rows):
+        for g in range(n_groups_per_row):
+            start = r * cols + g * group_size
+            group = [float(v) for v in float_values[start:start + group_size]]
+            max_abs = max(abs(v) for v in group)
+            for i, v in enumerate(group):
+                if not math.isfinite(v):
+                    raise ValueError(
+                        f"non-finite value at row {r} group {g} element {i}"
+                    )
+            scale = max_abs / 7.0 if max_abs > 0.0 else 1.0
+            scales_list.append(scale)
+            base_packed = r * (cols // 2) + g * (group_size // 2)
+            int4_vals = [max(-7, min(7, int(round(v / scale)))) for v in group]
+            for j in range(0, group_size, 2):
+                lo = int4_vals[j] & 0x0F
+                hi = int4_vals[j + 1] & 0x0F
+                packed[base_packed + j // 2] = lo | (hi << 4)
+
+    scale_bytes = struct.pack(f"<{len(scales_list)}f", *scales_list)
+    return bytes(packed), scale_bytes
+
+
+def _make_q4_tensor_from_f32(name: str, shape: list[int], values,
+                             group_size: int = _Q4_GROUP_SIZE_DEFAULT) -> dict:
+    """Convert a 2D f32 tensor (in ATT-1 f32 [in_dim, out_dim] layout) to q4.
+
+    The q4 wire format stores weights in [out_dim, in_dim] order, which is the
+    transpose of the f32 ATT-1 layout.  The transpose is applied here so that
+    att1_matmul_q4xf32 (out[i] = W[i] . input) produces the same result as
+    att1_matmul_f32 (out = input @ W) using the same underlying weight values.
+    """
+    f32_rows, f32_cols = shape
+    q4_rows, q4_cols = f32_cols, f32_rows   # transposed shape
+
+    # Re-order values from [f32_rows, f32_cols] to [q4_rows, q4_cols].
+    transposed = _transpose_2d(values, f32_rows, f32_cols)
+
+    packed_data, scale_data = _q4_quantize(transposed, q4_rows, q4_cols, group_size)
+    data = packed_data + scale_data
+
+    return {
+        "name":  name,
+        "shape": [q4_rows, q4_cols],
+        "dtype": _DTYPE_Q4,
+        "data":  data,
+        "flags": group_size & 0xFF,
+    }
+
+
 def _make_q8_tensor_from_f32(name: str, shape: list[int], values) -> dict:
     if len(shape) != 2:
         raise ValueError(f"tensor {name!r}: q8 requires a 2-D tensor")
@@ -326,8 +403,8 @@ def _descriptor(tensor: dict, offset: int) -> bytes:
         shape[3],
         offset,
         len(tensor["data"]),
-        0,  # shard_id
-        0,  # flags
+        0,                          # shard_id
+        tensor.get("flags", 0),     # flags (group_size for q4)
     )
 
 
@@ -368,7 +445,7 @@ def _shard_record_bytes(
         byte_offset,
         ps[0], ps[1], ps[2], ps[3],      # shape[4]
         dtype,
-        1 if dtype == _DTYPE_Q8 else 0,   # quantization
+        1 if dtype in (_DTYPE_Q8, _DTYPE_Q4) else 0,  # quantization
         tile_id,                          # owner_aimu
         0,                                # replication_policy (none)
         0, 0, 0, 0, 0, 0, 0, 0,          # dependency_graph[8]
@@ -608,6 +685,10 @@ def _build_att1_bytes_from_tensors(att1: dict,
             if not _is_q8_eligible(expected_name, expected_shape):
                 raise ValueError(f"tensor {expected_name!r} is not q8-eligible")
             shape_to_check = [expected_shape[1], expected_shape[0]]
+        elif dtype == _DTYPE_Q4:
+            if not _is_q4_eligible(expected_name, expected_shape, _Q4_GROUP_SIZE_DEFAULT):
+                raise ValueError(f"tensor {expected_name!r} is not q4-eligible")
+            shape_to_check = [expected_shape[1], expected_shape[0]]
         else:
             shape_to_check = expected_shape
         if tensor["name"] != expected_name:
@@ -621,6 +702,12 @@ def _build_att1_bytes_from_tensors(att1: dict,
             )
         if dtype == _DTYPE_Q8:
             expected_nbytes = (tensor["shape"][0] * tensor["shape"][1]) + (tensor["shape"][0] * 4)
+        elif dtype == _DTYPE_Q4:
+            q4_rows, q4_cols = tensor["shape"]
+            gs = tensor.get("flags", 0) & 0xFF
+            if gs == 0:
+                gs = _Q4_GROUP_SIZE_DEFAULT
+            expected_nbytes = (q4_rows * q4_cols // 2) + (q4_rows * (q4_cols // gs) * 4)
         else:
             count = 1
             for dim in tensor["shape"]:
@@ -877,6 +964,30 @@ def build_real_q8_tensors(att1: dict, safetensors_path: str) -> list[dict]:
     return tensors
 
 
+def build_real_q4_tensors(att1: dict, safetensors_path: str,
+                          group_size: int = _Q4_GROUP_SIZE_DEFAULT) -> list[dict]:
+    """Build q4-quantized tensors from a safetensors file.
+
+    Eligible 2D weight tensors (all projection matrices except tok_embeddings)
+    are converted to grouped q4.  1D tensors and tok_embeddings stay f32.
+    """
+    tensors: list[dict] = []
+
+    for tensor in build_real_f32_tensors(att1, safetensors_path):
+        if _is_q4_eligible(tensor["name"], tensor["shape"], group_size):
+            count = 1
+            for dim in tensor["shape"]:
+                count *= dim
+            values = struct.unpack(f"<{count}f", tensor["data"])
+            tensors.append(
+                _make_q4_tensor_from_f32(tensor["name"], tensor["shape"], values, group_size)
+            )
+        else:
+            tensors.append(tensor)
+
+    return tensors
+
+
 def build_att1_f32_from_safetensors(att1: dict,
                                     safetensors_path: str,
                                     emit_shard_meta: bool = False) -> bytes:
@@ -897,6 +1008,18 @@ def build_att1_q8_from_safetensors(att1: dict,
     )
 
 
+def build_att1_q4_from_safetensors(att1: dict,
+                                   safetensors_path: str,
+                                   emit_shard_meta: bool = False,
+                                   group_size: int = _Q4_GROUP_SIZE_DEFAULT) -> bytes:
+    """Build a complete .att1 binary with grouped q4 weights from safetensors."""
+    return _build_att1_bytes_from_tensors(
+        att1,
+        build_real_q4_tensors(att1, safetensors_path, group_size),
+        emit_shard_meta=emit_shard_meta,
+    )
+
+
 def emit_att1(att1: dict,
               output_path: str,
               emit_shard_meta: bool = False,
@@ -905,7 +1028,13 @@ def emit_att1(att1: dict,
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    if safetensors_path and weight_format == "q8":
+    if safetensors_path and weight_format == "q4":
+        payload = build_att1_q4_from_safetensors(
+            att1,
+            safetensors_path,
+            emit_shard_meta=emit_shard_meta,
+        )
+    elif safetensors_path and weight_format == "q8":
         payload = build_att1_q8_from_safetensors(
             att1,
             safetensors_path,
@@ -980,7 +1109,7 @@ def main() -> None:
                         help="Override rope_theta (default: from config or 10000.0)")
     parser.add_argument("--safetensors", metavar="PATH", default=None,
                         help="Read real F32 tensor payloads from PATH instead of synthetic values")
-    parser.add_argument("--weight-format", choices=("f32", "q8"), default="f32",
+    parser.add_argument("--weight-format", choices=("f32", "q8", "q4"), default="f32",
                         help="Output weight format for safetensors import (default: f32)")
     parser.add_argument("--tiles", type=int, default=None, metavar="N",
                         help="Number of tiles for shard metadata (default: 1)")
@@ -1036,8 +1165,8 @@ def main() -> None:
     if args.safetensors and not os.path.isfile(args.safetensors):
         print(f"error: safetensors file not found: {args.safetensors!r}", file=sys.stderr)
         sys.exit(1)
-    if (args.weight_format == "q8") and not args.safetensors:
-        print("error: --weight-format q8 requires --safetensors", file=sys.stderr)
+    if (args.weight_format in ("q8", "q4")) and not args.safetensors:
+        print("error: --weight-format q8/q4 requires --safetensors", file=sys.stderr)
         sys.exit(1)
 
     errors = validate_att1_config(att1)
@@ -1096,7 +1225,9 @@ def main() -> None:
             print(f"error: safetensors import failed: {exc}", file=sys.stderr)
             sys.exit(1)
         if args.safetensors:
-            print(f"note: tensor data loaded from F32 safetensors and emitted as {args.weight_format}")
+            print(
+                f"note: tensor data loaded from F32 safetensors and emitted as {args.weight_format}"
+            )
         else:
             print("note: tensor data is deterministic synthetic values \u2014 not real weights")
         if args.shard_meta:

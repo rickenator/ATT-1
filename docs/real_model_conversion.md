@@ -623,7 +623,7 @@ not implemented, and BPE/SentencePiece parsing remains out of C.
 | M75 | CPU q4 packing/unpacking primitives: `att1_q4_group_scale()`, `att1_q4_pack_group()`, `att1_q4_unpack_group()`, `att1_q4_quantize_group()`, `att1_q4_dequantize_group()` in `src/quant.c`; 9 tests in `test_quant_q4_pack`; no q4 matmul, no q4 inference |
 | M76 | CPU q4 matmul prototype: `att1_q4_matrix` struct, `att1_quantize_q4_per_group()`, `att1_matmul_q4xf32()` (dequantize-then-multiply, activations stay float32); `test_matmul_q4` (8 checks); no q4 inference. 45 tests. |
 | M77 | q4 `.att1` fixture: `compiler/make_q4_fixture.py` deterministic generator; `models/q4_tiny/model.att1` (54 132 bytes, 21 tensors, d_model=32, d_ff=64, 15 q4 tensors g32); `att1-inspect` `inference_status=q4_unsupported` note; `test_quant_q4_fixture` (8 checks). 46 tests. |
-| M78 | CPU q4 single-tile inference: `--backend cpu-q4`, single-tile decode validated against cpu-f32 |
-| M79 | CUDA q4 matmul planning/prototype: dequantize-then-multiply in CUDA, tests against CPU q4 reference |
-| M80 | GQA support: `n_kv_heads` config field, converter, runtime attention |
-| M81 | SmolLM2-135M import and validation (first real public model) |
+| M78 | CPU q4 single-tile inference: `--backend cpu-q4`, `att1_infer_create_q4()`, zero-copy q4 weight views, q4 attention and transformer block forward, 7-case `test_infer_q4`. |
+| M79 | CPU q4 cluster inference: `att1_cluster_infer_create_q4()`, q4 cluster decode, `test_cluster_infer_q4`. |
+| M80 | q4 benchmark and trace integration: `att1-bench --backend cpu-q4` single and cluster, `test_q4_bench`, `test_backend_matrix` extended, `cuda-q4` rejected at arg-parse. |
+| M81 | q4 Python converter integration: `--weight-format q4` in `convert_llama_to_att1.py`; `models/real_tiny_q4/model.att1` from m63 fixture (vocab=64, d_model=32); `check_real_tiny_q4` in `test_converter_validation.c`; `check_q4_conversion` smoke test. |

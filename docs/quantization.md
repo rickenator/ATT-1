@@ -938,3 +938,72 @@ and cluster q4 inference agree on the output.
 | 2 | `q4_bench_cluster_exits_zero` | `--backend cpu-q4 --mode cluster --tiles 2` exits 0; `fabric_packets_sent > 0` |
 | 3 | `q4_bench_cuda_q4_unsupported` | `--backend cuda-q4` exits non-zero with error message |
 | 4 | `q4_bench_f32_path_unchanged` | cpu-f32 on dummy model still exits 0 (regression guard) |
+
+## CPU q4 converter integration (M81)
+
+### Overview
+
+M81 extends `compiler/convert_llama_to_att1.py` to support `--weight-format q4`,
+converting real F32 safetensors weights to ATT-1 grouped q4 format.  The
+`models/real_tiny_q4/model.att1` artifact is generated from the m63 fixture
+(vocab=64, d_model=32, d_ff=64, n_layers=2, group_size=32).
+
+The tiny LLaMA fixture (`d_model=8`) is incompatible with q4 because
+`ATT1_Q4_GROUP_SIZE_MIN=16 > 8`.  The m63 fixture (`d_model=32`) is the
+smallest compatible fixture.
+
+### Weight layout convention
+
+The ATT-1 f32 format stores 2D projection matrices in `[in_dim, out_dim]` order
+(computation: `output = input @ W`).  The ATT-1 q4 matmul (`att1_matmul_q4xf32`)
+uses `[out_dim, in_dim]` order (computation: `output[i] = W[i] · input`).
+
+The converter therefore **transposes** all eligible 2D weight matrices when
+producing q4 tensors.  This means:
+
+| Tensor | f32 shape | q4 shape |
+|--------|-----------|----------|
+| `attention.wq.weight` | `[d, d]` | `[d, d]` (same shape, transposed data) |
+| `ffn.w_gate.weight`   | `[d, ff]` | `[ff, d]` |
+| `ffn.w_up.weight`     | `[d, ff]` | `[ff, d]` |
+| `ffn.w_down.weight`   | `[ff, d]` | `[d, ff]` |
+| `output.weight`       | `[d, v]`  | `[v, d]`  |
+
+Tensors ineligible for q4: `tok_embeddings.weight` (always f32), all 1D norms.
+
+### Q4 eligibility rule
+
+A 2D tensor is q4-eligible when:
+1. It is not `tok_embeddings.weight`.
+2. Its first dimension (`f32_rows`, which becomes `q4_cols` after transpose) is
+   divisible by `group_size` and is `>= group_size`.
+
+For the m63 fixture with `group_size=32`: all projection tensors have
+`f32_rows ∈ {32, 64}`, both divisible by 32.
+
+### Usage
+
+```sh
+python3 compiler/convert_llama_to_att1.py \
+    --config compiler/fixtures/m63_llama_config.json \
+    --safetensors compiler/fixtures/m63_llama_2l.safetensors \
+    --weight-format q4 \
+    --out models/real_tiny_q4/model.att1
+
+./build/att1-inspect models/real_tiny_q4/model.att1
+
+./build/att1-bench --model models/real_tiny_q4/model.att1 \
+    --tokenizer external --input-token-ids "1,3,5" \
+    --tokens 2 --mode single --backend cpu-q4
+
+./build/att1-bench --model models/real_tiny_q4/model.att1 \
+    --tokenizer external --input-token-ids "1,3,5" \
+    --tokens 2 --mode cluster --tiles 2 --backend cpu-q4
+```
+
+### Test coverage
+
+| Test | File | Verifies |
+|------|------|----------|
+| `check_real_tiny_q4` | `test_converter_validation.c` | inspect q4 fields, cpu-q4 single + cluster on checked-in artifact |
+| `check_q4_conversion` | `test_bench_smoke.c` | Python-skippable: convert, inspect, cpu-q4 single + cluster from m63 fixture |
