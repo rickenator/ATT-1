@@ -403,6 +403,17 @@ cleanup:
     return rc;
 }
 
+static int block_q4_matmul(att1_backend *backend,
+                           float *dst, const float *src,
+                           size_t rows, size_t cols,
+                           const att1_q4_matrix *w)
+{
+    if (backend->ops->matmul_q4xf32 != NULL) {
+        return backend->ops->matmul_q4xf32(backend, dst, src, rows, cols, w);
+    }
+    return att1_matmul_q4xf32(dst, src, rows, cols, w);
+}
+
 int att1_transformer_block_forward_backend_q4(
     float *output,
     att1_kv_cache *cache,
@@ -505,14 +516,14 @@ int att1_transformer_block_forward_backend_q4(
     }
 
     /* w_gate: [d_ff, d_model]; ffn_input: [1, d_model] -> ffn_gate: [1, d_ff] */
-    if (att1_matmul_q4xf32(ffn_gate, ffn_input, 1u,
-                            config->model_dim, weights->w_gate) != 0) {
+    if (block_q4_matmul(backend, ffn_gate, ffn_input, 1u,
+                        config->model_dim, weights->w_gate) != 0) {
         goto cleanup;
     }
 
     /* w_up: [d_ff, d_model]; ffn_input: [1, d_model] -> ffn_up: [1, d_ff] */
-    if (att1_matmul_q4xf32(ffn_up, ffn_input, 1u,
-                            config->model_dim, weights->w_up) != 0) {
+    if (block_q4_matmul(backend, ffn_up, ffn_input, 1u,
+                        config->model_dim, weights->w_up) != 0) {
         goto cleanup;
     }
 
@@ -525,8 +536,8 @@ int att1_transformer_block_forward_backend_q4(
     }
 
     /* w_down: [d_model, d_ff]; ffn_hidden: [1, d_ff] -> ffn_output: [1, d_model] */
-    if (att1_matmul_q4xf32(ffn_output, ffn_hidden, 1u,
-                            config->ffn_dim, weights->w_down) != 0) {
+    if (block_q4_matmul(backend, ffn_output, ffn_hidden, 1u,
+                        config->ffn_dim, weights->w_down) != 0) {
         goto cleanup;
     }
 

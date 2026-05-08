@@ -541,11 +541,10 @@ cluster, and unsupported-path behavior on CPU-only builds.
 
 Documentation-only.  No CUDA q4 kernel or C source changes.
 
-### Current status
+### Current status (resolved in M88)
 
-`--backend cuda-q4` is explicitly unsupported through M85.  Selecting it exits
-non-zero with `error: cuda-q4 backend is not supported`.  This remains true
-until M88.
+`--backend cuda-q4 --mode single` exits zero on a CUDA-capable host as of M88.
+Cluster mode remains rejected until M89.
 
 ### Recommended approach
 
@@ -621,3 +620,45 @@ rounding only).  CPU q4 vs CPU f32: `0.35f` (quantisation loss).
 
 Custom CUDA dequantize-on-the-fly kernel deferred to a future milestone.
 Inference wiring (`att1_infer_create_q4` CUDA path) deferred to M88.
+
+## Milestone 88: CUDA q4 single-tile inference
+
+`--backend cuda-q4 --mode single` now exits zero on a CUDA-capable host.
+
+### Implementation
+
+- `cuda_q4_backend_ops` inference ops (`rmsnorm_f32`, `softmax_f32`,
+  `rope_f32`, `ffn_swiglu_f32`) populated with the existing CUDA functions
+  shared by `cuda_backend_ops` and `cuda_q8_backend_ops`.
+- `att1_attention_forward_backend_q4` and
+  `att1_transformer_block_forward_backend_q4` route all `matmul_q4xf32` calls
+  through new static helpers (`attention_q4_matmul`, `block_q4_matmul`) that
+  dispatch through `backend->ops->matmul_q4xf32` when non-NULL, with a CPU
+  fallback for the `cpu-q4` backend (which leaves the slot NULL).
+- `infer_backend_is_q4()` extended to accept "cuda-q4" in addition to
+  "cpu-q4".
+- Output projection in `att1_infer_decode_token` routed through new
+  `infer_matmul_q4()` helper (same vtable-or-fallback pattern).
+- `att1-bench --backend cuda-q4 --mode single` now creates a cpu-q4 infer
+  context (to load q4 weights) then swaps to the cuda-q4 backend via
+  `att1_infer_set_backend`.
+- Cluster mode with `--backend cuda-q4` remains rejected with a clear error.
+- `tests/test_cuda_infer_q4.c`: 3 tests (no-silent-fallback, logits match
+  cpu-q4 within `Q4_LOGIT_TOL=0.35f`, generated tokens identical to cpu-q4).
+  Skipped on CPU-only builds.
+- `test_q4_bench.c` `cuda-q4` test updated: expects exit-zero + `backend=cuda-q4`
+  when CUDA is available; exit-nonzero with error message otherwise.
+
+### Pattern: cuda-q4 single-tile inference
+
+```c
+att1_infer_create_q4(model, &infer);          /* load q4 weights (cpu-q4) */
+att1_backend_cuda_q4_create(&cuda_backend);   /* create cuda-q4 backend   */
+att1_infer_set_backend(infer, cuda_backend);  /* swap; triggers q4 prep   */
+/* cuda_backend now owned by infer */
+```
+
+### Cluster deferred
+
+`att1_cluster_infer_create_q4` does not accept "cuda-q4".  CUDA q4 cluster
+inference is Milestone 89.

@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 87: CUDA q4 matmul prototype (complete).
+Milestone 88: CUDA q4 single-tile inference (complete).
 
 ## Active Task
 
-Prepare Milestone 88: CUDA q4 single-tile inference.
+Prepare Milestone 89: CUDA q4 cluster inference.
 
 ## Hard Rules
 
@@ -112,6 +112,7 @@ Prepare Milestone 88: CUDA q4 single-tile inference.
 - Milestone 85: public-model q4 backend smoke validation — `compiler/validate_public_q4_backends.py` added; cpu-q4 single/cluster validated; cuda-q4 explicitly unsupported; q4 backend smoke test (3 parts).
 - Milestone 86: CUDA q4 implementation plan — documentation-only; Option A/B/C design choices in `docs/quantization.md`; M87–M90 milestone split in `docs/cuda_backend.md`; no C or Makefile change.
 - Milestone 87: CUDA q4 matmul prototype — `cuda_backend_matmul_q4xf32()` (dequantize-on-CPU then cuBLAS); `cuda_q4_backend_ops` ("cuda-q4"); `att1_backend_cuda_q4_create()`; `matmul_q4xf32` slot in `att1_backend_ops`; all CPU backends updated to NULL; `tests/test_cuda_matmul_q4.c` (8 cases); 46 tests pass.
+- Milestone 88: CUDA q4 single-tile inference — `cuda_q4_backend_ops` populated with full inference ops (rmsnorm, softmax, rope, ffn_swiglu); `att1_attention_forward_backend_q4` and `att1_transformer_block_forward_backend_q4` route matmuls through backend vtable via `attention_q4_matmul`/`block_q4_matmul` helpers; `infer_backend_is_q4` accepts "cuda-q4"; output projection in `att1_infer_decode_token` routed via `infer_matmul_q4`; `att1-bench` cuda-q4 single mode enabled (cluster remains rejected); `test_q4_bench` updated for CUDA-conditional cuda-q4 check; `tests/test_cuda_infer_q4.c` (3 cases: no-fallback, logits match, generated tokens); 48 tests pass.
 
 ## Next Prompt for Codex
 

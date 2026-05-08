@@ -154,7 +154,8 @@ static int infer_backend_is_q4(const att1_backend *backend)
     return (backend != NULL) &&
            (backend->ops != NULL) &&
            (backend->ops->name != NULL) &&
-           (strcmp(backend->ops->name, "cpu-q4") == 0);
+           ((strcmp(backend->ops->name, "cpu-q4") == 0) ||
+            (strcmp(backend->ops->name, "cuda-q4") == 0));
 }
 
 static int infer_backend_supports_q4(const att1_backend *backend)
@@ -166,6 +167,18 @@ static int infer_backend_supports_q4(const att1_backend *backend)
            (backend->ops->softmax_f32 != NULL) &&
            (backend->ops->rope_f32 != NULL) &&
            (backend->ops->ffn_swiglu_f32 != NULL);
+}
+
+static int infer_matmul_q4(att1_infer_t *infer,
+                            float *dst, const float *src,
+                            size_t rows, size_t cols,
+                            const att1_q4_matrix *w)
+{
+    if (infer->backend->ops->matmul_q4xf32 != NULL) {
+        return infer->backend->ops->matmul_q4xf32(
+            infer->backend, dst, src, rows, cols, w);
+    }
+    return att1_matmul_q4xf32(dst, src, rows, cols, w);
 }
 
 static int infer_backend_supports_q8(const att1_backend *backend)
@@ -813,11 +826,12 @@ att1_status_t att1_infer_decode_token(att1_infer_t *infer,
 
     if (use_q4) {
         /* q4 output projection: output.weight [vocab_size, d_model] */
-        if (att1_matmul_q4xf32(infer->logits,
-                               infer->norm,
-                               1u,
-                               model->config.d_model,
-                               &infer->q4_output_weight) != 0) {
+        if (infer_matmul_q4(infer,
+                            infer->logits,
+                            infer->norm,
+                            1u,
+                            model->config.d_model,
+                            &infer->q4_output_weight) != 0) {
             return ATT1_ERR_STATE;
         }
     } else if (use_q8) {

@@ -725,9 +725,7 @@ static const att1_backend_ops cuda_q8_backend_ops = {
     cuda_backend_rope_f32,
     cuda_backend_ffn_swiglu_f32
 };
-/* M87: cuda-q4 backend — matmul_q4xf32 only; all inference ops NULL to
- * prevent accidental use for full inference before CUDA q4 inference is
- * implemented. */
+/* M88: cuda-q4 backend — full single-tile inference with CUDA q4 matmul. */
 static const att1_backend_ops cuda_q4_backend_ops = {
     "cuda-q4",
     cuda_backend_alloc,
@@ -736,10 +734,10 @@ static const att1_backend_ops cuda_q4_backend_ops = {
     cuda_backend_matmul_f32,
     NULL, /* matmul_q8xf32: not supported on cuda-q4 */
     cuda_backend_matmul_q4xf32,
-    NULL, /* rmsnorm_f32: cuda-q4 is matmul-only */
-    NULL, /* softmax_f32: cuda-q4 is matmul-only */
-    NULL, /* rope_f32: cuda-q4 is matmul-only */
-    NULL  /* ffn_swiglu_f32: cuda-q4 is matmul-only */
+    cuda_backend_rmsnorm_f32,
+    cuda_backend_softmax_f32,
+    cuda_backend_rope_f32,
+    cuda_backend_ffn_swiglu_f32
 };
 int att1_backend_cuda_available(void)
 {

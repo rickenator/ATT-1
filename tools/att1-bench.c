@@ -134,8 +134,7 @@ static att1_status_t create_backend(const char *name, att1_backend **out_backend
         return att1_backend_cuda_q8_create(out_backend);
     }
     if (strcmp(name, "cuda-q4") == 0) {
-        fputs("error: cuda-q4 backend is not supported\n", stderr);
-        return ATT1_ERR_UNSUPPORTED;
+        return att1_backend_cuda_q4_create(out_backend);
     }
 
     return ATT1_ERR_INVALID_ARG;
@@ -248,7 +247,8 @@ static int run_single_external(const att1_model *model,
     size_t capacity = 0u;
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
-                (strcmp(backend_name, "cpu-q4") == 0);
+                ((strcmp(backend_name, "cpu-q4") == 0) ||
+                 (strcmp(backend_name, "cuda-q4") == 0));
 
     if (ext_count >= (size_t)model->config.max_seq_len) {
         fputs("error: external token count fills or exceeds model max_seq_len\n",
@@ -270,9 +270,21 @@ static int run_single_external(const att1_model *model,
 
     if (is_q4) {
         if (att1_infer_create_q4(model, &infer) != ATT1_OK) {
-            fputs("error: cpu-q4 single inference failed (model may not contain q4 weights)\n",
+            fputs("error: q4 single inference failed (model may not contain q4 weights)\n",
                   stderr);
             goto cleanup;
+        }
+        if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
+            if (create_backend("cuda-q4", &backend) != ATT1_OK) {
+                fputs("error: cuda-q4 backend unavailable\n", stderr);
+                goto cleanup;
+            }
+            if (att1_infer_set_backend(infer, backend) != ATT1_OK) {
+                att1_backend_destroy(backend);
+                backend = NULL;
+                goto cleanup;
+            }
+            backend = NULL;
         }
     } else {
         if (att1_infer_create(model, &infer) != ATT1_OK) {
@@ -367,6 +379,11 @@ static int run_cluster_external(const att1_model      *model,
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
                 (strcmp(backend_name, "cpu-q4") == 0);
+
+    if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
+        fputs("error: cuda-q4 cluster inference not supported\n", stderr);
+        return 1;
+    }
 
     if (ext_count >= (size_t)model->config.max_seq_len) {
         fputs("error: external token count fills or exceeds model max_seq_len\n",
@@ -490,7 +507,8 @@ static int run_single(const att1_model *model,
     size_t capacity = run_tokens == 0u ? 1u : run_tokens;
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
-                (strcmp(backend_name, "cpu-q4") == 0);
+                ((strcmp(backend_name, "cpu-q4") == 0) ||
+                 (strcmp(backend_name, "cuda-q4") == 0));
 
     tokens = calloc(capacity, sizeof(*tokens));
     if (tokens == NULL) {
@@ -503,9 +521,21 @@ static int run_single(const att1_model *model,
 
     if (is_q4) {
         if (att1_infer_create_q4(model, &infer) != ATT1_OK) {
-            fputs("error: cpu-q4 single inference failed (model may not contain q4 weights)\n",
+            fputs("error: q4 single inference failed (model may not contain q4 weights)\n",
                   stderr);
             goto cleanup;
+        }
+        if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
+            if (create_backend("cuda-q4", &backend) != ATT1_OK) {
+                fputs("error: cuda-q4 backend unavailable\n", stderr);
+                goto cleanup;
+            }
+            if (att1_infer_set_backend(infer, backend) != ATT1_OK) {
+                att1_backend_destroy(backend);
+                backend = NULL;
+                goto cleanup;
+            }
+            backend = NULL;
         }
     } else {
         if (att1_infer_create(model, &infer) != ATT1_OK) {
@@ -577,6 +607,11 @@ static int run_cluster(const att1_model *model,
     int rc = 1;
     int is_q4 = (backend_name != NULL) &&
                 (strcmp(backend_name, "cpu-q4") == 0);
+
+    if ((backend_name != NULL) && (strcmp(backend_name, "cuda-q4") == 0)) {
+        fputs("error: cuda-q4 cluster inference not supported\n", stderr);
+        return 1;
+    }
 
     if (!is_q4 && (backend_name != NULL)) {
         if (create_backend(backend_name, &backend) != ATT1_OK) {
@@ -702,10 +737,6 @@ int main(int argc, char **argv)
                 (strcmp(backend_name, "cuda-q8") != 0) &&
                 (strcmp(backend_name, "cuda-q4") != 0)) {
                 usage(argv[0]);
-                return 1;
-            }
-            if (strcmp(backend_name, "cuda-q4") == 0) {
-                fputs("error: cuda-q4 backend is not supported\n", stderr);
                 return 1;
             }
         } else if ((strcmp(argv[i], "--tiles") == 0) && ((i + 1) < argc)) {

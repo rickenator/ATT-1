@@ -421,6 +421,17 @@ cleanup:
     return rc;
 }
 
+static int attention_q4_matmul(att1_backend *backend,
+                               float *dst, const float *src,
+                               size_t rows, size_t cols,
+                               const att1_q4_matrix *w)
+{
+    if (backend->ops->matmul_q4xf32 != NULL) {
+        return backend->ops->matmul_q4xf32(backend, dst, src, rows, cols, w);
+    }
+    return att1_matmul_q4xf32(dst, src, rows, cols, w);
+}
+
 int att1_attention_forward_backend_q4(
     float *output,
     att1_kv_cache *cache,
@@ -476,13 +487,13 @@ int att1_attention_forward_backend_q4(
         goto cleanup;
     }
 
-    if (att1_matmul_q4xf32(query, input, 1u, config->model_dim, weights->wq) != 0) {
+    if (attention_q4_matmul(backend, query, input, 1u, config->model_dim, weights->wq) != 0) {
         goto cleanup;
     }
-    if (att1_matmul_q4xf32(key,   input, 1u, config->model_dim, weights->wk) != 0) {
+    if (attention_q4_matmul(backend, key,   input, 1u, config->model_dim, weights->wk) != 0) {
         goto cleanup;
     }
-    if (att1_matmul_q4xf32(value, input, 1u, config->model_dim, weights->wv) != 0) {
+    if (attention_q4_matmul(backend, value, input, 1u, config->model_dim, weights->wv) != 0) {
         goto cleanup;
     }
 
@@ -529,7 +540,7 @@ int att1_attention_forward_backend_q4(
         }
     }
 
-    if (att1_matmul_q4xf32(output, context, 1u, config->model_dim, weights->wo) != 0) {
+    if (attention_q4_matmul(backend, output, context, 1u, config->model_dim, weights->wo) != 0) {
         goto cleanup;
     }
 

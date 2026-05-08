@@ -197,13 +197,13 @@ static int test_q4_bench_cluster_exits_zero(void)
     return 0;
 }
 
-/* Test 3: --backend cuda-q4 fails clearly as unsupported (exits non-zero). */
-static int test_q4_bench_cuda_q4_unsupported(void)
+/* Test 3: --backend cuda-q4 single mode.
+ * M88: succeeds when CUDA is available; fails clearly when CUDA is unavailable. */
+static int test_q4_bench_cuda_q4_status(void)
 {
     int exit_code = 0;
     char output[4096];
 
-    /* Run with exit code capture: non-zero exit is required. */
     exit_code = system("./build/att1-bench"
                        " --model " Q4_MODEL
                        " --prompt " Q4_PROMPT
@@ -212,23 +212,41 @@ static int test_q4_bench_cuda_q4_unsupported(void)
                        " --backend cuda-q4"
                        " > build/q4bench_cudaq4.txt 2>&1");
 
-    if (exit_code == 0) {
-        fputs("FAIL: cuda-q4 bench should have exited non-zero\n", stderr);
-        return -1;
-    }
-
-    /* Optional: verify output contains an error message. */
-    if (read_file("build/q4bench_cudaq4.txt", output, sizeof(output)) == 0) {
-        if (strstr(output, "not supported") == NULL &&
-            strstr(output, "unsupported") == NULL &&
-            strstr(output, "error") == NULL &&
-            strstr(output, "unavailable") == NULL) {
-            fputs("FAIL: cuda-q4 bench output has no error indication\n", stderr);
+    if (att1_backend_cuda_available()) {
+        /* CUDA present: single-tile cuda-q4 must succeed. */
+        if (exit_code != 0) {
+            if (read_file("build/q4bench_cudaq4.txt", output, sizeof(output)) == 0) {
+                fputs(output, stderr);
+            }
+            fputs("FAIL: cuda-q4 bench should have exited zero with CUDA available\n",
+                  stderr);
             return -1;
         }
+        if (read_file("build/q4bench_cudaq4.txt", output, sizeof(output)) == 0) {
+            if (strstr(output, "backend=cuda-q4") == NULL) {
+                fputs("FAIL: cuda-q4 bench output missing 'backend=cuda-q4'\n", stderr);
+                return -1;
+            }
+        }
+        fputs("PASS: cuda-q4 backend bench single exits zero\n", stderr);
+    } else {
+        /* No CUDA: must exit non-zero with a clear error message. */
+        if (exit_code == 0) {
+            fputs("FAIL: cuda-q4 bench should have exited non-zero without CUDA\n",
+                  stderr);
+            return -1;
+        }
+        if (read_file("build/q4bench_cudaq4.txt", output, sizeof(output)) == 0) {
+            if (strstr(output, "not supported") == NULL &&
+                strstr(output, "unsupported") == NULL &&
+                strstr(output, "error") == NULL &&
+                strstr(output, "unavailable") == NULL) {
+                fputs("FAIL: cuda-q4 bench output has no error indication\n", stderr);
+                return -1;
+            }
+        }
+        fputs("PASS: cuda-q4 backend fails clearly as unsupported\n", stderr);
     }
-
-    fputs("PASS: cuda-q4 backend fails clearly as unsupported\n", stderr);
     return 0;
 }
 
@@ -256,7 +274,7 @@ int main(void)
 
     failures += (test_q4_bench_single_exits_zero()   != 0) ? 1 : 0;
     failures += (test_q4_bench_cluster_exits_zero()  != 0) ? 1 : 0;
-    failures += (test_q4_bench_cuda_q4_unsupported() != 0) ? 1 : 0;
+    failures += (test_q4_bench_cuda_q4_status()      != 0) ? 1 : 0;
     failures += (test_q4_bench_f32_path_unchanged()  != 0) ? 1 : 0;
 
     return (failures > 0) ? 1 : 0;
