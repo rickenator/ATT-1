@@ -30,7 +30,8 @@ TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	kv_cache attention transformer_block kv_mmu fabric runtime model_loader \
 	tokenizer sampler infer shard shard_meta shard_meta_fixture shard_meta_report shard_meta_consistency shard_meta_plan shard_meta_exec cluster_infer trace quant matmul_q8 backend bench_smoke tok_meta tok_meta_select tok_ext \
 	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer cuda_cluster cuda_bench \
-     q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4 cluster_infer_q4 q4_bench cuda_matmul_q4 cuda_infer_q4 cuda_cluster_infer_q4
+     q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4 cluster_infer_q4 q4_bench cuda_matmul_q4 cuda_infer_q4 cuda_cluster_infer_q4 \
+     aimu_cmdq
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -65,7 +66,8 @@ COMMON_SRCS := \
 	$(SRC_DIR)/tok_meta.c \
 	$(SRC_DIR)/tok_ext.c \
 	$(SRC_DIR)/attention.c \
-	$(SRC_DIR)/transformer_block.c
+	$(SRC_DIR)/transformer_block.c \
+	$(SRC_DIR)/aimu_cmdq.c
 
 COMMON_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(COMMON_SRCS))
 SIM_OBJS := $(BUILD_DIR)/$(SRC_DIR)/main.o $(COMMON_OBJS)
