@@ -117,7 +117,7 @@ test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TEST_BINS)
 bak:
 	@echo "Backing up ATT-1 to $(BAK_DEST)"
 	@mkdir -p "$(BAK_DEST)"
-	rsync -aH --info=progress2 \
+	rsync -aHL --info=progress2 \
 		--exclude='$(BUILD_DIR)/' \
 		--exclude='cmake-build-*/' \
 		--exclude='out/' \
@@ -143,7 +143,7 @@ bak:
 restore:
 	@echo "Restoring ATT-1 from $(BAK_DEST) to current working tree"
 	@test -d "$(BAK_DEST)" || { echo "Backup source not found: $(BAK_DEST)"; exit 1; }
-	rsync -aH --delete --info=progress2 \
+	rsync -aHL --delete --info=progress2 \
 		--exclude='$(BUILD_DIR)/' \
 		--exclude='cmake-build-*/' \
 		--exclude='out/' \

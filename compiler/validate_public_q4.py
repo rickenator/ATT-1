@@ -98,7 +98,7 @@ def _fabric_packets_nonzero(kv):
 def step_compat_check(model_dir):
     """Run check_llama_compat.py; return (ok, report_text)."""
     script = os.path.join(_SCRIPT_DIR, "check_llama_compat.py")
-    rc, out = _run([sys.executable, script, model_dir])
+    rc, out = _run([sys.executable, script, "--model-dir", model_dir])
     ok = rc == 0 and "compat: pass" in out
     return ok, out
 
