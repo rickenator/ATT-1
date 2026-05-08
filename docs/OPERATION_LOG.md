@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 96: Tile memory capacity and bandwidth estimator (complete).
+Milestone 97: Metadata-driven tensor-level placement plan (complete).
 
 ## Active Task
 
-Prepare Milestone 97.
+Prepare Milestone 98.
 
 ## Hard Rules
 
@@ -121,10 +121,11 @@ Prepare Milestone 97.
 - Milestone 94: ATT-1 trace diff tool — `compiler/trace_diff.py` added; parses att1-bench key=value output; compares all scalar, layer[N], and tile[N] fields; same/DIFF/MISSING tags; JSON report via --report-json; `check_trace_diff_smoke` added to `test_bench_smoke.c` (identical diff, cross-backend DIFF, malformed rejection); `docs/trace_diff.md` added; no C/Makefile/format changes.
 - Milestone 95: Prefill vs decode benchmark split — `att1-bench` now snapshots trace counters at the prefill/decode boundary and emits: `prompt_tokens` (byte and external modes), `decode_tokens`, `prefill_time_us_total`, `decode_time_us_total`, `prefill_kv_appends`, `decode_kv_appends`, `prefill_kv_reads`, `decode_kv_reads`, `prefill_logits_bytes`, `decode_logits_bytes`; `prefill_fabric_packets` + `decode_fabric_packets` for cluster mode; all four runner functions updated; `check_prefill_decode_split_smoke` added to `test_bench_smoke.c`; `trace_diff.py` updated with new field names; `docs/tracing.md` updated; no inference behavior changed.
 - Milestone 96: Tile memory capacity and bandwidth estimator — `tools/att1-size.c` extended with `--tile-memory-mib N`, `--tile-memory-gib N`, `--sessions N`, `--target-tokens-per-sec N`, `--fabric-gib-sec N` options; `capacity_opts` struct and `tile_capacity_status()`/`fabric_bandwidth_status()` helpers added; preset mode emits `tile_memory_mib`, `model_bytes_per_tile`, `tile_capacity_status`, and `fabric_bandwidth_status` lines; full/config/manual mode emits `[tile_capacity_estimate]` and `[fabric_bandwidth_estimate]` sections with combined model+KV utilization, PASS/WARN/FAIL/UNKNOWN status; JSON mode extended with `tile_capacity_estimate` and `fabric_bandwidth_estimate` objects; `check_tile_capacity_smoke` added to `test_bench_smoke.c` (6 scenarios); no C ABI, format, or inference behavior changed.
+- Milestone 97: Metadata-driven tensor-level placement plan — documentation/spec only; `docs/shard_metadata.md` §13 added: tensor-level ownership record schema (200-byte extended record, tensor_category/slice_axis/slice_start/slice_end fields), slicing policies (row-wise, column-wise, head-wise, layer-wise, vocab/lm_head split, embedding split, KV-cache split, replicated norms), execution consequences (matmul, attention, FFN/SwiGLU, lm_head logits, reductions, fabric traffic, synchronization, trace determinism, error/tolerance), placement validation rules (12 checks), estimator integration plan, execution modes (advisory/validation/opt-in/enforced), non-goals, and M98–M103 future milestone split; `docs/aimu_architecture.md` §9 added: AIMU fabric implications of each split policy (broadcast to slice owners, partial result collection, head-local KV traffic, embedding lookup routing, logit concat routing), AIMU local memory layout for tensor slices, activation routing protocol DAG changes, trace determinism under tensor-level placement, estimator integration (AIMU perspective), prototype engineering path M98–M103, and AIMU-scope non-goals; no C, Makefile, binary format, or inference behavior changed.
 
 ## Next Prompt for Codex
 
-Implement Milestone 97 only.
+Implement Milestone 98 only.
 - Default make/make test must remain CPU-only and CUDA-free.
 - CUDA remains opt-in with make CUDA=1.
 - Do not change .att1 binary format.

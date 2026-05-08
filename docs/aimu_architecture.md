@@ -626,3 +626,226 @@ Define the `att1_backend_ops` implementation for a PCIe/hardware tile:
   `include/att1_backend_pcie.h`.
 - Validated by a new test binary `tests/test_backend_pcie.c` using the
   software-emulated endpoint.
+
+---
+
+## 9. Tensor-Level Placement Plan (Milestone 97)
+
+This section covers the AIMU-architecture implications of M97's tensor-level
+placement model.  The full placement schema, slicing policies, validation
+rules, and future milestone split are specified in
+[shard_metadata.md §13](shard_metadata.md).  This section focuses on what
+tensor-level placement means for the AIMU fabric protocol, AIMU-local memory
+layout, activation routing, and the prototype engineering path.
+
+---
+
+### 9.1 From Layer Ownership to Tensor Slice Ownership
+
+The current AIMU prototype assigns each layer to a tile.  An AIMU tile
+executes all ops for its assigned layers: QKV projection, attention, FFN,
+RMSNorm.  This maps cleanly onto the software simulation because a tile is a
+software thread and there is no physical memory separation.
+
+At silicon scale, a single AIMU tile has a fixed local SRAM budget.  A large
+model's projection matrices may not fit in one tile's SRAM.  The tensor-level
+placement model allows a projection matrix to be **sliced** across multiple
+AIMUs.  Each AIMU receives only the rows or columns it owns, executes a
+partial matmul, and returns a partial result vector to the fabric.
+
+The shift in model:
+
+| Dimension | Layer-wise (current) | Tensor-level (M97+) |
+|---|---|---|
+| Unit of ownership | Layer | Tensor or tensor slice |
+| Metadata record | One record per tensor (whole) | One record per tensor slice |
+| AIMU local memory | Entire layer's weights | Slice rows/columns only |
+| Fabric message | Activation per layer boundary | Activation to every tile holding a slice of the tensor |
+| Reduction | Sum at logits only | Sum after every split-tensor matmul |
+| KV locality | Follows layer assignment | Follows head assignment (head-wise split) |
+
+---
+
+### 9.2 AIMU Fabric Implications of Each Split Policy
+
+The AIMU fabric (simulated in `simulator/sim_fabric_bus.c`) currently routes
+activation vectors in layer-pipeline order.  Tensor-level splits require the
+fabric to support the following additional patterns:
+
+**Broadcast to slice owners:**  
+When a tensor is row-split across K tiles, the full activation vector must be
+broadcast to all K tiles before the partial matmul can begin.  The fabric
+packet header must encode the target `tile_id` set (a bitmask) and the
+activation payload.  Currently, the fabric routes point-to-point; broadcast
+is a logical extension.
+
+**Partial result collection:**  
+After each partial matmul, each slice owner sends its partial result vector
+back to the reduction aggregator (which may be a designated tile or the host).
+The fabric must guarantee all K partial results arrive before the aggregator
+performs the sum reduction.
+
+**Head-local KV traffic:**  
+With head-wise attention split, QKV ops and KV memory are co-located on the
+same tile.  Cross-tile KV traffic is eliminated for the common case.  The
+fabric's KV routing path (currently implicit in layer assignment) becomes
+explicit in `routing_requirements` = `path_policy=1 (fixed)` on KV placement
+records.
+
+**Embedding lookup routing:**  
+A vocab-split embedding table requires the fabric to route a token ID lookup
+request to the tile holding that token's row.  This is a request-response
+pattern, not a streaming activation pattern.  The AIMU command packet for a
+lookup request differs from the activation delivery packet; M103 will specify
+this.
+
+**Logit concat routing:**  
+A vocab-split lm_head requires every tile holding a vocab slice to send its
+partial logit vector to the sampler.  The sampler (or a designated aggregation
+tile) receives K partial logit vectors and concatenates them in `slice_start`
+order.  This is the most fabric-intensive operation per decode step when
+vocab-split is used.
+
+---
+
+### 9.3 AIMU Local Memory Layout for Tensor Slices
+
+A tensor slice placement record specifies:
+
+- `byte_offset`: where the slice data begins in AIMU local SRAM.
+- `slice_axis`, `slice_start`, `slice_end`: which elements of the full tensor
+  this slice covers.
+- `dtype`, `quantization`: data format and per-row or per-group scale storage.
+
+The AIMU memory allocator must:
+
+1. Lay out weight slices at their specified `byte_offset` before the first
+   decode step (static layout — weights are immutable).
+2. Reserve a separate region for the activation scratchpad (partial matmul
+   inputs and outputs).
+3. Reserve KV cache at the layer-and-head range owned by this tile, per the
+   KV placement records.
+
+For q8 row-split weights, scale vectors must be included in the AIMU local
+SRAM alongside the quantized weight data.  Scale storage is proportional to
+the number of rows owned.
+
+For q4 group-split weights, scale and zero-point vectors are stored per group,
+and the slice boundary must align to group size (typically 32 or 64 elements)
+as required by the §13.5 validator rule 6.
+
+---
+
+### 9.4 Activation Routing Protocol Changes
+
+The current activation routing protocol (M93) uses fixed layer-pipeline order:
+
+```
+host → tile_0 (layers 0…k-1) → tile_1 (layers k…2k-1) → … → host (logits)
+```
+
+Tensor-level placement changes the routing graph into a **directed acyclic
+graph** (DAG) per decode step.  Each node in the DAG is a tensor-level
+operation on a tile.  Edges carry the activation or partial-result vectors.
+
+The DAG topology is determined by the placement records at model-load time.
+It does not change between decode steps (for a fixed context length).  This
+makes the routing protocol statically schedulable.
+
+Key protocol changes required for tensor-level placement:
+
+1. **Broadcast edges**: The fabric must support sending the same payload to
+   multiple tiles simultaneously, or the host must unicast to each slice owner
+   sequentially.  Unicast is correct but slower; broadcast is required at scale.
+
+2. **Barrier tokens**: After a split-tensor matmul, all K partial results must
+   arrive before the reduction step.  The `att1_fabric_barrier_wait()`
+   primitive (M88) must accept a count parameter (`wait for K responses`) rather
+   than a fixed single response.
+
+3. **Reduction aggregation point**: The `routing_requirements` field on split
+   tensor records must identify the reduction aggregator tile.  This may be a
+   dedicated reduction tile, the host, or a round-robin assignment.  For the
+   M97 spec, the aggregator is the host for all reductions.
+
+4. **Delivery ordering for concat**: Logit slices from vocab-split lm_head must
+   arrive at the sampler in `slice_start` order.  The fabric or the sampler
+   must impose this ordering.
+
+---
+
+### 9.5 Trace Determinism Under Tensor-Level Placement
+
+The trace subsystem (`att1_trace_t`, `src/trace.c`) records per-token and
+per-step fabric counters.  Tensor-level placement changes the expected counter
+values:
+
+| Counter | Layer-wise baseline | Tensor-level (head-wise, K tiles per layer) |
+|---|---|---|
+| `prefill_fabric_packets` | `n_layers × 1` | `n_layers × K` (broadcast to K tiles per layer) |
+| `decode_fabric_packets` | `n_layers × 1` | `n_layers × K × 2` (broadcast + partial collect) |
+| `kv_reads` | proportional to context | same (local on owning tile) |
+| `logits_bytes_produced` | `vocab_size × 4` | `vocab_size × 4` (same — concat at host) |
+
+Any existing smoke test that hard-codes expected fabric packet counts will
+diverge when tensor-level placement is enabled.  The M97 non-goal list
+explicitly excludes changing inference behavior or trace values; these changes
+will occur when opt-in tensor-level execution is enabled (M102).
+
+**Determinism requirement:** For a given placement plan and a given input
+token sequence, the trace counters must be identical across runs.  Partial
+results are summed in slice_start order (not arrival order) to ensure the same
+floating-point accumulation order.
+
+---
+
+### 9.6 Estimator Integration (AIMU Perspective)
+
+The M96 tile memory and bandwidth estimator (`att1-size`) uses an even-split
+heuristic.  From the AIMU perspective, the important refinement is:
+
+- **Memory**: An AIMU tile must fit (a) all weight slices assigned to it,
+  (b) activation scratchpad (max activation tensor × 2), (c) KV cache for
+  owned heads at max context.  The even-split heuristic may overestimate
+  for small-slice tiles and underestimate for tiles that hold large norm
+  weights replicated across all tiles.
+
+- **Bandwidth**: The bottleneck is the activation broadcast volume (full
+  `d_model` vector broadcast to K tiles) plus the partial-result return
+  traffic.  With K=2 head-wise split, fabric traffic doubles vs. layer-wise.
+  With vocab-split lm_head, the final logit broadcast becomes the dominant
+  traffic source at large `vocab_size`.
+
+A per-tile capacity table (M100) will make these distinctions explicit.
+
+---
+
+### 9.7 Prototype Engineering Path
+
+The M97 tensor-level placement spec prepares the AIMU prototype (Phase 2 PCIe,
+M93–M94) for the following next steps:
+
+| Milestone | AIMU prototype impact |
+|---|---|
+| M98 | Placement report schema; no hardware interface change |
+| M99 | Validator Python tool; validates shard_metadata records against §13.5 rules; no hardware change |
+| M100 | `att1-size --placement` option; reads a placement JSON; produces per-tile capacity and bandwidth table |
+| M101 | Advisory placement proposal tool; generates placement JSON from model config + policy; no inference change |
+| M102 | Opt-in CPU execution; validates that CPU inference with a tensor-level plan produces the same output as layer-wise inference within established tolerances; no PCIe hardware change |
+| M103 | AIMU command packet spec; defines the binary layout of the per-tile activation delivery, KV position, reduction barrier, and counter read packets sent over PCIe |
+
+Phase 3 silicon will consume the M103 command packet spec directly.  The
+Phase 2 PCIe software-emulated endpoint (M94) provides a validation target
+for M103 before hardware is available.
+
+---
+
+### 9.8 Non-Goals for M97 (AIMU scope)
+
+- No change to the PCIe BAR-mapped command FIFO protocol (M94).
+- No change to `src/backend_pcie.c` or `include/att1_backend_pcie.h`.
+- No change to the fabric simulator `simulator/sim_fabric_bus.c`.
+- No new AIMU tile instruction set entries.
+- No change to the KV-MMU paged-memory protocol (`att1_kv_mmu.h`).
+- No power or thermal modeling.
+- No physical layer (electrical/optical interconnect) specification.
