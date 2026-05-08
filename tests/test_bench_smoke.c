@@ -2677,6 +2677,149 @@ static int check_backend_comparison_smoke(void)
     return 0;
 }
 
+/*
+ * check_trace_diff_smoke() — M94
+ *
+ * Python-skippable.  Exercises compiler/trace_diff.py with three scenarios:
+ *
+ *   1. Identical diff — same file diffed against itself:
+ *      expected "differences: 0  missing: 0", "result: pass", "report: ok".
+ *
+ *   2. Cross-backend diff — cpu-f32 vs cpu-q8 run on the same model/tokens:
+ *      expected "DIFF" entry for backend field, "result: pass".
+ *      JSON report must contain "result", "differences", "pass".
+ *
+ *   3. Malformed input — a file with no parseable fields must cause the
+ *      script to exit non-zero.
+ */
+static int check_trace_diff_smoke(void)
+{
+    char output[32768];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    /* Write shared token IDs fixture. */
+    {
+        FILE *fp = fopen("build/m94_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("trace_diff_smoke: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n", fp);
+        fclose(fp);
+    }
+
+    /* Run cpu-f32 single bench -> m94_f32.txt */
+    if (run_command(
+            "./build/att1-bench"
+            " --model models/real_tiny_f32/model.att1"
+            " --tokens 1 --mode single --backend cpu-f32"
+            " --tokenizer external"
+            " --tokens-file build/m94_ids.txt"
+            " > build/m94_f32.txt 2>&1") != 0) {
+        fputs("trace_diff_smoke: cpu-f32 bench run failed\n", stderr);
+        return -1;
+    }
+
+    /* Run cpu-q8 single bench -> m94_q8.txt */
+    if (run_command(
+            "./build/att1-bench"
+            " --model models/real_tiny_q8/model.att1"
+            " --tokens 1 --mode single --backend cpu-q8"
+            " --tokenizer external"
+            " --tokens-file build/m94_ids.txt"
+            " > build/m94_q8.txt 2>&1") != 0) {
+        fputs("trace_diff_smoke: cpu-q8 bench run failed\n", stderr);
+        return -1;
+    }
+
+    /* 1. Identical diff: same file vs itself. */
+    if (run_command(
+            "python3 compiler/trace_diff.py"
+            " build/m94_f32.txt build/m94_f32.txt"
+            " > build/m94_diff_identical.txt 2>&1") != 0) {
+        fputs("trace_diff_smoke: identical diff script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m94_diff_identical.txt", output, sizeof(output)) != 0) {
+        fputs("trace_diff_smoke: cannot read identical diff output\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "differences: 0  missing: 0") == NULL) ||
+        (strstr(output, "result: pass")               == NULL) ||
+        (strstr(output, "report: ok")                 == NULL)) {
+        fputs("trace_diff_smoke: identical diff missing expected fields\n", stderr);
+        return -1;
+    }
+
+    /* 2. Cross-backend diff: cpu-f32 vs cpu-q8. */
+    if (run_command(
+            "python3 compiler/trace_diff.py"
+            " build/m94_f32.txt build/m94_q8.txt"
+            " --report-json build/m94_diff_backends.json"
+            " > build/m94_diff_backends.txt 2>&1") != 0) {
+        fputs("trace_diff_smoke: cross-backend diff script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m94_diff_backends.txt", output, sizeof(output)) != 0) {
+        fputs("trace_diff_smoke: cannot read cross-backend diff output\n", stderr);
+        return -1;
+    }
+
+    /* backend field must appear and show a DIFF. */
+    if ((strstr(output, "backend") == NULL) ||
+        (strstr(output, "DIFF")    == NULL)) {
+        fputs("trace_diff_smoke: cross-backend diff missing backend DIFF\n", stderr);
+        return -1;
+    }
+
+    if ((strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok")   == NULL)) {
+        fputs("trace_diff_smoke: cross-backend diff missing result/report\n", stderr);
+        return -1;
+    }
+
+    /* JSON report. */
+    if (read_file("build/m94_diff_backends.json", output, sizeof(output)) != 0) {
+        fputs("trace_diff_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"result\"")      == NULL) ||
+        (strstr(output, "\"differences\"") == NULL) ||
+        (strstr(output, "\"pass\"")        == NULL)) {
+        fputs("trace_diff_smoke: JSON report missing expected keys\n", stderr);
+        return -1;
+    }
+
+    /* 3. Malformed input must cause the script to exit non-zero. */
+    {
+        FILE *fp = fopen("build/m94_malformed.txt", "w");
+        if (fp == NULL) {
+            fputs("trace_diff_smoke: could not create malformed file\n", stderr);
+            return -1;
+        }
+        /* No key=value lines -> tool should reject as unparseable. */
+        fputs("this is not a valid bench output file\n", fp);
+        fclose(fp);
+    }
+
+    if (command_fails(
+            "python3 compiler/trace_diff.py"
+            " build/m94_malformed.txt build/m94_f32.txt"
+            " > /dev/null 2>&1") != 0) {
+        fputs("trace_diff_smoke: malformed input did not cause failure\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -2701,6 +2844,7 @@ int main(void)
         (check_public_q4_backend_smoke()  != 0) ||
         (check_public_q4_cuda_smoke()     != 0) ||
         (check_backend_comparison_smoke() != 0) ||
+        (check_trace_diff_smoke()         != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0)) {
