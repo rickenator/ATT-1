@@ -6,7 +6,7 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 84: public-model q4 source comparison report (complete).
+Milestone 85: public-model q4 backend smoke validation (complete).
 
 ## Hard Rules
 
@@ -102,6 +102,7 @@ Milestone 84: public-model q4 source comparison report (complete).
 - Milestone 82: public-model q4 conversion plan — documentation-only spec for converting `HuggingFaceTB/SmolLM2-135M` to a q4 `.att1` artifact; 211 eligible q4 tensors (7 per layer × 30 + output.weight), tok_embeddings and norms stay F32, group_size=32; size estimates F32 ≈ 540 MB / Q8 ≈ 235 MB / Q4 ≈ 190 MB; tolerance targets (F32 vs Q4 < 4.0, F32 vs Q8 < 1.0); validation flow, failure cases, CUDA q4 unsupported note; M83–M85 future milestone split; `docs/quantization.md`, `docs/real_model_conversion.md`, `docs/real_tiny_model_import.md` updated. No C source change. No Makefile change. No `.att1` format change. `make test` passes.
 - Milestone 83: public-model q4 conversion path — `--model-dir` auto-discovery of `model.safetensors` in converter; `compiler/fixtures/m83_model_dir/` fixture; `compiler/validate_public_q4.py` manual validator; `check_public_q4_smoke()` in `test_bench_smoke.c`; `docs/quantization.md` M83 section. CUDA q4 unsupported. `make test` passes.
 - Milestone 84: public-model q4 source comparison report — `--att1-q4` and `--q4-tol` flags added to `compare_att1_to_source.py`; static weight comparison (max_abs_error, mean_abs_error, topk_overlap); cpu-q4 bench forward comparison against f32 reference; q4 tolerance policy (max_abs_error < 4.0 informational) documented in `docs/quantization.md`; `check_q4_source_comparison()` smoke test added to `test_bench_smoke.c`. `make test` passes.
+- Milestone 85: public-model q4 backend smoke validation — `compiler/validate_public_q4_backends.py` added; cpu-q4 single/cluster pass with report fields (backend, mode, shard_plan, generated_tokens, last_token, timing, kv counters, fabric counters); cuda-q4 explicitly unsupported (verified via `--include-cuda`); cluster `fabric_packets_sent > 0` enforced; `check_public_q4_backend_smoke()` (3-part: text report, JSON report, cuda-q4 unsupported check) added to `test_bench_smoke.c`; `docs/quantization.md` M85 section and `docs/real_model_conversion.md` M85 row added. `make test` passes.
 
 ## Next Prompt for Codex
 
@@ -167,6 +168,13 @@ Milestone 23 complete:
 - Default CPU-only build remains CUDA-free.
 - CUDA=1 tests pass on RTX 3090 host.
 - Full CUDA q8 inference is still not implemented.
+
+Milestone 85 complete:
+- `compiler/validate_public_q4_backends.py` added: stdlib-only validator; runs q4 `.att1` artifact through cpu-q4 single and cluster paths; captures backend, mode, shard_plan, generated_tokens, last_token, token_time_us_total, logits_bytes, kv_appends, kv_evictions, fabric_packets_sent per run; enforces `fabric_packets_sent > 0` for cluster; `--include-cuda` adds cuda-q4 single/cluster rows which must report `unsupported` and do not cause overall fail; `--report-json` writes structured JSON.
+- `check_public_q4_backend_smoke()` added to `tests/test_bench_smoke.c`: Python-skippable; 3-part: text report checks, JSON report checks, --include-cuda unsupported check.
+- `docs/quantization.md` §"Q4 public-model backend smoke validation (M85)" added.
+- `docs/real_model_conversion.md` M85 table row added.
+- `make test` passes.
 
 Milestone 84 complete:
 - `compiler/compare_att1_to_source.py`: `--att1-q4 PATH` and `--q4-tol FLOAT` flags; static weight comparison with max_abs_error, mean_abs_error, topk_overlap (numpy); cpu-q4 bench forward comparison against f32 reference; `q4_static` key in JSON report; q4 token divergence treated as `note` not `fail`.

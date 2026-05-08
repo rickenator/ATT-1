@@ -1318,3 +1318,85 @@ structured JSON to `compare_q4.json`.  The JSON contains `f32_static`,
 `q8_static`, `q4_static`, and `forward` keys suitable for automated analysis.
 
 CUDA q4 backend and per-tensor top-k overlap improvements are deferred to M85.
+
+---
+
+## Q4 public-model backend smoke validation (M85)
+
+### Overview
+
+`compiler/validate_public_q4_backends.py` is the q4 analogue of the M70
+`validate_public_backends.py` script.  It runs a pre-converted q4 `.att1`
+artifact through all supported cpu-q4 backend paths, reports pass/fail and
+per-run metrics, and explicitly verifies that the `cuda-q4` backend fails with
+a clear "unsupported" message.
+
+### Backend paths exercised
+
+| Backend   | Mode    | Expected result |
+|-----------|---------|-----------------|
+| cpu-q4    | single  | pass |
+| cpu-q4    | cluster | pass; `fabric_packets_sent > 0` required |
+| cuda-q4   | single  | unsupported (when `--include-cuda`) |
+| cuda-q4   | cluster | unsupported (when `--include-cuda`) |
+
+CUDA q4 rows never cause the overall report to fail — they are included to
+confirm the unsupported error path is exercised and produces a clean message.
+
+### Report fields
+
+Each `run:` line reports:
+- `artifact` — path to the q4 `.att1` file
+- `backend` — `cpu-q4` or `cuda-q4`
+- `mode` — `single` or `cluster`
+- `shard_plan` — `runtime` (default) or `n/a` for unsupported rows
+- `generated_tokens` — token count actually generated
+- `last_token` — last generated token ID
+- `token_time_us_total` — wall-clock time in microseconds
+- `logits_bytes`, `kv_appends`, `kv_evictions` — when reported by bench
+- `fabric_packets_sent` — nonzero for cluster mode
+- `status` — `pass` / `fail` / `unsupported`
+
+### Manual usage (public model outside Git)
+
+```sh
+# Convert a public model to q4 first (see validate_public_q4.py, M83):
+python3 compiler/convert_llama_to_att1.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --weight-format q4 \
+    --out ~/Models/att1/SmolLM2-135M/model_q4.att1
+
+# Tokenize a prompt to produce a token IDs file (see tokenize_hf.py, M59):
+python3 compiler/tokenize_hf.py \
+    --tokenizer-dir ~/Models/SmolLM2-135M \
+    --text "Hello world" \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids
+
+# Run backend smoke validation:
+python3 compiler/validate_public_q4_backends.py \
+    --model-dir ~/Models/SmolLM2-135M \
+    --att1-q4   ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 3 --tiles 2 \
+    --include-cuda \
+    --report-json ~/Models/att1/SmolLM2-135M/q4_backend_smoke.json
+```
+
+Expected output excerpt:
+```
+run: artifact=...model_q4.att1 backend=cpu-q4 mode=single ... status=pass
+run: artifact=...model_q4.att1 backend=cpu-q4 mode=cluster ... fabric_packets_sent=<N> status=pass
+note: cuda-q4 single: error: cuda-q4 backend is not supported
+note: cuda-q4 cluster: error: cuda-q4 backend is not supported
+result: pass
+report: ok
+```
+
+### CUDA q4 policy
+
+`cuda-q4` is explicitly unsupported in M85.  Selecting it in `att1-bench`
+exits non-zero with `error: cuda-q4 backend is not supported` on stderr.  The
+validator records such rows as `status=unsupported` and does not count them
+toward the overall pass/fail.
+
+CUDA q4 kernel design and integration remain deferred to a future milestone.
