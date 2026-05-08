@@ -3065,6 +3065,178 @@ static int check_tile_capacity_smoke(void)
 }
 
 /*
+ * check_placement_cmd_plan_smoke() — M109
+ *
+ * Python-skippable.  Exercises compiler/map_placement_to_commands.py with
+ * nine scenarios:
+ *
+ *   1. Valid fixture → exit 0; output contains LOAD_TENSOR_TILE,
+ *      VALIDATE_TENSOR, TILE_BARRIER.
+ *   2. Command count matches expected (14 for 5-tensor 2-tile fixture:
+ *      5 LOAD + 5 VALIDATE + 2 BARRIER + 1 QUERY_COUNTERS + 1
+ *      TRACE_SNAPSHOT).
+ *   3. Deterministic: two runs produce identical output.
+ *   4. Q4 fixture → output contains q4_group_size and packed_bytes/scale_bytes
+ *      in LOAD_TENSOR_TILE notes.
+ *   5. Malformed JSON report → exit 2.
+ *   6. Strict mode + capacity_status=FAIL tile → exit 1.
+ *   7. Non-strict mode + capacity_status=FAIL tile → exit 0; output
+ *      contains "WARNING".
+ *   8. Missing tensor_id field → exit 1.
+ *   9. --plan-json produces JSON file with command_plan_version, commands,
+ *      and summary keys.
+ */
+static int check_placement_cmd_plan_smoke(void)
+{
+    char output[65536];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        puts("SKIP: Python 3 unavailable -- placement command plan tests skipped");
+        return 0;
+    }
+
+    /* 1. Valid fixture: exit 0; output contains expected command types. */
+    if (run_command(
+            "python3 compiler/map_placement_to_commands.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --plan-json build/m109_valid_plan.json"
+            " > build/m109_valid.txt 2>&1") != 0) {
+        fputs("placement_cmd_plan: valid fixture should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m109_valid.txt", output, sizeof(output)) != 0) {
+        fputs("placement_cmd_plan: cannot read valid output\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "LOAD_TENSOR_TILE") == NULL) ||
+        (strstr(output, "VALIDATE_TENSOR")  == NULL) ||
+        (strstr(output, "TILE_BARRIER")     == NULL)) {
+        fputs("placement_cmd_plan: valid output missing required command types\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: valid fixture produces expected command types");
+
+    /* 2. Command count == 14 for 5-tensor 2-tile fixture via JSON plan. */
+    if (run_command(
+            "python3 -c \""
+            "import json, sys; "
+            "d = json.load(open('build/m109_valid_plan.json')); "
+            "n = len(d['commands']); "
+            "sys.exit(0 if n == 14 else 1)"
+            "\"") != 0) {
+        fputs("placement_cmd_plan: expected 14 commands in JSON plan\n", stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: command count is 14");
+
+    /* 3. Deterministic: two runs produce identical stdout. */
+    if (run_command(
+            "python3 compiler/map_placement_to_commands.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " > build/m109_run2.txt 2>&1") != 0) {
+        fputs("placement_cmd_plan: second run failed\n", stderr);
+        return -1;
+    }
+    if (run_command("diff build/m109_valid.txt build/m109_run2.txt"
+                    " > /dev/null 2>&1") != 0) {
+        fputs("placement_cmd_plan: two runs produced different output (not deterministic)\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: output is deterministic");
+
+    /* 4. Q4 fixture: LOAD commands include q4_group_size and packed/scale bytes. */
+    if (run_command(
+            "python3 compiler/map_placement_to_commands.py"
+            " --report compiler/fixtures/placement_report_q4_tiny.json"
+            " > build/m109_q4.txt 2>&1") != 0) {
+        fputs("placement_cmd_plan: q4 fixture should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m109_q4.txt", output, sizeof(output)) != 0) {
+        fputs("placement_cmd_plan: cannot read q4 output\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "q4_group_size=") == NULL) ||
+        (strstr(output, "packed_bytes=")  == NULL) ||
+        (strstr(output, "scale_bytes=")   == NULL)) {
+        fputs("placement_cmd_plan: q4 output missing q4 metadata fields\n", stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: q4 commands include group_size/packed/scale bytes");
+
+    /* 5. Malformed JSON → exit 2. */
+    if (run_command(
+            "echo 'not_json' | python3"
+            " compiler/map_placement_to_commands.py"
+            " --report /dev/stdin"
+            " > build/m109_malformed.txt 2>&1") == 0) {
+        fputs("placement_cmd_plan: malformed JSON should exit non-zero\n", stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: malformed JSON exits non-zero");
+
+    /* 6. Strict mode + capacity FAIL tile → exit 1. */
+    if (run_command(
+            "python3 compiler/map_placement_to_commands.py"
+            " --report compiler/fixtures/placement_report_capacity_fail.json"
+            " --strict"
+            " > build/m109_strict_fail.txt 2>&1") == 0) {
+        fputs("placement_cmd_plan: strict mode with FAIL capacity should exit non-zero\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: strict mode rejects capacity FAIL");
+
+    /* 7. Non-strict mode + capacity FAIL → exit 0; output contains WARNING. */
+    if (run_command(
+            "python3 compiler/map_placement_to_commands.py"
+            " --report compiler/fixtures/placement_report_capacity_fail.json"
+            " > build/m109_nonstruct_warn.txt 2>&1") != 0) {
+        fputs("placement_cmd_plan: non-strict with FAIL capacity should exit 0\n",
+              stderr);
+        return -1;
+    }
+    if (read_file("build/m109_nonstruct_warn.txt", output, sizeof(output)) != 0) {
+        fputs("placement_cmd_plan: cannot read non-strict output\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "WARNING") == NULL) {
+        fputs("placement_cmd_plan: non-strict output should contain WARNING\n", stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: non-strict mode emits WARNING for capacity FAIL");
+
+    /* 8. Missing tensor_id field → exit 1. */
+    if (run_command(
+            "python3 compiler/map_placement_to_commands.py"
+            " --report compiler/fixtures/placement_report_missing_tensor_id.json"
+            " > build/m109_missing_id.txt 2>&1") == 0) {
+        fputs("placement_cmd_plan: missing tensor_id should exit non-zero\n", stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: missing tensor_id exits non-zero");
+
+    /* 9. --plan-json produces JSON with required top-level keys (reuse step 1). */
+    if (read_file("build/m109_valid_plan.json", output, sizeof(output)) != 0) {
+        fputs("placement_cmd_plan: cannot read plan JSON\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"command_plan_version\"") == NULL) ||
+        (strstr(output, "\"commands\"")             == NULL) ||
+        (strstr(output, "\"summary\"")              == NULL)) {
+        fputs("placement_cmd_plan: plan JSON missing required top-level keys\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: placement_cmd_plan: --plan-json produces JSON with required keys");
+
+    return 0;
+}
+
+/*
  * check_placement_validator_smoke() — M99
  *
  * Python-skippable.  Exercises compiler/validate_tensor_placement_report.py
@@ -3748,7 +3920,8 @@ int main(void)
         (check_placement_validator_smoke() != 0) ||
         (check_placement_report_smoke()   != 0) ||
         (check_placement_proposal_smoke() != 0) ||
-        (check_placement_scenarios_smoke() != 0)) {
+        (check_placement_scenarios_smoke() != 0) ||
+        (check_placement_cmd_plan_smoke() != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

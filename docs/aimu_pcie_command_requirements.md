@@ -1092,7 +1092,7 @@ the command model.
 | M106 | AIMU device discovery simulator | Extend M105 simulator with the §2 discovery interface (device_info, tile_descriptor array, memory_map registers); host-side discovery library stub |
 | M107 | DMA descriptor simulator | Define the DMA descriptor format for host-to-AIMU and AIMU-to-host transfers; integrate with M105/M106 simulator; validate tensor load round-trip |
 | M108 | Command trace/counter integration | Wire the §8 counter snapshot format into the M105/M106 simulator; export trace records in att1_trace_t-compatible JSON for diff against att1-bench output |
-| M109 | Placement-report-to-command-plan mapper | Python tool that reads an M100 placement report and produces an ordered list of LOAD_TENSOR_TILE and EXEC_* commands (one per layer, per tile); validates that the command plan matches the placement report tensor/tile assignments |
+| M109 | Placement-report-to-command-plan mapper | **Complete.** `compiler/map_placement_to_commands.py` reads an M98/M100 placement report JSON and emits a deterministic AIMU command plan: LOAD_TENSOR_TILE + VALIDATE_TENSOR per placed tensor, TILE_BARRIER per tile, QUERY_COUNTERS and TRACE_SNAPSHOT; `--strict` rejects capacity-FAIL tiles; `--plan-json` writes machine-readable plan; 9-scenario smoke test; see `docs/tensor_placement_report.md` §13 |
 | M110 | Minimal PCIe/AIMU prototype design review | Engineering review milestone: reconcile M104–M109 artifacts, resolve open questions from §2 and §6, produce a single-page hardware bringup checklist |
 
 ---

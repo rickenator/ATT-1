@@ -1080,3 +1080,121 @@ Each entry in `"scenarios"` contains all fields from §12.3.
   or generate a new one.
 - Fabric bandwidth estimates are linear approximations only; they do not
   account for packet batching, latency, or topology.
+
+---
+
+## 13. Placement-Report-to-Command-Plan Mapper (Milestone 109)
+
+The M109 mapper (`compiler/map_placement_to_commands.py`) consumes an M98/M100
+placement report JSON and emits a deterministic simulated AIMU command plan
+suitable for the M105 command queue / M103 command packet model.  The tool
+does **not** execute inference, change runtime behaviour, or access real
+PCIe/MMIO registers.
+
+### 13.1 Usage
+
+```
+python3 compiler/map_placement_to_commands.py \
+    --report <PLACEMENT_JSON> \
+    [--model-id ID] \
+    [--session-id ID] \
+    [--plan-json PATH] \
+    [--strict]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--report` | (required) | Path to M98/M100 placement report JSON |
+| `--model-id` | `""` (uses `model_name` from header) | Model identifier in every command |
+| `--session-id` | `session_0` | Session identifier in every command |
+| `--plan-json` | None | Write command plan JSON to PATH |
+| `--strict` | off | Reject if any tile has `capacity_status=FAIL` or any tensor has `placement_status != placed` |
+
+### 13.2 Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Command plan generated successfully (warnings may be present) |
+| 1 | Validation error — placement report problems prevented command generation |
+| 2 | Parse error — malformed JSON or missing required top-level fields |
+
+### 13.3 Command Plan Structure
+
+For each tile (sorted by `tile_id`):
+
+1. **`LOAD_TENSOR_TILE`** — one per placed tensor assigned to this tile (sorted
+   by `tensor_id`, then `slice_start`).
+2. **`VALIDATE_TENSOR`** — one per placed tensor; depends on the corresponding
+   `LOAD_TENSOR_TILE` command via `fence_id`.
+3. **`TILE_BARRIER`** — one per tile; depends on the last `VALIDATE_TENSOR`
+   command on that tile.
+
+After all tiles:
+
+4. **`QUERY_COUNTERS`** — read command-queue counters; depends on the last
+   `TILE_BARRIER`.
+5. **`TRACE_SNAPSHOT`** — capture unified trace snapshot; depends on the last
+   `TILE_BARRIER`.
+
+Command IDs are deterministic sequential integers starting from 1.
+
+### 13.4 Plan Header Fields
+
+| Field | Description |
+|---|---|
+| `command_plan_version` | Schema version; currently `1` |
+| `source_report_path` | Absolute path of the input placement report |
+| `model_name` | From `header.model_name` |
+| `model_id` | From `--model-id` or `model_name` |
+| `session_id` | From `--session-id` |
+| `tile_count` | From `header.tile_count` |
+| `tensor_count` | Number of placed tensors emitted as `LOAD_TENSOR_TILE` commands |
+| `command_count` | Total number of commands in the plan |
+| `status` | `ok` |
+
+### 13.5 Command Record Fields
+
+| Field | Notes |
+|---|---|
+| `command_id` | Monotonically increasing from 1 |
+| `command_type` | One of the five types above |
+| `tile_id` / `aimu_id` | Owner tile |
+| `session_id` / `model_id` | Passed through from CLI |
+| `tensor_id` / `tensor_name` | Present for LOAD and VALIDATE; `null` otherwise |
+| `dtype` | `f32`, `q8`, or `q4` |
+| `quantization_group_size` | Group size for `q4` tensors; `null` for others |
+| `packed_bytes` / `scale_bytes` / `total_bytes` | From tensor record |
+| `src_descriptor` | `host_buf:tensor_N` for LOAD; tile local addr for VALIDATE |
+| `dst_descriptor` | `tileN_local:tensor_N` for LOAD; `null` for VALIDATE |
+| `fence_id` | Command ID this command depends on; 0 = no dependency |
+| `expected_status` | `ATT1_AIMU_ERR_OK` |
+| `checksum` | From tensor record |
+| `notes` | Human-readable: category, layer, q4 group_size/packed/scale bytes |
+
+### 13.6 Validation Rules
+
+Exits 1 if: tile_id out of range; tensor_name/tensor_id missing; dtype
+unsupported; q4 group_size missing or not in {32, 64}; placement_status !=
+placed in --strict mode; capacity_status=FAIL in --strict mode.
+
+Exits 2 if: JSON parse error; report_version missing/unsupported; header or
+tensors section missing; tile_count invalid.
+
+### 13.7 Summary Fields
+
+commands_by_type, commands_by_tile, total_tensor_bytes, f32/q8/q4 tensor
+counts, capacity_failures_observed, warnings_observed.
+
+### 13.8 Fixtures
+
+| Fixture | Purpose |
+|---|---|
+| `placement_report_valid.json` | 5-tensor 2-tile f32; 14 commands |
+| `placement_report_q4_tiny.json` | 2-tensor 1-tile q4 (group 32 and 64) |
+| `placement_report_capacity_fail.json` | tile capacity_status=FAIL |
+| `placement_report_missing_tensor_id.json` | tensor missing tensor_id |
+
+### 13.9 Non-Goals for M109
+
+No C ABI, binary format, inference behaviour, CUDA, PCIe/MMIO, or kernel
+driver change.  The command plan is advisory and simulated only.
