@@ -3086,6 +3086,7 @@ static int check_placement_validator_smoke(void)
 
     /* Skip gracefully when Python 3 is not available. */
     if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        puts("SKIP: Python 3 unavailable -- placement validator tests skipped");
         return 0;
     }
 
@@ -3105,6 +3106,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: valid fixture exits 0 validation pass");
 
     /* 2. Invalid tile ID fixture: exit 1, "validation: fail". */
     if (run_command(
@@ -3123,6 +3125,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: invalid tile ID exits 1 validation fail");
 
     /* 3. Capacity overflow with PASS status: exit 1. */
     if (run_command(
@@ -3141,6 +3144,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: capacity overflow with PASS status caught");
 
     /* 4. Overlapping slices: exit 1. */
     if (run_command(
@@ -3159,6 +3163,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: overlapping slices detected");
 
     /* 5. Q4 group alignment violation: exit 1. */
     if (run_command(
@@ -3177,6 +3182,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: q4 group alignment violation detected");
 
     /* 6. Malformed JSON: must exit 2. */
     if (run_command(
@@ -3188,6 +3194,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: malformed JSON rejected exit 2");
 
     /* 7. Missing report_version field: must exit non-zero. */
     if (run_command(
@@ -3201,6 +3208,7 @@ static int check_placement_validator_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_validator: missing report_version rejected");
 
     /* 8. JSON output mode: valid fixture produces JSON with status=pass. */
     if (run_command(
@@ -3222,6 +3230,7 @@ static int check_placement_validator_smoke(void)
         fputs("placement_validator: JSON result missing expected keys\n", stderr);
         return -1;
     }
+    puts("PASS: placement_validator: JSON output has status total_errors total_warnings");
 
     return 0;
 }
@@ -3264,6 +3273,7 @@ static int check_placement_report_smoke(void)
         fputs("placement_report: tiny-dummy missing preset line\n", stderr);
         return -1;
     }
+    puts("PASS: placement_report: tiny-dummy emits JSON and preset output");
 
     /* 2. M99 validator passes on tiny-dummy report. */
     if (run_command(
@@ -3282,6 +3292,7 @@ static int check_placement_report_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_report: M99 validator passes on tiny-dummy report");
 
     /* 3. gpt-oss-120b-shape (q4, 8 tiles): exit 0; JSON created. */
     if (run_command(
@@ -3292,6 +3303,7 @@ static int check_placement_report_smoke(void)
         fputs("placement_report: gpt-oss exited non-zero\n", stderr);
         return -1;
     }
+    puts("PASS: placement_report: gpt-oss q4 8-tile JSON emitted");
 
     /* 4. M99 validator passes on gpt-oss report. */
     if (run_command(
@@ -3310,6 +3322,7 @@ static int check_placement_report_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_report: M99 validator passes on gpt-oss report");
 
     /* 5+6+7. Inspect tiny-dummy JSON for required top-level keys and content. */
     if (read_file("build/m100_tiny_smoke.json", output, sizeof(output)) != 0) {
@@ -3326,6 +3339,7 @@ static int check_placement_report_smoke(void)
         fputs("placement_report: tiny-dummy JSON missing required keys\n", stderr);
         return -1;
     }
+    puts("PASS: placement_report: JSON has report_version header tiles tensors warnings failures remediation");
     if ((strstr(output, "\"tile_count\"")        == NULL) ||
         (strstr(output, "\"dtype\"")             == NULL) ||
         (strstr(output, "\"quantization_family\"") == NULL)) {
@@ -3333,12 +3347,14 @@ static int check_placement_report_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_report: header has tile_count dtype quantization_family");
     if ((strstr(output, "\"tile_id\"")           == NULL) ||
         (strstr(output, "\"tensor_name\"")       == NULL)) {
         fputs("placement_report: tiny-dummy JSON missing tile_id or tensor_name\n",
               stderr);
         return -1;
     }
+    puts("PASS: placement_report: tiles and tensors arrays non-empty");
 
     /* 8. Bad output path exits non-zero. */
     if (run_command(
@@ -3348,6 +3364,7 @@ static int check_placement_report_smoke(void)
         fputs("placement_report: bad output path should fail\n", stderr);
         return -1;
     }
+    puts("PASS: placement_report: bad output path exits non-zero");
 
     /* 9. Existing --preset tiny-dummy (no --placement-report-json) unchanged. */
     if (run_command(
@@ -3365,6 +3382,7 @@ static int check_placement_report_smoke(void)
         fputs("placement_report: existing preset output changed\n", stderr);
         return -1;
     }
+    puts("PASS: placement_report: existing preset mode unchanged");
 
     return 0;
 }
@@ -3394,6 +3412,7 @@ static int check_placement_proposal_smoke(void)
 
     /* Skip gracefully when Python 3 is not available. */
     if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        puts("SKIP: Python 3 unavailable -- placement proposal tests skipped");
         return 0;
     }
 
@@ -3413,6 +3432,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: valid fixture advisory ok exit 0");
 
     /* 2. Generate gpt-oss q4 8-tile 16 GiB report via att1-size. */
     if (run_command(
@@ -3425,6 +3445,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: gpt-oss 16 GiB placement report generated");
 
     /* 3. Proposer on gpt-oss 16 GiB → exit 1, output "capacity-fail". */
     if (run_command(
@@ -3448,6 +3469,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: gpt-oss 16 GiB advisory fail with capacity-fail");
 
     /* 4. Proposer output mentions tile count or tile memory recommendation. */
     if ((strstr(output, "Increase tile count")  == NULL) &&
@@ -3456,6 +3478,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: gpt-oss advisory includes tile count or memory recommendation");
 
     /* 5. JSON output mode: valid fixture → JSON has expected keys. */
     if (run_command(
@@ -3478,6 +3501,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: advisory JSON has status proposals analysis next_action");
 
     /* 6. JSON output for FAIL case has proposal_count > 0. */
     if (run_command(
@@ -3504,6 +3528,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: fail advisory JSON has status proposal_count next_action");
 
     /* 7. Malformed JSON → exit 2. */
     if (run_command(
@@ -3515,6 +3540,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: malformed JSON rejected exit 2");
 
     /* 8. Missing required field "tiles" → exit 2. */
     if (run_command(
@@ -3526,6 +3552,7 @@ static int check_placement_proposal_smoke(void)
               stderr);
         return -1;
     }
+    puts("PASS: placement_proposal: missing tiles field rejected exit 2");
 
     return 0;
 }
