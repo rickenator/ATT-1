@@ -1578,6 +1578,88 @@ Exercises the script with the checked-in fixture and verifies:
 
 Passes on both CPU-only and CUDA hosts without changes.
 
+---
+
+## Backend comparison report (M92)
+
+### Overview
+
+M92 adds `compiler/backend_comparison_report.py`, which runs att1-bench across
+all f32/q8/q4 × CPU/CUDA × single/cluster combinations and produces a summary
+table plus per-row details.
+
+### Comparison matrix
+
+| Backend  | Mode    | Artifact | Required | CPU-only status | CUDA host status |
+|----------|---------|----------|----------|-----------------|------------------|
+| cpu-f32  | single  | f32      | yes      | pass            | pass             |
+| cpu-f32  | cluster | f32      | yes      | pass            | pass             |
+| cpu-q8   | single  | q8       | yes      | pass            | pass             |
+| cpu-q8   | cluster | q8       | yes      | pass            | pass             |
+| cpu-q4   | single  | q4       | yes      | pass            | pass             |
+| cpu-q4   | cluster | q4       | yes      | pass            | pass             |
+| cuda     | single  | f32      | no       | pending         | pass             |
+| cuda     | cluster | f32      | no       | pending         | pass             |
+| cuda-q8  | single  | q8       | no       | pending         | pass             |
+| cuda-q8  | cluster | q8       | no       | pending         | pass             |
+| cuda-q4  | single  | q4       | no       | pending         | pass             |
+| cuda-q4  | cluster | q4       | no       | pending         | pass             |
+
+CUDA rows require `--include-cuda`.  Without it they report `status=pending`.
+On a CPU-only host with `--include-cuda` they report `status=unavailable`.
+Neither is a failure; only `status=fail` on `required=True` rows fails the report.
+
+### Status values
+
+- `pass` — bench exited zero; backend name verified (no silent fallback).
+- `pending` — `--include-cuda` not supplied; CUDA rows skipped.
+- `unavailable` — `--include-cuda` supplied but CUDA absent on this host; not a failure.
+- `plan_unsupported` — backend rejected the shard plan; not a failure.
+- `fail` — unexpected error.
+
+### Fabric-packet check
+
+All `status=pass` cluster rows that are `required=True` must have
+`fabric_packets_sent > 0`.
+
+### Backend silent-fallback check
+
+CUDA backends (cuda/cuda-q8/cuda-q4) that exit zero but report a backend name
+in `{cpu-f32, cpu-q8, cpu-q4, cuda, cuda-q8}` (for cuda-q4) are flagged as
+`status=fail` (silent fallback detected).
+
+### Q4 notes
+
+Every report includes:
+- `cuda-q4 logits are expected to match cpu-q4 within Q4_TOLERANCE=0.35f`
+- `generated-token divergence between cpu-q4 and cuda-q4 is expected`
+- `metadata shard plan is not supported for q4 (ATT1_ERR_UNSUPPORTED)`
+
+### Usage (public model, external paths)
+
+```sh
+python3 compiler/backend_comparison_report.py \
+    --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+    --att1-q8  ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+    --att1-q4  ~/Models/att1/SmolLM2-135M/model_q4.att1 \
+    --tokens-file ~/Models/att1/SmolLM2-135M/prompt.ids \
+    --tokens 1 --tiles 2 --include-cuda \
+    --report-json ~/Models/att1/SmolLM2-135M/m92_report.json
+```
+
+### Smoke test (`test_bench_smoke.c`, `check_backend_comparison_smoke`)
+
+Exercises the script with the checked-in real_tiny fixtures (no `--include-cuda`) and verifies:
+- `result: pass` and `report: ok` in text report.
+- `backend=cpu-f32`, `backend=cpu-q8`, `backend=cpu-q4` rows present.
+- `status=pending` present (CUDA rows skipped).
+- At least one `note:` line present.
+- JSON report contains `"runs"`, `"result"`, `"pass"`.
+
+Passes on CPU-only hosts.  CUDA host verification: pending RTX 3090 signoff.
+
+---
+
 ### Overview
 
 This milestone is documentation-only.  It specifies the CUDA q4 design

@@ -2580,6 +2580,103 @@ static int check_public_q4_cuda_smoke(void)
     return 0;
 }
 
+/*
+ * check_backend_comparison_smoke() — M92
+ *
+ * Python-skippable.  Exercises backend_comparison_report.py with the
+ * checked-in real_tiny fixtures (f32, q8, q4).  Runs without --include-cuda
+ * so CUDA rows appear as 'pending', which is the expected CPU-only outcome.
+ *
+ * Checks:
+ *   1. Script exits zero.
+ *   2. Text report: result: pass, report: ok.
+ *   3. cpu-f32, cpu-q8, cpu-q4 rows present with status=pass.
+ *   4. CUDA rows present with status=pending.
+ *   5. At least one note: line present.
+ *   6. JSON report: "runs", "result", "pass" keys present.
+ */
+static int check_backend_comparison_smoke(void)
+{
+    char output[32768];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0; /* skip — Python absent */
+    }
+
+    /* Write the token IDs fixture file. */
+    {
+        FILE *fp = fopen("build/m92_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("backend_comparison_smoke: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n", fp);
+        fclose(fp);
+    }
+
+    /* Run the comparison report with checked-in fixtures (no --include-cuda). */
+    if (run_command(
+            "python3 compiler/backend_comparison_report.py"
+            " --att1-f32 models/real_tiny_f32/model.att1"
+            " --att1-q8  models/real_tiny_q8/model.att1"
+            " --att1-q4  models/real_tiny_q4/model.att1"
+            " --tokens-file build/m92_ids.txt"
+            " --tokens 1 --tiles 2"
+            " --report-json build/m92_comparison_report.json"
+            " > build/m92_comparison_report.txt 2>&1") != 0) {
+        fputs("backend_comparison_smoke: script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m92_comparison_report.txt", output, sizeof(output)) != 0) {
+        fputs("backend_comparison_smoke: cannot read report\n", stderr);
+        return -1;
+    }
+
+    /* Overall result and format markers. */
+    if ((strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok")   == NULL)) {
+        fputs("backend_comparison_smoke: missing result/report markers\n", stderr);
+        return -1;
+    }
+
+    /* CPU rows must be present and passing. */
+    if ((strstr(output, "backend=cpu-f32") == NULL) ||
+        (strstr(output, "backend=cpu-q8")  == NULL) ||
+        (strstr(output, "backend=cpu-q4")  == NULL)) {
+        fputs("backend_comparison_smoke: missing cpu-f32/q8/q4 run rows\n", stderr);
+        return -1;
+    }
+
+    /* CUDA rows must be present as pending (no --include-cuda). */
+    if (strstr(output, "status=pending") == NULL) {
+        fputs("backend_comparison_smoke: missing status=pending for CUDA rows\n",
+              stderr);
+        return -1;
+    }
+
+    /* At least one note line must be present. */
+    if (strstr(output, "note:") == NULL) {
+        fputs("backend_comparison_smoke: notes missing from report\n", stderr);
+        return -1;
+    }
+
+    /* JSON report check. */
+    if (read_file("build/m92_comparison_report.json", output, sizeof(output)) != 0) {
+        fputs("backend_comparison_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"runs\"")   == NULL) ||
+        (strstr(output, "\"result\"") == NULL) ||
+        (strstr(output, "\"pass\"")   == NULL)) {
+        fputs("backend_comparison_smoke: JSON report missing keys\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -2603,6 +2700,7 @@ int main(void)
         (check_public_q4_smoke()          != 0) ||
         (check_public_q4_backend_smoke()  != 0) ||
         (check_public_q4_cuda_smoke()     != 0) ||
+        (check_backend_comparison_smoke() != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_scaling_report()           != 0)) {

@@ -770,3 +770,46 @@ All `status=pass` cluster rows must have `fabric_packets_sent > 0`.
 
 All inference wiring is from M88/M89.  M91 adds only the Python script and a
 C smoke test (`check_public_q4_cuda_smoke` in `tests/test_bench_smoke.c`).
+
+---
+
+## Milestone 92: Backend comparison report
+
+`compiler/backend_comparison_report.py` runs all f32/q8/q4 × CPU/CUDA ×
+single/cluster bench combinations and produces a per-row comparison report.
+
+### Comparison matrix
+
+| Backend  | Mode    | Artifact | Required | CPU-only status | CUDA host status     |
+|----------|---------|----------|----------|-----------------|----------------------|
+| cpu-f32  | single  | f32      | yes      | pass            | pass                 |
+| cpu-f32  | cluster | f32      | yes      | pass            | pass                 |
+| cpu-q8   | single  | q8       | yes      | pass            | pass                 |
+| cpu-q8   | cluster | q8       | yes      | pass            | pass                 |
+| cpu-q4   | single  | q4       | yes      | pass            | pass                 |
+| cpu-q4   | cluster | q4       | yes      | pass            | pass                 |
+| cuda     | single  | f32      | no       | pending         | pass                 |
+| cuda     | cluster | f32      | no       | pending         | pass                 |
+| cuda-q8  | single  | q8       | no       | pending         | pass                 |
+| cuda-q8  | cluster | q8       | no       | pending         | pass                 |
+| cuda-q4  | single  | q4       | no       | pending         | pass                 |
+| cuda-q4  | cluster | q4       | no       | pending         | pass                 |
+
+CUDA rows require `--include-cuda`.  Without it they report `status=pending`
+(not a failure).  On a CPU-only host with `--include-cuda` they report
+`status=unavailable` (also not a failure).  Only `status=fail` on
+`required=True` rows fails the overall report.
+
+### Fabric-packet and silent-fallback checks
+
+Same logic as M91: required cluster rows must have `fabric_packets_sent > 0`;
+cuda-q4 silent-fallback detection via `_FORBIDDEN_FALLBACKS`.
+
+### C smoke test
+
+`check_backend_comparison_smoke` in `tests/test_bench_smoke.c` exercises
+the script with the checked-in real_tiny fixtures (no `--include-cuda`) and
+confirms `result: pass`, CPU rows present, CUDA rows `status=pending`, notes
+present, and JSON keys correct.
+
+CUDA host verification: pending RTX 3090 signoff.
