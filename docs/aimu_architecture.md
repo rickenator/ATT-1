@@ -920,3 +920,44 @@ near-memory execution principle.
 | `att1_fabric_barrier` | `TILE_BARRIER` |
 | `att1_trace_snapshot` | `TRACE_SNAPSHOT` |
 | `check_placement_*_smoke()` tests | Placement-report-to-command-plan mapper (M109) |
+
+---
+
+## 11. AIMU/PCIe MMIO Register Map (M104)
+
+See [`docs/aimu_register_map.md`](aimu_register_map.md) for the full M104
+specification.
+
+### 11.1 Summary
+
+M104 defines the 64 KiB BAR0 MMIO register layout that a host driver reads
+and writes to drive the M103 command protocol.  All M103 control-plane
+operations (§2 of `docs/aimu_pcie_command_requirements.md`) map to specific
+register offsets.
+
+| BAR0 region | Offset range | M104 section |
+|---|---|---|
+| Global device registers | `0x0000–0x003F` | §2 |
+| Command queue registers | `0x1000–0x102F` | §4 |
+| DMA descriptor registers | `0x2000–0x2017` | §5 |
+| Fabric/interconnect registers | `0x3000–0x302B` | §6 |
+| Counter registers | `0x4000–0x40B7` | §7 |
+| Trace/debug registers | `0x5000–0x501B` | §8 |
+| Per-tile windows (tile N) | `0x8000 + N×0x800` | §3 |
+
+### 11.2 Key Register Relationships to M103
+
+| M103 concept | M104 register(s) |
+|---|---|
+| Device discovery (`device_info`) | `DEVICE_ID`, `DEVICE_VERSION`, `REGISTER_MAP_VERSION` |
+| Tile enumeration | `TILE_COUNT`; per-tile `TILE_ID`, `TILE_STATUS`, `TILE_FEATURE_FLAGS` |
+| Memory capacity | `TILE_MEMORY_CAPACITY_LOW/HIGH`, `TILE_KV_CAPACITY_LOW/HIGH` |
+| Dtype support | `SUPPORTED_DTYPES` |
+| Op support | `SUPPORTED_OPS_LOW/HIGH` |
+| Feature flags | `FEATURE_FLAGS_LOW/HIGH` |
+| Error reporting | `ERROR_STATUS`, `ERROR_DETAIL`, `TILE_ERROR_STATUS` |
+| Command ring | `CQ_BASE_ADDR_LOW/HIGH`, `CQ_SIZE`, `CQ_HEAD`, `CQ_TAIL`, `CQ_DOORBELL` |
+| Completion ring | `CQ_COMPLETION_ADDR_LOW/HIGH`, `CQ_COMPLETION_SIZE` |
+| Counter snapshot | `COUNTER_SNAPSHOT_CONTROL`; counter registers §7 |
+| Trace buffer | `TRACE_BUFFER_BASE_LOW/HIGH`, `TRACE_WRITE_PTR`, `TRACE_SNAPSHOT_CONTROL` |
+| Tile reset | `TILE_RESET_CONTROL`, `RESET_CONTROL` |

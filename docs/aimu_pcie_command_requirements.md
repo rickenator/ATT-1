@@ -7,6 +7,13 @@ backends, shard metadata, and placement scenario tools as reference material.
 This is a specification document only.  No C runtime, binary format, or
 inference behavior is changed.
 
+Relationship to M104:
+- M103 (this document) defines the **command packet format and protocol**.
+- M104 (`docs/aimu_register_map.md`) defines the **MMIO register map** that
+  a host driver uses to configure command queues, discover tiles, and read
+  counters.  The §2 "Host/AIMU Control Plane" fields described below correspond
+  directly to the M104 global device registers (§2) and per-tile windows (§3).
+
 ---
 
 ## 1. Prototype Goal
