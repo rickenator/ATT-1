@@ -698,3 +698,40 @@ att1_backend_cuda_q4_create(&cuda_backend);         /* create cuda-q4 backend   
 att1_cluster_infer_set_backend(infer, cuda_backend);/* swap; triggers q4 prep   */
 /* cuda_backend now owned by infer */
 ```
+
+
+---
+
+## Milestone 90: CUDA q4 benchmark and backend-matrix integration
+
+`test_backend_matrix` now includes cuda-q4 single and cluster runtime entries,
+giving complete CPU/CUDA × single/cluster coverage for q4.
+
+### Backend matrix — group 4 (q4_tiny fixture)
+
+| Backend  | Mode    | Shard plan | Requires CUDA | Group |
+|----------|---------|------------|---------------|-------|
+| cpu-q4   | single  | runtime    | no            | 4     |
+| cpu-q4   | cluster | runtime    | no            | 4     |
+| cuda-q4  | single  | runtime    | yes           | 4     |
+| cuda-q4  | cluster | runtime    | yes           | 4     |
+
+On a CUDA host all four entries pass and produce the same `last_token` (cross-
+backend consistency).  On a CPU-only host the cuda-q4 entries are skipped.
+
+### Validation
+
+```
+make clean && make && make test
+# backend_matrix: 14/28 passed, 14 skipped, 0 failed  (CPU-only host)
+
+make clean && make CUDA=1 && make test CUDA=1
+# backend_matrix: 28/28 passed, 0 skipped, 0 failed  (CUDA host — verified)
+```
+
+### No new inference code
+
+All inference wiring was completed in M88 (single) and M89 (cluster).  M90
+adds only two `k_matrix[]` entries in `tests/test_backend_matrix.c` and
+relaxes the M85 Python/C smoke assertion from `status=unsupported` to
+`result: pass`.

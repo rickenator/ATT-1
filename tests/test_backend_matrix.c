@@ -84,6 +84,9 @@ static const matrix_entry_t k_matrix[] = {
     /* cpu-q4 single and cluster — q4_tiny fixture (group 4) */
     { "cpu-q4",  "single",  MATRIX_Q4_MODEL,   NULL,              NULL,       0, 0, 4 },
     { "cpu-q4",  "cluster", MATRIX_Q4_MODEL,   MATRIX_TILES,      "runtime",  1, 0, 4 },
+    /* cuda-q4 single and cluster — q4_tiny fixture (group 4, CUDA-conditional) */
+    { "cuda-q4", "single",  MATRIX_Q4_MODEL,   NULL,              NULL,       0, 1, 4 },
+    { "cuda-q4", "cluster", MATRIX_Q4_MODEL,   MATRIX_TILES,      "runtime",  1, 1, 4 },
 };
 
 #define MATRIX_COUNT (sizeof(k_matrix) / sizeof(k_matrix[0]))
@@ -326,7 +329,7 @@ int main(void)
      * 2=cluster-shard_meta, 3=cluster-converted_stub_meta, 4=q4-q4_tiny).
      * Group 2 spans both runtime and metadata plans on the 1-tile shard_meta fixture.
      * Group 3 spans both runtime and metadata plans on the 2-tile converted stub.
-     * Group 4 spans cpu-q4 single and cpu-q4 cluster on the q4_tiny fixture. */
+     * Group 4 spans cpu-q4 and cuda-q4 single/cluster on the q4_tiny fixture. */
     uint32_t refs[5]     = {0u, 0u, 0u, 0u, 0u};
     int      refs_set[5] = {0, 0, 0, 0, 0};
     int      token_mismatch = 0;

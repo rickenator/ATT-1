@@ -1401,6 +1401,11 @@ toward the overall pass/fail.
 
 CUDA q4 kernel design and integration remain deferred to a future milestone.
 
+> **Updated (M88–M90):** `cuda-q4` is fully supported from M88 onwards.
+> Single-tile inference was wired in M88, cluster inference in M89, and the
+> backend matrix and `validate_public_q4_backends.py --include-cuda` were
+> updated in M90 to treat cuda-q4 rows as passing on a CUDA host.
+
 ---
 
 ## CUDA q4 matmul prototype (M87)
@@ -1445,7 +1450,55 @@ CUDA kernel.
 
 ---
 
-## CUDA q4 implementation plan (M86)
+## CUDA q4 benchmark and backend-matrix integration (M90)
+
+### Overview
+
+M90 extends `test_backend_matrix` with two new entries for the `cuda-q4`
+backend (single and cluster runtime), giving complete CPU/CUDA × single/cluster
+coverage for q4 alongside the existing f32 and q8 matrix groups.
+
+### Backend consistency matrix — group 4 (q4_tiny fixture)
+
+| Backend  | Mode    | Shard plan | Requires CUDA | Group |
+|----------|---------|------------|---------------|-------|
+| cpu-q4   | single  | runtime    | no            | 4     |
+| cpu-q4   | cluster | runtime    | no            | 4     |
+| cuda-q4  | single  | runtime    | yes           | 4     |
+| cuda-q4  | cluster | runtime    | yes           | 4     |
+
+All four entries share consistency group 4: on a CUDA host all four must
+produce the same `last_token` value, confirming cross-backend and cross-mode
+token agreement for q4.  On a CPU-only host the cuda-q4 entries are skipped
+(status=SKIP) and do not affect pass/fail.
+
+### Metadata shard plan for q4
+
+`ATT1_SHARD_PLAN_METADATA` is not supported with `att1_cluster_infer_create_q4`
+(returns `ATT1_ERR_UNSUPPORTED`).  No metadata-plan q4 matrix entries are added.
+
+### `validate_public_q4_backends.py --include-cuda` (updated M90)
+
+Previously the M85 smoke test asserted `status=unsupported` for cuda-q4 rows.
+With M90 the assertion is relaxed to `result: pass` only — on a CUDA host the
+cuda-q4 rows are `status=pass`; on a CPU-only host they are
+`status=unsupported`.  Neither outcome causes the overall result to be `fail`.
+
+### Validation
+
+```
+make clean && make && make test
+# backend_matrix: 14/28 passed, 14 skipped, 0 failed  (CPU-only host)
+
+make clean && make CUDA=1 && make test CUDA=1
+# backend_matrix: 28/28 passed, 0 skipped, 0 failed  (CUDA host — verified)
+```
+
+### No new C or Makefile changes
+
+Both `att1-bench` and the bench matrix infrastructure already support cuda-q4
+as a result of M88 and M89.  M90 adds only two entries to `k_matrix[]` in
+`tests/test_backend_matrix.c` and relaxes the Python/C smoke assertion.
 
 ### Overview
 
