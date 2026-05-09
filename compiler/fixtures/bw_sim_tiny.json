@@ -1,0 +1,100 @@
+{
+  "header": {
+    "sim_version": 1,
+    "route_report_version": 1,
+    "source_route_report": "compiler/fixtures/fabric_route_from_plan_tiny.json",
+    "tile_count": 2,
+    "route_count": 3,
+    "target_tokens_per_sec": 1.0,
+    "fabric_gib_sec_target": 32.0,
+    "base_latency_ns": 100.0,
+    "per_hop_latency_ns": 50.0,
+    "packet_overhead_bytes": 64,
+    "status": "PASS"
+  },
+  "routes": [
+    {
+      "route_id": 1,
+      "route_type": "TILE_BARRIER",
+      "source_tile": 0,
+      "destination_tiles": [
+        0,
+        1
+      ],
+      "effective_payload_bytes": 0,
+      "packet_count": 0,
+      "packet_overhead_bytes": 0,
+      "total_wire_bytes": 0,
+      "hops": 0,
+      "estimated_bandwidth_gib_sec": 0.0,
+      "estimated_latency_ns": 100.0,
+      "bandwidth_status": "PASS"
+    },
+    {
+      "route_id": 2,
+      "route_type": "TRACE_EVENT",
+      "source_tile": 0,
+      "destination_tiles": [
+        1
+      ],
+      "effective_payload_bytes": 64,
+      "packet_count": 1,
+      "packet_overhead_bytes": 64,
+      "total_wire_bytes": 128,
+      "hops": 1,
+      "estimated_bandwidth_gib_sec": 1.1920928955078125e-07,
+      "estimated_latency_ns": 150.0,
+      "bandwidth_status": "PASS"
+    },
+    {
+      "route_id": 3,
+      "route_type": "CONTROL_ACK",
+      "source_tile": 1,
+      "destination_tiles": [
+        0
+      ],
+      "effective_payload_bytes": 64,
+      "packet_count": 1,
+      "packet_overhead_bytes": 64,
+      "total_wire_bytes": 128,
+      "hops": 0,
+      "estimated_bandwidth_gib_sec": 1.1920928955078125e-07,
+      "estimated_latency_ns": 100.0,
+      "bandwidth_status": "PASS"
+    }
+  ],
+  "tiles": [
+    {
+      "tile_id": 0,
+      "outbound_payload_bytes_per_token": 64,
+      "inbound_payload_bytes_per_token": 64,
+      "outbound_wire_bytes_per_token": 128,
+      "inbound_wire_bytes_per_token": 128,
+      "outbound_bandwidth_gib_sec": 1.1920928955078125e-07,
+      "inbound_bandwidth_gib_sec": 1.1920928955078125e-07,
+      "bottleneck_status": "PASS"
+    },
+    {
+      "tile_id": 1,
+      "outbound_payload_bytes_per_token": 64,
+      "inbound_payload_bytes_per_token": 64,
+      "outbound_wire_bytes_per_token": 128,
+      "inbound_wire_bytes_per_token": 128,
+      "outbound_bandwidth_gib_sec": 1.1920928955078125e-07,
+      "inbound_bandwidth_gib_sec": 1.1920928955078125e-07,
+      "bottleneck_status": "PASS"
+    }
+  ],
+  "aggregate": {
+    "total_payload_bytes_per_token": 128,
+    "total_wire_bytes_per_token": 256,
+    "required_fabric_gib_sec": 2.384185791015625e-07,
+    "fabric_gib_sec_target": 32.0,
+    "utilization_percent": 7.450580596923828e-07,
+    "status": "PASS",
+    "bottleneck_route_id": 2,
+    "bottleneck_tile_id": 0
+  },
+  "warnings": [],
+  "failures": []
+}

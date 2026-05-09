@@ -434,7 +434,7 @@ array using the §2.1 route descriptor fields.
 | M115 | Fabric route schema and report | JSON schema for route descriptors; `compiler/map_placement_to_fabric_routes.py` emits a `routes` array; smoke test validates round-trip |
 | M116 | Fabric route validator | `compiler/validate_fabric_routes.py` checks F1–F12; exit 0/1/2; smoke test covers all 12 rules |
 | M117 | Command-plan-to-fabric-route mapper | Extends M109 command plan output with a `routes` section; driven by M98 `routing_requirement` fields |
-| M118 | Fabric bandwidth/latency simulator | Extends Phase 1 `att1_fabric_t` with per-packet-type counters and a per-route bandwidth model; validates rule F10 at runtime |
+| M118 | Fabric bandwidth/latency simulator | Extends Phase 1 `att1_fabric_t` with per-packet-type counters and a per-route bandwidth model; validates rule F10 at runtime — **complete** |
 | M119 | Placement + command + fabric replay integration | Extends M113 replay tool to emit per-route statistics in the JSON report |
 | M120 | Phase 3 prototype go/no-go review | Cross-document review: M103 command model, M104 register map, M114 routing spec, M115–M119 tools, gap analysis for ASIC tape-out |
 
@@ -898,7 +898,7 @@ The following are explicitly outside M114 scope:
 | M115 | Fabric route schema and report | Define JSON route descriptor schema (§2.1 fields); `compiler/map_placement_to_fabric_routes.py` reads M109 command plan and emits a `routes` array; `--report-json` option; smoke test: valid plan round-trips, route count matches command count, broadcast route detected |
 | M116 | Fabric route validator | `compiler/validate_fabric_routes.py` checks all 12 rules (F1–F12); exit 0=pass, 1=violations, 2=parse error; fixture set covers each rule; smoke test: 12 cases — **complete** |
 | M117 | Command-plan-to-fabric-route mapper | Extend M109 `map_placement_to_commands.py` output with a `routes` section populated from `routing_requirement` and `reduction_behavior` placement fields; F6 check integrated — **complete** |
-| M118 | Fabric bandwidth/latency simulator | Extend Phase 1 `att1_fabric_t` with per-packet-type counters and per-route byte accounting; add rule F10 bandwidth check to `att1_fabric_send`/`att1_fabric_broadcast`; no inference behavior change |
+| M118 | Fabric bandwidth/latency simulator | Extend Phase 1 `att1_fabric_t` with per-packet-type counters and per-route byte accounting; add rule F10 bandwidth check to `att1_fabric_send`/`att1_fabric_broadcast`; no inference behavior change — **complete** |
 | M119 | Placement + command + fabric replay integration | Extend M113 `tools/att1-aimu-replay.c` to parse and replay `routes` section; emit per-route packet/byte/latency statistics in `--report-json` |
 | M120 | Phase 3 prototype go/no-go review | Cross-document design review covering M103–M119; gap analysis for Phase 3 ASIC; recommended silicon architecture changes; non-goals for Phase 2 close-out |
 
@@ -1149,5 +1149,173 @@ structural and semantic rules defined in §11.
 - No fence-ordering validation across tiles (requires command-plan context
   beyond the current scope).
 - No bandwidth estimation (informational flags only; deferred to M118).
+- No C, Makefile, binary format, or inference behavior changes.
+- No CUDA kernels or runtime scheduler changes.
+
+---
+
+## 14. Fabric Bandwidth and Latency Simulator (Milestone 118)
+
+`compiler/simulate_fabric_bandwidth.py` reads an M115/M117 fabric route report
+JSON and produces per-route, per-tile, and aggregate fabric bandwidth and
+latency pressure **estimates**.  This is a planner-level report tool — it does
+NOT execute routes, change inference behavior, access real PCIe/MMIO
+registers, or implement a kernel driver.
+
+**All estimates are deterministic model projections derived from route
+metadata, not measured hardware behavior.**
+
+### 14.1 Overview and CLI
+
+```
+python3 compiler/simulate_fabric_bandwidth.py \
+    --route-report <PATH> \
+    [--target-tokens-per-sec N] \
+    [--fabric-gib-sec N] \
+    [--base-latency-ns N] \
+    [--per-hop-latency-ns N] \
+    [--packet-overhead-bytes N] \
+    [--report-json <OUTPUT_PATH>] \
+    [--strict]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--route-report PATH` | required | M115/M117 route report JSON to simulate |
+| `--target-tokens-per-sec N` | 1 | Inference token rate target in tokens/s |
+| `--fabric-gib-sec N` | none | Fabric bandwidth budget in GiB/s |
+| `--base-latency-ns N` | 100 | Base per-route latency estimate in ns |
+| `--per-hop-latency-ns N` | 50 | Additional latency per fabric hop in ns |
+| `--packet-overhead-bytes N` | 64 | Per-packet header overhead in bytes |
+| `--report-json PATH` | none | Write JSON simulation report to PATH |
+| `--strict` | off | Exit nonzero on WARN or FAIL (default: only FAIL exits nonzero) |
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | PASS or UNKNOWN (also WARN without `--strict`) |
+| 1 | FAIL status, or WARN with `--strict`, or structural error |
+| 2 | Parse error (malformed JSON or missing required field) |
+| 3 | Invalid numeric flag value |
+
+### 14.2 Simulator Model
+
+The simulator treats every route record as an estimated traffic event for one
+token inference step.
+
+**Per-route estimates:**
+
+| Field | Formula |
+|---|---|
+| `effective_payload_bytes` | `payload_bytes` from route record |
+| `packet_count` | `packet_count_estimate` from route (0 for `TILE_BARRIER`) |
+| `packet_overhead_bytes` | `packet_overhead_bytes` flag × `packet_count` |
+| `total_wire_bytes` | `effective_payload_bytes` + `packet_overhead_bytes` |
+| `estimated_bandwidth_gib_sec` | `total_wire_bytes × target_tokens_per_sec / GiB` |
+| `estimated_latency_ns` | `base_latency_ns + hops × per_hop_latency_ns` |
+
+**Per-tile estimates** are derived by accumulating route-level wire bytes:
+
+- `outbound_wire_bytes_per_token` — sum of `total_wire_bytes` for routes
+  where `source_tile == tile_id`.
+- `inbound_wire_bytes_per_token` — sum of `total_wire_bytes` for routes
+  where `tile_id` appears in `destination_tiles`.
+- Bandwidth = wire bytes per token × target token rate / GiB.
+- `bottleneck_status` is based on `max(outbound_bw, inbound_bw)`.
+
+**Aggregate estimates** sum all route wire bytes, then apply the token rate.
+
+### 14.3 Latency Model
+
+```
+latency_ns = base_latency_ns + hops × per_hop_latency_ns
+```
+
+| Route type | Hops |
+|---|---|
+| `TILE_BARRIER` | 0 (barrier coordination, no data traversal) |
+| `CONTROL_ACK` | 0 (local control acknowledgement) |
+| All other types | 1 (cross-tile data or trace transfer) |
+
+This is a deterministic estimate only.  It does not model queuing delay,
+contention, NoC arbitration, or measured hardware latency.
+
+### 14.4 Status Rules
+
+| Condition | Status |
+|---|---|
+| No `--fabric-gib-sec` supplied | `UNKNOWN` |
+| `required_bandwidth ≤ 80%` of target | `PASS` |
+| `required_bandwidth ≤ 100%` of target | `WARN` |
+| `required_bandwidth > 100%` of target | `FAIL` |
+
+Status is computed independently at three levels: per-route, per-tile
+(bottleneck direction), and aggregate.  The aggregate status is reported as
+the top-level simulation status.
+
+### 14.5 Output
+
+**Human-readable report** (always written to stdout):
+- Per-route: `route_id`, route type, tile, destination tiles, wire bytes,
+  bandwidth estimate, latency estimate, status.
+- Per-tile: outbound/inbound bandwidth estimates, bottleneck status.
+- Aggregate: total payload and wire bytes per token, required bandwidth,
+  fabric target, utilization %, bottleneck route/tile, overall status.
+- Warnings list (per-route or per-tile diagnostics).
+- Recommendations (rule-based, see §14.6).
+
+**Optional JSON report** (`--report-json`):
+- `header` — sim_version, route_report_version, source_route_report,
+  tile_count, route_count, token rate, fabric target, latency parameters,
+  packet overhead, overall status.
+- `routes` — per-route simulation result array.
+- `tiles` — per-tile bandwidth and status array.
+- `aggregate` — total bytes, required bandwidth, target, utilization %,
+  status, bottleneck route/tile.
+- `warnings` — list of warning strings.
+- `failures` — list of failure strings.
+
+### 14.6 Recommendations
+
+The simulator generates rule-based recommendations based on aggregate status
+and route-type traffic distribution:
+
+| Trigger | Recommendation |
+|---|---|
+| WARN or FAIL | Increase `--fabric-gib-sec` |
+| FAIL | Reduce `--target-tokens-per-sec` |
+| Activation routes > 50% of wire bytes | Reduce cross-tile placement; split/replicate tensors; prefer head-wise placement for attention |
+| Logits reduction > 30% of wire bytes | Split `lm_head`/logits reduction across fewer tiles |
+| KV transfer > 30% of wire bytes | Reduce context/session pressure; co-locate KV shards with consumers |
+| None of the above | Report utilization within acceptable bounds |
+
+### 14.7 Fixtures
+
+| Fixture path | Description |
+|---|---|
+| `compiler/fixtures/fabric_route_from_plan_tiny.json` | Input: M117-generated 3-route report (TILE_BARRIER + TRACE_EVENT + CONTROL_ACK, 2 tiles) |
+| `compiler/fixtures/bw_sim_tiny.json` | Output: M118 simulator JSON for the above input at 1 token/s, 32 GiB/s target — status `PASS` |
+
+Round-trip test:
+
+```
+python3 compiler/simulate_fabric_bandwidth.py \
+    --route-report compiler/fixtures/fabric_route_from_plan_tiny.json \
+    --target-tokens-per-sec 1 \
+    --fabric-gib-sec 32 \
+    --report-json /tmp/bw_check.json
+# exit 0, status PASS
+```
+
+### 14.8 Non-Goals for M118
+
+- No route execution or fabric simulation.
+- No contention, queuing, or NoC arbitration modelling.
+- No measured hardware latency — all estimates are deterministic projections.
+- No cyclic-dependency check (deferred to M120 review).
+- No fence-ordering validation (requires full command-plan DAG).
+- No concat completeness validation (requires multi-route aggregation beyond
+  current scope).
 - No C, Makefile, binary format, or inference behavior changes.
 - No CUDA kernels or runtime scheduler changes.
