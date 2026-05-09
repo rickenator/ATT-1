@@ -490,8 +490,8 @@ The prototype is considered **passing** when all of the following hold:
 
 | Milestone | Title | Scope |
 |---|---|---|
-| M111 | MMIO register-file simulator | In-process 64 KiB BAR0 register array; R/W accessors for all M104 register offsets; read-only enforcement for RO registers; doorbell write path; integration with M105–M108 simulators |
-| M112 | Command queue + device + DMA integration test harness | Single C11 test that runs the full pipeline: device probe → DMA register → submit command plan → snapshot → assert counters; no Python required |
+| M111 | MMIO register-file simulator | **COMPLETE** — In-process 64 KiB BAR0 register array; R/W accessors for all M104 register offsets; read-only enforcement for RO registers; doorbell write path; integration with M105–M108 simulators |
+| M112 | Control-plane integration harness | **COMPLETE** — `att1_aimu_host` C11 in-process harness wiring M105+M106+M107+M108+M111; probe→enumerate→setup_cmdq→validate_dma→submit→doorbell→dispatch→completion→snapshot pipeline; 20 test functions |
 | M113 | Placement-command replay tool | `compiler/replay_command_plan.py` or `tools/att1-replay.c`; reads M109 JSON plan; drives M105/M106/M107/M108 simulators; emits pass/fail and snapshot JSON |
 | M114 | AIMU fabric routing requirements | Document and simulate fabric route-table updates per placement policy; connect fabric counters to placement policy; topology-aware bandwidth estimate |
 | M115 | AIMU tile memory allocator simulator | AIMU-local slab allocator for tensor, KV, staging, and trace regions; fragmentation reporting; integrates with DMA descriptor address range checks |
