@@ -1,0 +1,28 @@
+{
+  "command_plan_version": 1,
+  "header": {
+    "command_plan_version": 1,
+    "model_name": "hostile_test",
+    "tile_count": 1,
+    "command_count": 1,
+    "status": "ok"
+  },
+  "commands": [
+    {
+      "command_id": 1,
+      "command_type": "LOAD_TENSOR_TILE",
+      "tile_id": 0,
+      "aimu_id": 0,
+      "tensor_id": 0,
+      "tensor_name": "tok_embeddings.weight",
+      "dtype": "f32",
+      "quantization": "none",
+      "quantization_group_size": null,
+      "packed_bytes": -100,
+      "scale_bytes": 0,
+      "total_bytes": -100,
+      "fence_id": 1,
+      "expected_status": "ATT1_AIMU_ERR_OK"
+    }
+  ]
+}

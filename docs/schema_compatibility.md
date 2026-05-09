@@ -219,3 +219,91 @@ or removed):
 5. Run `python3 compiler/check_golden_regressions.py --update-golden` if
    tool output changes.
 6. Update this document.
+
+---
+
+## 11. Hostile-Input Policy  _(M135)_
+
+The hostile-input regression suite (`compiler/check_hostile_inputs.py` and
+`compiler/test_hostile_inputs.py`) enforces the following additional rules
+beyond version and type compatibility:
+
+### 11.1 Malformed input must fail clearly
+
+Every hostile input must produce **exit code 1** with a specific, named
+error code identifying the failing field or constraint.  Silent acceptance
+of invalid input is a regression.
+
+### 11.2 Negative counts and impossible dimensions
+
+The following are always errors (exit 1):
+
+| Field | Rule | Error code |
+|-------|------|------------|
+| `placement.header.tile_count` | must be ≥ 0 | `E_NEGATIVE_TILE_COUNT` |
+| `pipeline.tile_count` | must be ≥ 0 | `E_NEGATIVE_TILE_COUNT` |
+| `placement.tiles[i].model_bytes` / `kv_bytes` | must be ≥ 0 | `E_NEGATIVE_BYTES` |
+| `command_plan.commands[i].packed_bytes` / `total_bytes` | must be ≥ 0 | `E_NEGATIVE_BYTE_COUNT` |
+
+### 11.3 Duplicate identifiers
+
+Duplicate identifiers within the same document are always errors:
+
+| Field | Error code |
+|-------|------------|
+| `placement.tiles[i].tile_id` | `E_DUPLICATE_ID` |
+| `command_plan.commands[i].command_id` | `E_DUPLICATE_ID` |
+| `fabric_route.routes[i].route_id` | `E_DUPLICATE_ID` |
+| `execution_plan.commands[i].plan_command_id` | `E_DUPLICATE_ID` |
+
+### 11.4 Invalid enum values
+
+| Field | Allowed values | Error code |
+|-------|---------------|------------|
+| `placement.tiles[i].capacity_status` | `PASS`, `WARN`, `FAIL`, `UNKNOWN` | `E_INVALID_STATUS` |
+| `command_plan.commands[i].command_type` | ATT-1 M109 command type set | `E_UNKNOWN_TYPE` |
+| `command_plan.commands[i].dtype` | `f32`, `q8`, `q4`, `bf16`, `i32` | `E_UNSUPPORTED_DTYPE` |
+| `fabric_route.routes[i].route_type` | ATT-1 M116 route type set | `E_UNKNOWN_TYPE` |
+| `fabric_route.routes[i].ordering_policy` | `ordered`, `unordered`, `barriered` | `E_INVALID_ORDERING` |
+| `execution_plan.commands[i].execution_phase` | ATT-1 M128 phase set | `E_UNKNOWN_TYPE` |
+| `execution_plan.commands[i].expected_status` | ATT-1 M128 status set | `E_UNKNOWN_TYPE` |
+
+### 11.5 Missing required references
+
+| Condition | Error code |
+|-----------|------------|
+| `command_plan`: tensor command type with `tensor_name: null` | `E_MISSING_TENSOR_NAME` |
+| `placement.tensors[i].owner_tile` not in tile_id set | `E_NONEXISTENT_OWNER` |
+| `placement.tensors[i].quantization == "q4"` and `quantization_group_size` is null | `E_Q4_MISSING_GROUP_SIZE` |
+| `execution_plan`: `LOAD_TENSOR_TILE` with empty `output_buffers` | `E_MISSING_OUTPUT_BUFFER` |
+| `execution_plan`: `EXEC_MATMUL`/`EXEC_RMSNORM` with empty `tensor_dependencies` | `E_MISSING_TENSOR_DEP` |
+
+### 11.6 Fabric route semantic rules
+
+| Condition | Error code |
+|-----------|------------|
+| Data route (`ACTIVATION_SEND`, etc.) with `payload_bytes == 0` | `E_ZERO_PAYLOAD` |
+| Reduction route (`PARTIAL_REDUCE`, `LOGITS_REDUCE`) without explicit `reduction_behavior` | `E_MISSING_REDUCTION` |
+
+### 11.7 Count consistency
+
+| Condition | Error code |
+|-----------|------------|
+| `placement.header.tile_count` ≠ `len(tiles)` | `E_TILE_COUNT_MISMATCH` |
+| `pipeline.commands_replayed` > `pipeline.command_count` | `E_INCONSISTENT_COUNTS` |
+
+### 11.8 No silent fallback
+
+Tools must not fall back silently when a hostile input is detected.  If a
+tool succeeds (exit 0) on a fixture that is listed as hostile, the test
+suite reports a regression (`FAIL`).
+
+### 11.9 Fixture conventions
+
+- Hostile fixtures live in `compiler/fixtures/hostile/`.
+- Each fixture is named after the schema type and the specific violation,
+  e.g. `placement_duplicate_tile_id.json`.
+- Each fixture is valid JSON but semantically hostile — it triggers exactly
+  the error(s) described by its name.
+- Valid golden fixtures live in `compiler/fixtures/` and must continue to
+  return exit 0 from `check_hostile_inputs.py`.

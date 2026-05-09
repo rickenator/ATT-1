@@ -1,0 +1,21 @@
+{
+  "header": {
+    "route_report_version": 1,
+    "model_name": "hostile_test",
+    "tile_count": 2,
+    "route_count": 1,
+    "status": "pass"
+  },
+  "routes": [
+    {
+      "route_id": 1,
+      "route_type": "ACTIVATION_SEND",
+      "source_tile": 0,
+      "destination_tiles": [1],
+      "payload_bytes": 256,
+      "reduction_behavior": "none",
+      "ordering_policy": "chaotic",
+      "route_status": "ok"
+    }
+  ]
+}

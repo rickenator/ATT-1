@@ -1,0 +1,30 @@
+{
+  "execution_plan_version": 1,
+  "model_id": "hostile_test",
+  "session_id": "session_0",
+  "token_phase": "prefill",
+  "tile_count": 1,
+  "layer_count": 1,
+  "command_count": 1,
+  "status": "pass",
+  "notes": [],
+  "commands": [
+    {
+      "plan_command_id": 1,
+      "tile_id": 0,
+      "layer_id": -1,
+      "token_phase": "prefill",
+      "execution_phase": "QUERY_COUNTERS",
+      "command_type": "QUERY_COUNTERS",
+      "tensor_dependencies": [],
+      "input_buffers": [],
+      "output_buffers": [],
+      "required_routes": [],
+      "required_reductions": [],
+      "fence_id": 1,
+      "dependency_fence_id": 0,
+      "expected_status": "maybe",
+      "trace_flags": 0
+    }
+  ]
+}

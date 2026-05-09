@@ -1,0 +1,28 @@
+{
+  "report_version": 1,
+  "header": {
+    "model_name": "hostile_test",
+    "tile_count": 5,
+    "tile_memory_mib": 64,
+    "placement_policy": "layer_wise"
+  },
+  "tiles": [
+    {
+      "tile_id": 0,
+      "model_bytes": 131072,
+      "kv_bytes": 65536,
+      "activation_bytes_per_token": 256,
+      "capacity_status": "PASS",
+      "bandwidth_status": "PASS"
+    },
+    {
+      "tile_id": 1,
+      "model_bytes": 131072,
+      "kv_bytes": 65536,
+      "activation_bytes_per_token": 256,
+      "capacity_status": "PASS",
+      "bandwidth_status": "PASS"
+    }
+  ],
+  "tensors": []
+}

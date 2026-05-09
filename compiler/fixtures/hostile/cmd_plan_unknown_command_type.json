@@ -1,0 +1,28 @@
+{
+  "command_plan_version": 1,
+  "header": {
+    "command_plan_version": 1,
+    "model_name": "hostile_test",
+    "tile_count": 1,
+    "command_count": 1,
+    "status": "ok"
+  },
+  "commands": [
+    {
+      "command_id": 1,
+      "command_type": "MAGIC_BEAM",
+      "tile_id": 0,
+      "aimu_id": 0,
+      "tensor_id": null,
+      "tensor_name": null,
+      "dtype": null,
+      "quantization": null,
+      "quantization_group_size": null,
+      "packed_bytes": 0,
+      "scale_bytes": 0,
+      "total_bytes": 0,
+      "fence_id": 1,
+      "expected_status": "ATT1_AIMU_ERR_OK"
+    }
+  ]
+}

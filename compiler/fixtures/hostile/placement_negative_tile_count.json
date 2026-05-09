@@ -1,0 +1,11 @@
+{
+  "report_version": 1,
+  "header": {
+    "model_name": "hostile_test",
+    "tile_count": -3,
+    "tile_memory_mib": 64,
+    "placement_policy": "layer_wise"
+  },
+  "tiles": [],
+  "tensors": []
+}

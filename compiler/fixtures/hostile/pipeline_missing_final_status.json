@@ -1,0 +1,14 @@
+{
+  "pipeline_version": 132,
+  "tile_count": 1,
+  "command_count": 1,
+  "commands_replayed": 1,
+  "completions_seen": 1,
+  "failed_commands": 0,
+  "execution_plan_validation_status": "pass",
+  "command_plan_status": "pass",
+  "mmio_replay_status": "pass",
+  "fabric_route_status": "pass",
+  "fabric_replay_status": "pass",
+  "fabric_simulation_status": "pass"
+}
