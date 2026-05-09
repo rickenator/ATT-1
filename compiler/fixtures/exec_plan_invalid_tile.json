@@ -1,0 +1,49 @@
+{
+  "execution_plan_version": 1,
+  "model_id": "tiny_test_model",
+  "session_id": "session_0",
+  "token_phase": "prefill",
+  "tile_count": 1,
+  "layer_count": 1,
+  "command_count": 2,
+  "status": "pass",
+  "notes": [
+    "commands[1].tile_id=1 but tile_count=1.  Triggers E03 (invalid tile_id)."
+  ],
+  "commands": [
+    {
+      "plan_command_id": 1,
+      "tile_id": 0,
+      "layer_id": -1,
+      "token_phase": "prefill",
+      "execution_phase": "LOAD_TENSOR_TILE",
+      "command_type": "LOAD_TENSOR_TILE",
+      "tensor_dependencies": ["layers.0.attention.wq.weight"],
+      "input_buffers": [],
+      "output_buffers": [{"region_type": "TENSOR", "byte_size": 16384, "dtype": "f32"}],
+      "required_routes": [],
+      "required_reductions": [],
+      "fence_id": 1,
+      "dependency_fence_id": 0,
+      "expected_status": "ok",
+      "trace_flags": 0
+    },
+    {
+      "plan_command_id": 2,
+      "tile_id": 1,
+      "layer_id": 0,
+      "token_phase": "prefill",
+      "execution_phase": "PREFILL_EXECUTION_PLAN",
+      "command_type": "EXEC_MATMUL",
+      "tensor_dependencies": ["layers.0.attention.wq.weight"],
+      "input_buffers": [{"region_type": "STAGING", "byte_size": 256, "dtype": "f32"}],
+      "output_buffers": [{"region_type": "STAGING", "byte_size": 256, "dtype": "f32"}],
+      "required_routes": [],
+      "required_reductions": [],
+      "fence_id": 2,
+      "dependency_fence_id": 1,
+      "expected_status": "ok",
+      "trace_flags": 0
+    }
+  ]
+}

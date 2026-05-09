@@ -1,0 +1,29 @@
+{
+  "model_id": "tiny_test_model",
+  "session_id": "session_0",
+  "token_phase": "prefill",
+  "tile_count": 1,
+  "layer_count": 1,
+  "command_count": 1,
+  "status": "pass",
+  "notes": ["execution_plan_version is intentionally omitted to trigger E01"],
+  "commands": [
+    {
+      "plan_command_id": 1,
+      "tile_id": 0,
+      "layer_id": -1,
+      "token_phase": "prefill",
+      "execution_phase": "QUERY_COUNTERS",
+      "command_type": "QUERY_COUNTERS",
+      "tensor_dependencies": [],
+      "input_buffers": [],
+      "output_buffers": [],
+      "required_routes": [],
+      "required_reductions": [],
+      "fence_id": 1,
+      "dependency_fence_id": 0,
+      "expected_status": "ok",
+      "trace_flags": 0
+    }
+  ]
+}

@@ -411,3 +411,74 @@ placement report (M98/M100)
 - No q4 group-size / packing correctness check (deferred to M128).
 - No C, Makefile, binary format, or inference behavior changes.
 - No CUDA kernels or runtime scheduler changes.
+
+---
+
+## 12. Execution-Plan Validator (Milestone 128)
+
+`compiler/validate_tensor_execution_plan.py` validates execution-plan JSON
+files produced by the M125 planner against the schema defined in §7.
+
+**This tool does not execute commands, perform tensor math, or change any
+runtime or inference behavior.**
+
+### 12.1 Invocation
+
+```
+python3 compiler/validate_tensor_execution_plan.py \
+    --plan <path-to-plan.json> \
+    [--report-json <output.json>] \
+    [--strict]
+```
+
+| Flag | Description |
+|---|---|
+| `--plan PATH` | Path to the M125 execution-plan JSON (required) |
+| `--report-json PATH` | Write JSON validation summary to this path |
+| `--strict` | Promote warnings to errors |
+
+**Exit codes:** 0 = pass, 1 = validation errors, 2 = parse error.
+
+### 12.2 Validation rules
+
+| Rule | Code | Description |
+|---|---|---|
+| Header fields | E01 | `execution_plan_version` present and supported; `model_id`, `session_id`, `tile_count > 0` present; `command_count` matches `len(commands)` |
+| Unique command IDs | E02 | `plan_command_id` is an integer and unique across all commands |
+| Valid tile IDs | E03 | `tile_id` is a non-negative integer and `< tile_count` |
+| Known phase | E04 | `execution_phase` is one of the 16 recognised phases |
+| Known command type | E05 | `command_type` is one of the 16 recognised M105/M125 types |
+| Tensor dependencies | E06 | Commands that require tensors (`EXEC_MATMUL`, `EXEC_RMSNORM`, `LOAD_TENSOR_TILE`, `VALIDATE_TENSOR`) must have at least one non-empty `tensor_dependencies` entry |
+| Buffer descriptors | E07 | `region_type` recognised; `byte_size > 0`; `dtype` recognised; q4 metadata warning (error in strict mode) |
+| Expected status | E08 | `expected_status` is a recognised status string |
+| Trace flags | E09 | `trace_flags` is a non-negative integer when present |
+| Dependency ordering | E10 | `dependency_fence_id` references an existing `fence_id` of a command that appears *earlier* in the list; no cycles in the dependency graph |
+| Route / reduction lists | E11 | `required_routes` and `required_reductions` are lists when present |
+| FABRIC_SEND | E12 | Must specify `dst_tile` or non-empty `required_routes`; `dst_tile < tile_count` |
+| FABRIC_REDUCE | E13 | Must include `reduction_behavior` from the recognised set |
+| Phase ordering | E20 | First occurrence of each phase respects the partial order (probe before enumeration; allocation before load; load before validate; validate before execution planning; KV ops after setup; cleanup/reset last) |
+
+### 12.3 Fixtures
+
+| Fixture | Expected outcome |
+|---|---|
+| `compiler/fixtures/exec_plan_valid_tiny.json` | PASS — 1-tile, 1-layer, 6 commands |
+| `compiler/fixtures/exec_plan_missing_header.json` | FAIL E01 — missing `execution_plan_version` |
+| `compiler/fixtures/exec_plan_duplicate_cmd_id.json` | FAIL E02 — duplicate `plan_command_id=1` |
+| `compiler/fixtures/exec_plan_unknown_phase.json` | FAIL E04 — `execution_phase='UNKNOWN_PHASE'` |
+| `compiler/fixtures/exec_plan_future_dep.json` | FAIL E10 — dependency on a command not yet seen |
+| `compiler/fixtures/exec_plan_cyclic_dep.json` | FAIL E10 — circular fence dependency |
+| `compiler/fixtures/exec_plan_missing_tensor.json` | FAIL E06 — `EXEC_MATMUL` with empty `tensor_dependencies` |
+| `compiler/fixtures/exec_plan_missing_reduction.json` | FAIL E13 — `FABRIC_REDUCE` without `reduction_behavior` |
+| `compiler/fixtures/exec_plan_invalid_tile.json` | FAIL E03 — `tile_id >= tile_count` |
+| `compiler/fixtures/exec_plan_q4_bad_meta.json` | PASS with W07 (FAIL with `--strict`) — q4 buffer lacks metadata |
+
+### 12.4 Non-Goals for M128
+
+- Does not execute commands or tensor math.
+- Does not access real PCIe/MMIO registers or implement a kernel driver.
+- Does not validate byte-level layout of `.att1` model files.
+- Does not re-run placement report validation (use `validate_tensor_placement_report.py`).
+- Does not check public model weights or generated public `.att1` artifacts.
+- No C, Makefile, binary format, or inference behavior changes.
+- No CUDA kernels or runtime scheduler changes.

@@ -1,0 +1,39 @@
+{
+  "execution_plan_version": 1,
+  "model_id": "tiny_test_model",
+  "session_id": "session_0",
+  "token_phase": "prefill",
+  "tile_count": 1,
+  "layer_count": 1,
+  "command_count": 1,
+  "status": "pass",
+  "notes": [
+    "output_buffers[0].dtype=q4 with no q4_group_size or q4_scale_bytes.",
+    "Triggers W07 in default mode; E07 in --strict mode."
+  ],
+  "commands": [
+    {
+      "plan_command_id": 1,
+      "tile_id": 0,
+      "layer_id": -1,
+      "token_phase": "prefill",
+      "execution_phase": "LOAD_TENSOR_TILE",
+      "command_type": "LOAD_TENSOR_TILE",
+      "tensor_dependencies": ["layers.0.attention.wq.weight"],
+      "input_buffers": [],
+      "output_buffers": [
+        {
+          "region_type": "TENSOR",
+          "byte_size": 4096,
+          "dtype": "q4"
+        }
+      ],
+      "required_routes": [],
+      "required_reductions": [],
+      "fence_id": 1,
+      "dependency_fence_id": 0,
+      "expected_status": "ok",
+      "trace_flags": 0
+    }
+  ]
+}
