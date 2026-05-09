@@ -1,0 +1,13 @@
+{
+  "original": {
+    "tile_count": 2,
+    "total_model_bytes": 262144,
+    "total_kv_bytes": 131072
+  },
+  "recommendation": {
+    "tile_count": 1,
+    "capacity_status": "PASS"
+  },
+  "pass_count": 24,
+  "total_count": 24
+}

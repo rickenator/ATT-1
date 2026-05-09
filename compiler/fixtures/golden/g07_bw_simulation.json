@@ -1,0 +1,14 @@
+{
+  "header": {
+    "sim_version": 1,
+    "tile_count": 2,
+    "route_count": 9,
+    "target_tokens_per_sec": 50.0,
+    "fabric_gib_sec_target": 32.0,
+    "status": "PASS"
+  },
+  "aggregate": {
+    "total_payload_bytes_per_token": 448,
+    "status": "PASS"
+  }
+}

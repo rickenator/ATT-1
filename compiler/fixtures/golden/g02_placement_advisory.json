@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "proposal_count": 0,
+  "analysis": {
+    "tile_count": 2,
+    "total_model_bytes": 262144,
+    "capacity_fail_tiles": 0,
+    "capacity_warn_tiles": 0,
+    "bandwidth_fail_tiles": 0,
+    "bandwidth_warn_tiles": 0
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "tile_count": 2,
+  "command_count": 14,
+  "commands_replayed": 14,
+  "completions_seen": 14,
+  "failed_commands": 0,
+  "unsupported_commands": 10,
+  "dma_validations": 5,
+  "doorbell_count": 14,
+  "status": "pass"
+}

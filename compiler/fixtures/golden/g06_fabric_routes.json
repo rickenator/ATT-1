@@ -1,0 +1,10 @@
+{
+  "header": {
+    "route_count": 9,
+    "packet_count_estimate": 7,
+    "payload_bytes_estimate": 448,
+    "tile_count": 2,
+    "fabric_policy": "layer_wise",
+    "status": "pass"
+  }
+}

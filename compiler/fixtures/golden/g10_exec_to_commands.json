@@ -1,0 +1,24 @@
+{
+  "header": {
+    "tile_count": 1,
+    "tensor_count": 0,
+    "command_count": 6,
+    "status": "ok"
+  },
+  "summary": {
+    "commands_by_type": {
+      "LOAD_TENSOR_TILE": 1,
+      "VALIDATE_TENSOR": 1,
+      "TILE_BARRIER": 1,
+      "EXEC_MATMUL": 1,
+      "KV_APPEND": 1,
+      "QUERY_COUNTERS": 1
+    },
+    "total_tensor_bytes": 33792,
+    "f32_tensor_count": 4,
+    "q8_tensor_count": 0,
+    "q4_tensor_count": 0,
+    "warnings_observed": 1,
+    "unsupported_exec_commands": 1
+  }
+}

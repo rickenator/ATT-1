@@ -1,0 +1,17 @@
+{
+  "route_count": 9,
+  "routes_replayed": 9,
+  "routes_failed": 0,
+  "tile_count": 2,
+  "aggregate_packets_sent": 7,
+  "aggregate_packets_received": 7,
+  "aggregate_payload_bytes_sent": 448,
+  "aggregate_payload_bytes_received": 448,
+  "reductions_started": 0,
+  "reductions_completed": 0,
+  "barriers_started": 2,
+  "barriers_completed": 2,
+  "trace_events": 1,
+  "fabric_status": "PASS",
+  "status": "pass"
+}

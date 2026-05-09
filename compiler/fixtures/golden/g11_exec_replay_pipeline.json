@@ -1,0 +1,22 @@
+{
+  "pipeline_version": 132,
+  "execution_plan_validation_status": "pass",
+  "command_plan_status": "pass",
+  "mmio_replay_status": "pass",
+  "fabric_route_status": "warn",
+  "fabric_replay_status": "pass",
+  "fabric_simulation_status": "pass",
+  "tile_count": 1,
+  "command_count": 6,
+  "route_count": 1,
+  "commands_replayed": 6,
+  "completions_seen": 6,
+  "exec_commands_seen": 1,
+  "failed_commands": 0,
+  "unsupported_commands": 4,
+  "aggregate_packets_sent": 0,
+  "aggregate_payload_bytes_sent": 0,
+  "required_fabric_gib_sec": 0.0,
+  "fabric_status": "PASS",
+  "final_status": "warn"
+}

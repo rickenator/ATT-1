@@ -1,0 +1,9 @@
+{
+  "status": "pass",
+  "total_warnings": 0,
+  "total_errors": 0,
+  "phase_count": 6,
+  "command_count": 6,
+  "route_ref_count": 0,
+  "buffer_ref_count": 6
+}

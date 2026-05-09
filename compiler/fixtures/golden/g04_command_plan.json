@@ -1,0 +1,23 @@
+{
+  "header": {
+    "tile_count": 2,
+    "tensor_count": 5,
+    "command_count": 14,
+    "status": "ok"
+  },
+  "summary": {
+    "commands_by_type": {
+      "LOAD_TENSOR_TILE": 5,
+      "VALIDATE_TENSOR": 5,
+      "TILE_BARRIER": 2,
+      "QUERY_COUNTERS": 1,
+      "TRACE_SNAPSHOT": 1
+    },
+    "total_tensor_bytes": 164096,
+    "f32_tensor_count": 5,
+    "q8_tensor_count": 0,
+    "q4_tensor_count": 0,
+    "capacity_failures_observed": 0,
+    "warnings_observed": 0
+  }
+}
