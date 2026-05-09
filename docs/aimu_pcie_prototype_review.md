@@ -502,6 +502,7 @@ The prototype is considered **passing** when all of the following hold:
 | M120 | Phase 3 prototype go/no-go review | **COMPLETE** — `docs/aimu_phase3_go_no_go.md`; CONDITIONAL GO decision; Option B (userspace MMIO emulator) recommended next; FPGA deferred; Options D/E not recommended; go/no-go gate criteria defined; M121–M127 next milestone proposals; hardware economic notes for 16/32/64/128 GiB SKUs |
 | M121 | Userspace MMIO/register-file emulator workflow | **COMPLETE** — `include/att1_aimu_userspace.h`, `src/aimu_userspace.c`, `tools/att1-aimu-mmio-emulator.c`, `tests/test_aimu_userspace.c`; mmap-backed 64 KiB BAR0 file; probe→enumerate→cmdq→submit→doorbell→drain→snapshot smoke flow; 15 test cases, 77 assertions; 419 PASS 0 FAIL; memory guardrail enforced (tile capacity is register metadata only, no huge buffer); satisfies Option B from M120; M122 next (replay M113 command plans against this emulator) |
 | M122 | Command-plan replay against userspace MMIO emulator | **COMPLETE** — `tools/att1-aimu-mmio-replay.c`, `compiler/replay_command_plan_via_mmio.py`, `compiler/fixtures/plan_mmio_smoke.json`, `tests/test_aimu_mmio_replay.c`; extends M113 replay path to drive M109 plans through M121 `att1_aimu_userspace` interface; adds `--bar0-file`/`--tiles`/`--tile-memory-mib`/`--kv-memory-mib` CLI; validates BAR0 DEVICE_ID and register-map version after probe; emits text + optional JSON report; 10 test cases; M113 in-process replay path unaffected; M123 next |
+| M123 | AIMU fabric route replay simulator | **COMPLETE** — `compiler/replay_fabric_routes.py`; validates route report using M116 rules; replays routes in deterministic `route_id` order; accumulates per-tile counters (packets sent/received, payload bytes, reductions started/completed, barriers started/completed, trace events, route failures); groups reduction routes by `reduction_id`; integrates M118 bandwidth/latency estimates via direct import; emits text report + optional `--report-json`; exit 0=pass, 1=fail/strict, 2=parse error; new fixture `fabric_route_reduction_tiny.json` (PARTIAL_REDUCE sum + TILE_BARRIER); 10 smoke subtests in `check_fabric_route_replay_smoke()`; baseline 472 PASS 0 FAIL maintained |
 
 ---
 
@@ -606,8 +607,9 @@ binary format, or implement a Linux kernel driver.
 | 4 | `replay_aimu_command_plan.py` | M113 | Control-plane replay JSON |
 | 5 | `map_commands_to_fabric_routes.py` | M117 | Fabric route report JSON |
 | 6 | `validate_fabric_routes.py` | M116 | Route validation JSON |
-| 7 | `simulate_fabric_bandwidth.py` | M118 | Bandwidth/latency simulation JSON |
-| 8 | (pipeline) | M119 | Integrated planning summary JSON |
+| 7 | `replay_fabric_routes.py` | M123 | Fabric route replay JSON |
+| 8 | `simulate_fabric_bandwidth.py` | M118 | Bandwidth/latency simulation JSON |
+| 9 | (pipeline) | M119 | Integrated planning summary JSON |
 
 ### 14.2 CLI
 

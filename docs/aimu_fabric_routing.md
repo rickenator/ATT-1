@@ -1319,3 +1319,135 @@ python3 compiler/simulate_fabric_bandwidth.py \
   current scope).
 - No C, Makefile, binary format, or inference behavior changes.
 - No CUDA kernels or runtime scheduler changes.
+
+## 15. Fabric Route Replay Simulator (Milestone 123)
+
+### 15.1 Role and Scope
+
+The M123 replay simulator (`compiler/replay_fabric_routes.py`) occupies the
+position immediately after the M116 validator and M118 bandwidth estimator in
+the fabric toolchain pipeline:
+
+```
+command plan (M109/M110)
+    → route report (M115/M117)
+        → route validation (M116)
+        → route replay  (M123)   ← this tool
+            → BW/latency estimate (M118)
+```
+
+The replay simulator:
+
+- Loads and validates the route report using M116 rules (reuses
+  `validate_fabric_routes.py` imports directly).
+- Replays all routes in deterministic `route_id` order.
+- Accumulates per-tile counters: packets sent/received, payload bytes
+  sent/received, reductions started/completed, barriers started/completed,
+  trace events, route failures.
+- Groups reduction routes by `reduction_id`; marks a group complete when at
+  least one route in the group has an explicit `reduction_behavior`
+  (`sum`, `concat`, `max`, or `topk`).
+- Treats each `TILE_BARRIER` route as one barrier started and one barrier
+  completed (deterministic single-source token broadcast).
+- Integrates M118 bandwidth/latency estimates by calling
+  `simulate_fabric_bandwidth` functions directly (no subprocess).
+- Emits a human-readable text report (stdout) and an optional JSON report
+  (`--report-json`).
+
+This tool does NOT execute routes, access hardware, change inference
+behavior, or alter the `.att1` model format.
+
+### 15.2 CLI
+
+```
+python3 compiler/replay_fabric_routes.py \
+    --route-report PATH \
+    [--target-tokens-per-sec N] \
+    [--fabric-gib-sec N] \
+    [--strict] \
+    [--report-json PATH]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--route-report PATH` | required | M115/M116/M117 fabric route report JSON |
+| `--target-tokens-per-sec N` | 1.0 | Token decode rate for BW estimates |
+| `--fabric-gib-sec N` | (absent) | Fabric bandwidth target; absent → UNKNOWN |
+| `--strict` | off | Promote warnings to errors; fail on any route_status ≠ ok |
+| `--report-json PATH` | (absent) | Write replay result JSON to path |
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | Replay passed (zero errors; warnings may be present) |
+| 1 | Replay failed (validation errors, route failures, or `--strict`) |
+| 2 | Parse error (malformed JSON or missing required field) |
+
+### 15.3 Per-Tile Counters
+
+For each tile `[0, tile_count)` the simulator tracks:
+
+| Counter | Meaning |
+|---|---|
+| `packets_sent` | Outbound packet count for routes originating at this tile |
+| `packets_received` | Inbound packet count for routes terminating at this tile |
+| `payload_bytes_sent` | Total outbound payload bytes |
+| `payload_bytes_received` | Total inbound payload bytes |
+| `reductions_started` | Number of `PARTIAL_REDUCE` / `LOGITS_REDUCE` routes sourced here |
+| `reductions_completed` | Number of reduction groups (by `reduction_id`) completed at this tile |
+| `barriers_started` | Number of `TILE_BARRIER` routes sourced here |
+| `barriers_completed` | Same as `barriers_started` (deterministic per M115 schema) |
+| `trace_events` | Number of `TRACE_EVENT` routes sourced here |
+| `route_failures` | Routes with `route_status ∉ {ok, warn, skipped}` originating here |
+
+### 15.4 Replay Report Fields
+
+The text and JSON reports share the same field set:
+
+| Field | Description |
+|---|---|
+| `route_report_path` | Input file path |
+| `route_count` | Total routes in the report |
+| `routes_replayed` | Routes successfully processed |
+| `routes_failed` | Routes with `route_status=fail` (or strict violations) |
+| `tile_count` | Number of tiles from header |
+| `aggregate_packets_sent` | Sum of all tile `packets_sent` |
+| `aggregate_packets_received` | Sum of all tile `packets_received` |
+| `aggregate_payload_bytes_sent` | Sum of all tile `payload_bytes_sent` |
+| `aggregate_payload_bytes_received` | Sum of all tile `payload_bytes_received` |
+| `reductions_started` | Total across all tiles |
+| `reductions_completed` | Total reduction groups completed |
+| `barriers_started` | Total across all tiles |
+| `barriers_completed` | Total barriers completed |
+| `trace_events` | Total trace events across all tiles |
+| `required_fabric_gib_sec` | From M118 aggregate estimate |
+| `fabric_status` | `PASS` / `WARN` / `FAIL` / `UNKNOWN` from M118 |
+| `status` | Overall replay outcome: `pass` / `warn` / `fail` |
+| `notes` | List of warning and info strings |
+| `tiles` | Per-tile counter objects (JSON only) |
+
+**Status rules:**
+- `fail` — `routes_failed > 0` (route failures detected).
+- `warn` — no route failures but M116 warnings present.
+- `pass` — no errors, no warnings.
+
+### 15.5 Fixtures
+
+| Fixture path | Purpose |
+|---|---|
+| `compiler/fixtures/fabric_route_report_tiny.json` | 3-route, 2-tile, PASS — primary smoke input |
+| `compiler/fixtures/fabric_route_reduction_tiny.json` | 3-route, 2-tile, `PARTIAL_REDUCE` (sum) + `TILE_BARRIER` — reduction counter test |
+| `compiler/fixtures/fabric_route_invalid_tile.json` | Destination tile 99 out of range — negative test |
+| `compiler/fixtures/fabric_route_zero_payload.json` | `payload_bytes=0` for data route — negative test |
+| `compiler/fixtures/fabric_route_missing_reduction.json` | `PARTIAL_REDUCE` with `reduction_behavior=none` — negative test |
+
+### 15.6 Non-Goals for M123
+
+- No route execution or fabric simulation.
+- No hardware latency measurements — all estimates are deterministic projections.
+- No fence-ordering reachability analysis.
+- No cyclic dependency check.
+- No concat completeness validation.
+- No C, Makefile, binary format, or inference behavior changes.
+- No CUDA kernels or runtime scheduler changes.

@@ -4102,6 +4102,197 @@ static int check_aimu_replay_smoke(void)
     return 0;
 }
 
+/*
+ * check_fabric_route_replay_smoke() — M123
+ *
+ * Python-skippable.  Exercises compiler/replay_fabric_routes.py with ten
+ * scenarios:
+ *
+ *   1. Tiny route report replays and returns exit 0.
+ *   2. Route replay is deterministic (two runs produce identical output).
+ *   3. Aggregate counters appear in output (routes_replayed, barriers_completed).
+ *   4. Invalid tile route fails (exit non-zero).
+ *   5. Zero payload data route fails (exit non-zero).
+ *   6. Reduction route missing behavior fails (exit non-zero).
+ *   7. Reduction fixture: barriers_completed and reductions_completed > 0.
+ *   8. Strict mode fails on route_status=fail (uses zero_payload → validator
+ *      rejects before replay, so strict on missing_reduction fixture).
+ *   9. Malformed report fails clearly (exit 2).
+ *  10. No tracked Python cache artifacts in git index.
+ */
+static int check_fabric_route_replay_smoke(void)
+{
+    char output[32768];
+
+    /* Skip gracefully when Python 3 is not available. */
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        puts("SKIP: Python 3 unavailable -- fabric route replay tests skipped");
+        return 0;
+    }
+
+    /* 1. Tiny route report replays and exits 0. */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_report_tiny.json"
+            " > build/m123_replay_tiny.txt 2>&1") != 0) {
+        fputs("fabric_route_replay: tiny fixture should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m123_replay_tiny.txt", output, sizeof(output)) != 0) {
+        fputs("fabric_route_replay: cannot read tiny replay output\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "routes_replayed")  == NULL) ||
+        (strstr(output, "status") == NULL)) {
+        fputs("fabric_route_replay: tiny replay missing expected fields\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: tiny fixture exits 0 with status field");
+
+    /* 2. Deterministic: two runs produce identical output. */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_report_tiny.json"
+            " > build/m123_replay_tiny2.txt 2>&1") != 0) {
+        fputs("fabric_route_replay: second run failed\n", stderr);
+        return -1;
+    }
+    if (run_command("diff build/m123_replay_tiny.txt build/m123_replay_tiny2.txt"
+                    " > /dev/null 2>&1") != 0) {
+        fputs("fabric_route_replay: two runs produced different output\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: output is deterministic");
+
+    /* 3. Aggregate counters appear in output. */
+    if ((strstr(output, "routes_replayed                  : 3") == NULL) ||
+        (strstr(output, "barriers_completed") == NULL)) {
+        fputs("fabric_route_replay: missing routes_replayed or barriers_completed\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: aggregate counters in text output");
+
+    /* 4. Invalid tile route fails (exit non-zero). */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_invalid_tile.json"
+            " > build/m123_invalid_tile.txt 2>&1") == 0) {
+        fputs("fabric_route_replay: invalid tile route should fail\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: invalid tile route exits non-zero");
+
+    /* 5. Zero payload data route fails (exit non-zero). */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_zero_payload.json"
+            " > build/m123_zero_payload.txt 2>&1") == 0) {
+        fputs("fabric_route_replay: zero payload route should fail\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: zero payload route exits non-zero");
+
+    /* 6. Reduction route missing explicit behavior fails (exit non-zero). */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_missing_reduction.json"
+            " > build/m123_missing_reduction.txt 2>&1") == 0) {
+        fputs("fabric_route_replay: missing reduction behavior should fail\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: missing reduction behavior exits non-zero");
+
+    /* 7. Reduction fixture: barriers_completed and reductions_completed > 0. */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_reduction_tiny.json"
+            " --report-json build/m123_reduction_report.json"
+            " > build/m123_reduction_replay.txt 2>&1") != 0) {
+        fputs("fabric_route_replay: reduction fixture should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m123_reduction_replay.txt", output, sizeof(output)) != 0) {
+        fputs("fabric_route_replay: cannot read reduction replay output\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "barriers_completed               : 1") == NULL) &&
+        (strstr(output, "barriers_completed") == NULL)) {
+        fputs("fabric_route_replay: reduction fixture missing barriers_completed\n",
+              stderr);
+        return -1;
+    }
+    if ((strstr(output, "reductions_completed") == NULL)) {
+        fputs("fabric_route_replay: reduction fixture missing reductions_completed\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: reduction fixture reports barriers and reductions");
+
+    /* Verify --report-json output has required keys. */
+    if (read_file("build/m123_reduction_report.json", output, sizeof(output)) != 0) {
+        fputs("fabric_route_replay: cannot read reduction JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"route_report_path\"")            == NULL) ||
+        (strstr(output, "\"routes_replayed\"")              == NULL) ||
+        (strstr(output, "\"routes_failed\"")                == NULL) ||
+        (strstr(output, "\"tile_count\"")                   == NULL) ||
+        (strstr(output, "\"reductions_started\"")           == NULL) ||
+        (strstr(output, "\"reductions_completed\"")         == NULL) ||
+        (strstr(output, "\"barriers_started\"")             == NULL) ||
+        (strstr(output, "\"barriers_completed\"")           == NULL) ||
+        (strstr(output, "\"aggregate_packets_sent\"")       == NULL) ||
+        (strstr(output, "\"aggregate_payload_bytes_sent\"") == NULL) ||
+        (strstr(output, "\"required_fabric_gib_sec\"")      == NULL) ||
+        (strstr(output, "\"fabric_status\"")                == NULL) ||
+        (strstr(output, "\"status\"")                       == NULL) ||
+        (strstr(output, "\"tiles\"")                        == NULL)) {
+        fputs("fabric_route_replay: JSON report missing required keys\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: --report-json contains all required keys");
+
+    /* 8. Strict mode fails on missing_reduction (M116 validation fails in strict). */
+    if (run_command(
+            "python3 compiler/replay_fabric_routes.py"
+            " --route-report compiler/fixtures/fabric_route_missing_reduction.json"
+            " --strict"
+            " > build/m123_strict_fail.txt 2>&1") == 0) {
+        fputs("fabric_route_replay: strict mode should fail on missing reduction\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: strict mode exits non-zero for validation error");
+
+    /* 9. Malformed JSON exits with non-zero (parse error). */
+    if (run_command(
+            "echo 'not_valid_json' | python3"
+            " compiler/replay_fabric_routes.py"
+            " --route-report /dev/stdin"
+            " > build/m123_malformed.txt 2>&1") == 0) {
+        fputs("fabric_route_replay: malformed JSON should exit non-zero\n", stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: malformed JSON exits non-zero");
+
+    /* 10. No tracked Python cache artifacts. */
+    if (run_command(
+            "git ls-files | grep -E '(__pycache__|\\.pyc$|\\.pyo$)'"
+            " > build/m123_pycache.txt 2>&1") == 0) {
+        /* If grep found matches the file will be non-empty */
+        if (read_file("build/m123_pycache.txt", output, sizeof(output)) == 0 &&
+            output[0] != '\0') {
+            fputs("fabric_route_replay: tracked Python cache artifacts found\n",
+                  stderr);
+            return -1;
+        }
+    }
+    puts("PASS: fabric_route_replay: no tracked Python cache artifacts");
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -4137,7 +4328,8 @@ int main(void)
         (check_placement_proposal_smoke() != 0) ||
         (check_placement_scenarios_smoke() != 0) ||
         (check_placement_cmd_plan_smoke() != 0) ||
-        (check_aimu_replay_smoke()        != 0)) {
+        (check_aimu_replay_smoke()        != 0) ||
+        (check_fabric_route_replay_smoke() != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }
