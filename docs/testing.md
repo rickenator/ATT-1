@@ -105,8 +105,12 @@ This replaces steps 1–3 with `make CUDA=1` and `make test CUDA=1` and
 marks the report as a CUDA signoff. The output JSON includes
 `"cuda": true`.
 
-A future self-hosted GitHub Actions runner with an RTX 3090 could trigger
-this automatically on a dedicated workflow, but that is not configured here.
+For the full CUDA validation policy, signoff report template, paths to
+test, expected skip behavior, and self-hosted runner plan, see
+[docs/CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md).
+
+An inactive example self-hosted workflow is provided at
+`.github/workflows/cuda-self-hosted.example.yml`.
 
 ---
 

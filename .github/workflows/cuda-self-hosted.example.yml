@@ -1,0 +1,141 @@
+# ATT-1 CUDA self-hosted runner example workflow (M138)
+#
+# THIS FILE IS INACTIVE.  It is an example only.
+#
+# To activate:
+#   1. Set up a self-hosted GitHub Actions runner on your RTX 3090 host.
+#   2. Register the runner with labels: self-hosted, linux, x64, cuda, rtx3090
+#   3. Rename this file to cuda-self-hosted.yml
+#   4. Optionally pre-stage model files at the paths referenced in the
+#      bench smoke step.
+#
+# This workflow must NOT run on the standard ubuntu-latest runner.
+# It requires a physical GPU and an installed CUDA toolkit.
+#
+# See docs/CUDA_VALIDATION_PLAN.md for full details.
+
+name: CUDA Signoff (self-hosted, RTX 3090)
+
+on:
+  workflow_dispatch:       # manual trigger from GitHub Actions UI
+  push:
+    tags:
+      - 'cuda-signoff-*'  # push a tag like cuda-signoff-20260509 to trigger
+
+# Only one CUDA signoff job at a time.
+concurrency:
+  group: cuda-signoff
+  cancel-in-progress: false
+
+jobs:
+  cuda-signoff:
+    name: CUDA signoff (RTX 3090)
+    # IMPORTANT: this must target the self-hosted runner, not ubuntu-latest.
+    runs-on: [self-hosted, linux, x64, cuda, rtx3090]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------ #
+      # Preflight: confirm GPU and CUDA toolkit are present
+      # ------------------------------------------------------------------ #
+      - name: GPU and CUDA preflight
+        run: |
+          nvidia-smi
+          nvcc --version
+          gcc --version
+
+      # ------------------------------------------------------------------ #
+      # Build with CUDA=1
+      # ------------------------------------------------------------------ #
+      - name: make clean
+        run: make clean
+
+      - name: make CUDA=1
+        run: make CUDA=1
+
+      # ------------------------------------------------------------------ #
+      # C test suite with CUDA enabled
+      # ------------------------------------------------------------------ #
+      - name: make test CUDA=1
+        run: make test CUDA=1
+
+      # ------------------------------------------------------------------ #
+      # Full regression runner with --cuda flag
+      # Records a JSON report as a CI artifact.
+      # ------------------------------------------------------------------ #
+      - name: Python regression layers (CUDA signoff)
+        run: |
+          python3 compiler/run_full_regression.py \
+            --cuda \
+            --no-build \
+            --report-json cuda_signoff_report.json
+
+      - name: Upload signoff report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-signoff-report
+          path: cuda_signoff_report.json
+          retention-days: 90
+
+      # ------------------------------------------------------------------ #
+      # Bench smoke tests (skipped if model files are absent)
+      # Model files must be pre-staged on the runner host.
+      # They are NOT committed to the repository.
+      # ------------------------------------------------------------------ #
+      - name: Bench smoke (f32 single-tile, dummy model)
+        run: |
+          if [ -f models/dummy/model.att1 ]; then
+            ./build/att1-bench \
+              --model models/dummy/model.att1 \
+              --prompt hello --tokens 8 \
+              --mode single --backend cuda
+          else
+            echo "SKIP: models/dummy/model.att1 not present on this runner"
+          fi
+
+      - name: Bench smoke (f32 cluster, dummy model)
+        run: |
+          if [ -f models/dummy/model.att1 ]; then
+            ./build/att1-bench \
+              --model models/dummy/model.att1 \
+              --prompt hello --tokens 8 \
+              --mode cluster --tiles 2 --backend cuda
+          else
+            echo "SKIP: models/dummy/model.att1 not present on this runner"
+          fi
+
+      - name: Bench smoke (q4 single-tile)
+        run: |
+          if [ -f models/q4_tiny/model.att1 ]; then
+            ./build/att1-bench \
+              --model models/q4_tiny/model.att1 \
+              --prompt hello --tokens 8 \
+              --mode single --backend cuda-q4
+          else
+            echo "SKIP: models/q4_tiny/model.att1 not present on this runner"
+          fi
+
+      - name: Bench smoke (q4 cluster)
+        run: |
+          if [ -f models/q4_tiny/model.att1 ]; then
+            ./build/att1-bench \
+              --model models/q4_tiny/model.att1 \
+              --prompt hello --tokens 8 \
+              --mode cluster --tiles 2 --backend cuda-q4
+          else
+            echo "SKIP: models/q4_tiny/model.att1 not present on this runner"
+          fi
+
+      # ------------------------------------------------------------------ #
+      # Cache artifact guard (same as CPU CI)
+      # ------------------------------------------------------------------ #
+      - name: Check for tracked Python cache artifacts
+        run: |
+          if git ls-files | grep -qE '(__pycache__|\.pyc$|\.pyo$)'; then
+            echo "ERROR: tracked Python cache artifacts found:"
+            git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)'
+            exit 1
+          fi
+          echo "OK: no tracked Python cache artifacts"
