@@ -1,0 +1,82 @@
+# ATT-1 M137: CPU-only CI regression
+#
+# Runs the ATT-1 CPU-only validation path on every push and pull request.
+#
+# What this CI does:
+#   1. Build all C11 binaries (no CUDA)
+#   2. Run the full C unit/integration test suite (make test)
+#   3. Run the M136 local regression runner (Python validation layers)
+#   4. Verify no __pycache__ / *.pyc / *.pyo files are git-tracked
+#
+# What this CI does NOT do:
+#   - Install CUDA or require an NVIDIA driver
+#   - Download public model weights
+#   - Access PCIe / MMIO hardware
+#   - Run CUDA q4/q8/f32 runtime checks
+#   - Validate CUDA kernel correctness
+#
+# CUDA signoff remains manual on an RTX 3090-class host:
+#   python3 compiler/run_full_regression.py --cuda
+#
+# For the stronger local check, use:
+#   make regression
+
+name: CI (CPU-only)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build and test (CPU-only, Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            python3 \
+            make
+
+      # ------------------------------------------------------------------ #
+      # Step 1: clean build (CPU-only; CUDA=0 is the default)
+      # ------------------------------------------------------------------ #
+      - name: make clean
+        run: make clean
+
+      - name: make
+        run: make
+
+      # ------------------------------------------------------------------ #
+      # Step 2: C unit / integration tests
+      # CUDA test targets are compiled with CUDA guards and skip cleanly
+      # when the CUDA runtime is absent.
+      # ------------------------------------------------------------------ #
+      - name: make test
+        run: make test
+
+      # ------------------------------------------------------------------ #
+      # Step 3: Python validation layers (M133–M135 via M136 runner)
+      # --no-build skips the redundant clean/make/make-test steps.
+      # ------------------------------------------------------------------ #
+      - name: Python regression layers (M133-M135 + pipeline smoke)
+        run: python3 compiler/run_full_regression.py --no-build
+
+      # ------------------------------------------------------------------ #
+      # Step 4: cache artifact guard
+      # Fail if any __pycache__, *.pyc, or *.pyo files are git-tracked.
+      # ------------------------------------------------------------------ #
+      - name: Check for tracked Python cache artifacts
+        run: |
+          if git ls-files | grep -qE '(__pycache__|\.pyc$|\.pyo$)'; then
+            echo "ERROR: tracked Python cache artifacts found:"
+            git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)'
+            exit 1
+          fi
+          echo "OK: no tracked Python cache artifacts"
