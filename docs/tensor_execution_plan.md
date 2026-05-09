@@ -482,3 +482,61 @@ python3 compiler/validate_tensor_execution_plan.py \
 - Does not check public model weights or generated public `.att1` artifacts.
 - No C, Makefile, binary format, or inference behavior changes.
 - No CUDA kernels or runtime scheduler changes.
+
+---
+
+## 13. Execution-Plan-to-Command-Plan Mapper (Milestone 129)
+
+`compiler/map_execution_plan_to_commands.py` reads an M125 tensor-level
+execution-plan JSON and emits an M109-compatible AIMU command-plan JSON that
+can be replayed through existing command-plan tooling (M113, M122).
+
+### 13.1 Invocation
+
+```
+python3 compiler/map_execution_plan_to_commands.py \
+    --execution-plan PATH \
+    [--plan-json PATH] \
+    [--model-id ID] \
+    [--session-id ID] \
+    [--strict]
+```
+
+Exit codes: 0 = success (warnings may be present), 1 = mapping error,
+2 = parse error (malformed JSON / missing required field).
+
+### 13.2 Mapping rules
+
+| M125 execution_phase / command_type | M109 command_type | expected_status |
+|-------------------------------------|-------------------|-----------------|
+| `LOAD_TENSOR_TILE` | `LOAD_TENSOR_TILE` | OK |
+| `VALIDATE_TENSOR_TILE` → `VALIDATE_TENSOR` | `VALIDATE_TENSOR` | OK |
+| `KV_APPEND` | `KV_APPEND` | OK |
+| `KV_READ` | `KV_READ` | OK |
+| `FABRIC_SEND` | `FABRIC_SEND` | OK |
+| `FABRIC_REDUCE` | `FABRIC_REDUCE` | OK |
+| `TILE_BARRIER` | `TILE_BARRIER` | OK |
+| `TRACE_SNAPSHOT` | `TRACE_SNAPSHOT` | OK |
+| `QUERY_COUNTERS` | `QUERY_COUNTERS` | OK |
+| `PREFILL_SETUP` (advisory) | `TILE_BARRIER` | OK |
+| `TILE_ENUMERATION` (advisory) | `QUERY_COUNTERS` | OK |
+| `DEVICE_PROBE` / `MEMORY_ALLOCATE` (advisory) | `NOP` (advisory note) | OK |
+| `CLEANUP` + `QUERY_COUNTERS` | `QUERY_COUNTERS` | OK |
+| `RESET` | `RESET_TILE` | OK |
+| `EXEC_MATMUL`, `EXEC_RMSNORM`, `EXEC_ROPE`, `EXEC_ATTENTION`, `EXEC_SWIGLU`, `EXEC_SOFTMAX`, `EXEC_RESIDUAL` | passthrough name | `ATT1_AIMU_ERR_UNSUPPORTED_OP` (non-strict) / **MappingError** (strict) |
+
+### 13.3 Reference fixture
+
+`compiler/fixtures/exec_plan_mapped_cmd_plan.json` — the M109 command plan
+produced from `exec_plan_valid_tiny.json`.  Contains 6 commands:
+`LOAD_TENSOR_TILE`, `VALIDATE_TENSOR`, `TILE_BARRIER`, `EXEC_MATMUL`
+(unsupported), `KV_APPEND`, `QUERY_COUNTERS`.
+
+### 13.4 Non-Goals for M129
+
+- Does not execute tensor math or run inference.
+- Does not access real PCIe/MMIO registers or implement a kernel driver.
+- Does not validate `.att1` binary format.
+- Does not implement a runtime scheduler or kernel module.
+- No C, Makefile, binary format, or inference behavior changes.
+- No CUDA kernels or runtime scheduler changes.
