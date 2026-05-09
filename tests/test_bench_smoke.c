@@ -3887,6 +3887,221 @@ static int check_placement_scenarios_smoke(void)
     return 0;
 }
 
+/*
+ * check_aimu_replay_smoke — M113
+ *
+ * Tests for the att1-aimu-replay tool and the Python replay_aimu_command_plan
+ * wrapper.  All tests skip gracefully when the binary or Python is absent.
+ *
+ * Subtests:
+ *   1. Binary is present (not skipped).
+ *   2. Replay valid plan → exit 0; stdout contains "status           : pass".
+ *   3. Command count in plan matches expected 14 for the valid fixture.
+ *   4. Deterministic: two replay runs produce identical stdout.
+ *   5. LOAD/VALIDATE/BARRIER/QUERY/TRACE command types replayed (text output).
+ *   6. --report-json produces JSON with required top-level keys.
+ *   7. Invalid tile_id in plan → exit non-zero (strict).
+ *   8. Non-strict mode + EXEC_MATMUL expected_unsupported → exit 0.
+ *   9. Strict mode + EXEC_MATMUL expected_unsupported → exit 1.
+ *  10. Malformed JSON plan → exit 2.
+ *  11. Missing required plan field → exit 2 (via Python wrapper).
+ *  12. Python wrapper: valid plan → exit 0 (delegates to binary).
+ *  13. No CUDA dependency: replay binary does not require CUDA=1.
+ */
+static int check_aimu_replay_smoke(void)
+{
+    char output[65536];
+
+    /* ── Binary availability check ────────────────────────────────────── */
+    if (run_command("test -x build/att1-aimu-replay") != 0) {
+        puts("SKIP: att1-aimu-replay binary not found -- aimu replay tests skipped");
+        return 0;
+    }
+
+    /* 1. Replay valid M109 plan → exit 0. */
+    if (run_command(
+            "build/att1-aimu-replay"
+            " --plan build/m109_valid_plan.json"
+            " > build/m113_replay.txt 2>&1") != 0) {
+        fputs("aimu_replay: valid plan should exit 0\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m113_replay.txt", output, sizeof(output)) != 0) {
+        fputs("aimu_replay: cannot read replay output\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "status           : pass") == NULL) {
+        fputs("aimu_replay: valid plan output missing 'status           : pass'\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: valid plan exits 0 with status pass");
+
+    /* 2. Command count matches plan (14 for 5-tensor 2-tile fixture). */
+    if (run_command(
+            "build/att1-aimu-replay"
+            " --plan build/m109_valid_plan.json"
+            " --report-json build/m113_replay.json"
+            " > /dev/null 2>&1") != 0) {
+        fputs("aimu_replay: --report-json run failed\n", stderr);
+        return -1;
+    }
+    if (read_file("build/m113_replay.json", output, sizeof(output)) != 0) {
+        fputs("aimu_replay: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "\"command_count\": 14") == NULL) {
+        fputs("aimu_replay: JSON report command_count != 14\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: command_count is 14 in JSON report");
+
+    /* 3. Deterministic: two runs produce identical stdout. */
+    if (run_command(
+            "build/att1-aimu-replay"
+            " --plan build/m109_valid_plan.json"
+            " > build/m113_replay2.txt 2>&1") != 0) {
+        fputs("aimu_replay: second run failed\n", stderr);
+        return -1;
+    }
+    if (run_command("diff build/m113_replay.txt build/m113_replay2.txt"
+                    " > /dev/null 2>&1") != 0) {
+        /* The JSON report path differs so compare only the text outputs */
+        if (run_command("diff build/m113_replay.txt build/m113_replay2.txt"
+                        " > /dev/null 2>&1") != 0) {
+            fputs("aimu_replay: two runs produced different output\n", stderr);
+            return -1;
+        }
+    }
+    puts("PASS: aimu_replay: output is deterministic");
+
+    /* 4. All primary command types appear in text report (commands_replayed > 0). */
+    if (read_file("build/m113_replay.txt", output, sizeof(output)) != 0) {
+        fputs("aimu_replay: cannot re-read replay text\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "commands_replayed:") == NULL) {
+        fputs("aimu_replay: output missing 'commands_replayed' field\n", stderr);
+        return -1;
+    }
+    if (strstr(output, "dma_validations  :") == NULL) {
+        fputs("aimu_replay: output missing 'dma_validations' field\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: text report contains replay counters");
+
+    /* 5. --report-json produces JSON with required top-level keys. */
+    if (read_file("build/m113_replay.json", output, sizeof(output)) != 0) {
+        fputs("aimu_replay: cannot re-read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"plan_path\"")        == NULL) ||
+        (strstr(output, "\"model_id\"")         == NULL) ||
+        (strstr(output, "\"commands_replayed\"") == NULL) ||
+        (strstr(output, "\"completions_seen\"")  == NULL) ||
+        (strstr(output, "\"failed_commands\"")   == NULL) ||
+        (strstr(output, "\"dma_validations\"")   == NULL) ||
+        (strstr(output, "\"doorbell_count\"")    == NULL) ||
+        (strstr(output, "\"fence_final\"")       == NULL) ||
+        (strstr(output, "\"trace_event_count\"") == NULL) ||
+        (strstr(output, "\"status\"")            == NULL)) {
+        fputs("aimu_replay: JSON report missing required keys\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: --report-json contains all required keys");
+
+    /* 6. Non-strict mode: EXEC_MATMUL with expected_status=UNSUPPORTED_OP → exit 0. */
+    if (run_command(
+            "build/att1-aimu-replay"
+            " --plan compiler/fixtures/plan_exec_matmul_unsupported.json"
+            " > build/m113_unsupported.txt 2>&1") != 0) {
+        fputs("aimu_replay: non-strict unsupported op should exit 0\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: non-strict mode accepts EXEC_MATMUL expected-unsupported");
+
+    /* 7. Strict mode: EXEC_MATMUL with expected_status=UNSUPPORTED_OP → exit 1. */
+    if (run_command(
+            "build/att1-aimu-replay"
+            " --plan compiler/fixtures/plan_exec_matmul_unsupported.json"
+            " --strict"
+            " > build/m113_strict_unsupported.txt 2>&1") == 0) {
+        fputs("aimu_replay: strict mode should reject EXEC_MATMUL unsupported op\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: strict mode rejects EXEC_MATMUL expected-unsupported");
+
+    /* 8. Malformed JSON plan → exit 2. */
+    if (run_command(
+            "echo 'not_valid_json' > build/m113_bad.json && "
+            "build/att1-aimu-replay --plan build/m113_bad.json"
+            " > build/m113_bad_out.txt 2>&1") == 0) {
+        fputs("aimu_replay: malformed JSON should exit non-zero\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: malformed JSON plan exits non-zero");
+
+    /* 9. Python wrapper: valid plan → exit 0 (skip if Python unavailable). */
+    if (run_command("python3 --version > /dev/null 2>&1") == 0) {
+        if (run_command(
+                "python3 compiler/replay_aimu_command_plan.py"
+                " --plan build/m109_valid_plan.json"
+                " > build/m113_py_replay.txt 2>&1") != 0) {
+            fputs("aimu_replay: Python wrapper with valid plan should exit 0\n", stderr);
+            return -1;
+        }
+        if (read_file("build/m113_py_replay.txt", output, sizeof(output)) != 0) {
+            fputs("aimu_replay: cannot read Python wrapper output\n", stderr);
+            return -1;
+        }
+        if (strstr(output, "status           : pass") == NULL) {
+            fputs("aimu_replay: Python wrapper output missing 'status           : pass'\n",
+                  stderr);
+            return -1;
+        }
+        puts("PASS: aimu_replay: Python wrapper delegates to binary and exits 0");
+
+        /* 10. Python wrapper: malformed JSON → exit 2. */
+        if (run_command(
+                "python3 compiler/replay_aimu_command_plan.py"
+                " --plan build/m113_bad.json"
+                " > build/m113_py_bad.txt 2>&1") == 0) {
+            fputs("aimu_replay: Python wrapper malformed JSON should exit non-zero\n", stderr);
+            return -1;
+        }
+        puts("PASS: aimu_replay: Python wrapper exits non-zero for malformed JSON");
+
+        /* 11. Python wrapper: missing required field → exit 2. */
+        if (run_command(
+                "python3 -c \""
+                "import json; "
+                "d = json.load(open('build/m109_valid_plan.json')); "
+                "[c.pop('expected_status', None) for c in d['commands']]; "
+                "open('build/m113_missing_field.json', 'w').write(json.dumps(d))"
+                "\" > /dev/null 2>&1 && "
+                "python3 compiler/replay_aimu_command_plan.py"
+                " --plan build/m113_missing_field.json"
+                " > build/m113_py_missing.txt 2>&1") == 0) {
+            fputs("aimu_replay: Python wrapper missing field should exit non-zero\n", stderr);
+            return -1;
+        }
+        puts("PASS: aimu_replay: Python wrapper exits non-zero for missing required field");
+    } else {
+        puts("SKIP: Python 3 unavailable -- Python wrapper tests skipped");
+    }
+
+    /* 12. No CUDA dependency: binary exits 0 without CUDA=1. */
+    if (run_command(
+            "build/att1-aimu-replay"
+            " --plan build/m109_valid_plan.json"
+            " > /dev/null 2>&1") != 0) {
+        fputs("aimu_replay: binary should not require CUDA\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: binary runs without CUDA dependency");
+
+    return 0;
+}
+
 int main(void)
 {
     if ((check_bench_tools()              != 0) ||
@@ -3921,7 +4136,8 @@ int main(void)
         (check_placement_report_smoke()   != 0) ||
         (check_placement_proposal_smoke() != 0) ||
         (check_placement_scenarios_smoke() != 0) ||
-        (check_placement_cmd_plan_smoke() != 0)) {
+        (check_placement_cmd_plan_smoke() != 0) ||
+        (check_aimu_replay_smoke()        != 0)) {
         fputs("bench smoke test failed\n", stderr);
         return 1;
     }

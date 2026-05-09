@@ -1,0 +1,58 @@
+{
+  "command_plan_version": 1,
+  "header": {
+    "command_plan_version": 1,
+    "source_report_path": "/usr/export/rick/Projects/att1/compiler/fixtures/placement_report_valid.json",
+    "model_name": "tiny_test_model",
+    "model_id": "tiny_test_model",
+    "session_id": "session_0",
+    "tile_count": 2,
+    "tensor_count": 5,
+    "command_count": 1,
+    "status": "ok"
+  },
+  "commands": [
+    {
+      "command_id": 15,
+      "command_type": "EXEC_MATMUL",
+      "tile_id": 0,
+      "aimu_id": 0,
+      "session_id": "session_0",
+      "model_id": "tiny_test_model",
+      "tensor_id": null,
+      "tensor_name": null,
+      "dtype": "f32",
+      "quantization": "none",
+      "quantization_group_size": null,
+      "packed_bytes": 0,
+      "scale_bytes": 0,
+      "total_bytes": 0,
+      "src_descriptor": null,
+      "dst_descriptor": null,
+      "fence_id": 0,
+      "expected_status": "ATT1_AIMU_ERR_UNSUPPORTED_OP",
+      "checksum": null,
+      "notes": "unsupported op test"
+    }
+  ],
+  "summary": {
+    "commands_by_type": {
+      "LOAD_TENSOR_TILE": 5,
+      "VALIDATE_TENSOR": 5,
+      "TILE_BARRIER": 2,
+      "QUERY_COUNTERS": 1,
+      "TRACE_SNAPSHOT": 1
+    },
+    "commands_by_tile": {
+      "0": 9,
+      "1": 5
+    },
+    "total_tensor_bytes": 164096,
+    "f32_tensor_count": 5,
+    "q8_tensor_count": 0,
+    "q4_tensor_count": 0,
+    "capacity_failures_observed": 0,
+    "warnings_observed": 0
+  },
+  "warnings": []
+}

@@ -24,6 +24,7 @@ INSPECT_BIN := $(BUILD_DIR)/att1-inspect
 BENCH_BIN := $(BUILD_DIR)/att1-bench
 Q8_BENCH_BIN := $(BUILD_DIR)/att1-q8-bench
 SIZE_BIN := $(BUILD_DIR)/att1-size
+AIMU_REPLAY_BIN := $(BUILD_DIR)/att1-aimu-replay
 TINY_LLM_BIN := $(BUILD_DIR)/run_tiny_llm
 CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
 TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
@@ -80,13 +81,14 @@ INSPECT_OBJS := $(BUILD_DIR)/tools/att1-inspect.o $(COMMON_OBJS)
 BENCH_OBJS := $(BUILD_DIR)/tools/att1-bench.o $(COMMON_OBJS)
 Q8_BENCH_OBJS := $(BUILD_DIR)/tools/att1-q8-bench.o $(COMMON_OBJS)
 SIZE_OBJS := $(BUILD_DIR)/tools/att1-size.o $(COMMON_OBJS)
+AIMU_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-replay.o $(COMMON_OBJS)
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
 .PHONY: all clean test test-verbose bak restore
 .SECONDARY:
 
-all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
+all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
 
 $(SIM_BIN): $(SIM_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -103,6 +105,9 @@ $(Q8_BENCH_BIN): $(Q8_BENCH_OBJS)
 $(SIZE_BIN): $(SIZE_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+$(AIMU_REPLAY_BIN): $(AIMU_REPLAY_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 $(TINY_LLM_BIN): $(TINY_LLM_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -116,12 +121,12 @@ $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TEST_BINS)
+test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin || exit $$?; \
 	done
 
-test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(TEST_BINS)
+test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		printf '\n=== %s ===\n' "$$test_bin"; \
 		./$$test_bin || exit $$?; \
