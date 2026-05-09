@@ -540,3 +540,97 @@ produced from `exec_plan_valid_tiny.json`.  Contains 6 commands:
 - Does not implement a runtime scheduler or kernel module.
 - No C, Makefile, binary format, or inference behavior changes.
 - No CUDA kernels or runtime scheduler changes.
+
+---
+
+## 14. Simulated AIMU EXEC Command Replay (Milestone 130)
+
+M130 adds `att1_aimu_exec` — a simulated dispatch layer that replays
+`att1_aimu_cmd` sequences without performing any tensor arithmetic.
+All dispatch decisions are based solely on the command type, tile capability
+bitmask, dtype bitmask, and the `tensor_id` field.
+
+### 14.1 Invocation
+
+```c
+#include "att1_aimu_exec.h"
+
+att1_aimu_device    *dev;  /* optional — pass NULL for capability-unchecked replay */
+att1_aimu_exec_ctx  *ctx;
+
+att1_aimu_exec_ctx_create(dev, &ctx);
+
+/* replay a command */
+att1_aimu_result r = att1_aimu_exec_dispatch(ctx, &cmd);
+
+/* snapshot counters */
+att1_aimu_exec_counters cnt;
+att1_aimu_exec_ctx_get_counters(ctx, &cnt);
+
+/* reset counters between replays */
+att1_aimu_exec_ctx_reset_counters(ctx);
+
+att1_aimu_exec_ctx_destroy(ctx);
+```
+
+When `dev` is `NULL` the dispatcher treats the tile as having
+`ATT1_AIMU_OP_ALL` and `ATT1_AIMU_DTYPE_ALL` — every op and dtype is
+accepted.
+
+### 14.2 Dispatch table
+
+| Command type            | Validation checks                        | Result on success            | Counter incremented            |
+|-------------------------|------------------------------------------|------------------------------|--------------------------------|
+| `EXEC_MATMUL`           | tile_id range, tensor_id ≠ 0, dtype, op  | `ATT1_AIMU_OK`               | `matmul_count`, byte estimates |
+| `EXEC_RMSNORM`          | tile_id range, dtype, op                 | `ATT1_AIMU_OK`               | `rmsnorm_count`, byte estimates|
+| `EXEC_ROPE`             | tile_id range, dtype, op                 | `ATT1_AIMU_OK`               | `rope_count`, byte estimates   |
+| `EXEC_ATTENTION`        | tile_id range, dtype, op                 | `ATT1_AIMU_OK`               | `attention_count`, byte estimates|
+| `EXEC_FFN`              | tile_id range, dtype, op                 | `ATT1_AIMU_OK`               | `ffn_count`, byte estimates    |
+| `KV_APPEND`             | tile_id range, op                        | `ATT1_AIMU_OK`               | `kv_append_count`              |
+| `KV_READ`               | tile_id range, op                        | `ATT1_AIMU_OK`               | `kv_read_count`                |
+| `FABRIC_SEND`           | tile_id range, op                        | `ATT1_AIMU_OK`               | `fabric_send_count`            |
+| `FABRIC_REDUCE`         | tile_id range, op                        | `ATT1_AIMU_OK`               | `fabric_reduce_count`          |
+| `LOAD_TENSOR_TILE`      | none                                     | `ATT1_AIMU_OK`               | `bytes_written_estimate`       |
+| `VALIDATE_TENSOR`       | none                                     | `ATT1_AIMU_OK`               | —                              |
+| `NOP`                   | none                                     | `ATT1_AIMU_OK`               | —                              |
+| `RESET_TILE`            | none                                     | `ATT1_AIMU_OK`               | —                              |
+| `TILE_BARRIER`          | none                                     | `ATT1_AIMU_OK`               | `barrier_count`                |
+| `TRACE_SNAPSHOT`        | none                                     | `ATT1_AIMU_OK`               | `trace_snapshot_count`         |
+| `QUERY_COUNTERS`        | none                                     | `ATT1_AIMU_OK`               | —                              |
+| unknown                 | —                                        | `ATT1_AIMU_ERR_INVALID_COMMAND` | `exec_commands_failed`      |
+
+`exec_commands_seen` is incremented for every call regardless of outcome.
+`exec_commands_completed` and per-op counters are incremented only on
+`ATT1_AIMU_OK`. `exec_commands_failed` and `exec_unsupported` are
+incremented on any error result.
+
+### 14.3 Counter struct (`att1_aimu_exec_counters`)
+
+| Field                   | Meaning                                                   |
+|-------------------------|-----------------------------------------------------------|
+| `exec_commands_seen`    | Total calls to `att1_aimu_exec_dispatch`                  |
+| `exec_commands_completed` | Calls that returned `ATT1_AIMU_OK`                     |
+| `exec_commands_failed`  | Calls that returned any error                             |
+| `exec_unsupported`      | Calls that returned `UNSUPPORTED_OP` or `UNSUPPORTED_DTYPE` |
+| `matmul_count`          | Successful `EXEC_MATMUL` dispatches                       |
+| `rmsnorm_count`         | Successful `EXEC_RMSNORM` dispatches                      |
+| `rope_count`            | Successful `EXEC_ROPE` dispatches                         |
+| `attention_count`       | Successful `EXEC_ATTENTION` dispatches                    |
+| `ffn_count`             | Successful `EXEC_FFN` dispatches                          |
+| `kv_append_count`       | Successful `KV_APPEND` dispatches                         |
+| `kv_read_count`         | Successful `KV_READ` dispatches                           |
+| `fabric_send_count`     | Successful `FABRIC_SEND` dispatches                       |
+| `fabric_reduce_count`   | Successful `FABRIC_REDUCE` dispatches                     |
+| `barrier_count`         | Successful `TILE_BARRIER` dispatches                      |
+| `trace_snapshot_count`  | Successful `TRACE_SNAPSHOT` dispatches                    |
+| `bytes_read_estimate`   | Sum of `input_buf_bytes` from successful EXEC_* commands  |
+| `bytes_written_estimate`| Sum of `output_buf_bytes` from EXEC_* + LOAD_TENSOR_TILE  |
+
+### 14.4 Non-Goals for M130
+
+- Does not execute tensor math, run inference, or touch the CPU/CUDA backends.
+- Does not access real PCIe/MMIO registers or implement a kernel driver.
+- Does not validate `.att1` binary format.
+- Does not implement a runtime scheduler or kernel module.
+- No inference, backend, tokenizer, CUDA, binary-format, or `.att1` changes.
+- No CUDA kernels or runtime scheduler changes.
