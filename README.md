@@ -57,22 +57,31 @@ make clean && make CUDA=1 && make test CUDA=1
 
 ## Tiny Fixture Demo
 
-The repository includes a small deterministic model under `models/dummy/`
-that can be used to exercise the loader and planning tools without external
-model weights:
+The repository includes a deterministic end-to-end demo script that exercises
+the binary loader, inference bench, and full planning/control-plane pipeline
+using only checked-in tiny/dummy fixtures.  **No CUDA, no model downloads,
+no network access required.**
 
 ```sh
-# Inspect the tiny fixture model
-./build/att1-inspect --model models/dummy/model.att1
-
-# View placement for 1 and 2 tiles
-./build/att1-size --model models/dummy/model.att1 --tiles 1
-./build/att1-size --model models/dummy/model.att1 --tiles 2
+./tools/demo_tiny_att1.sh
 ```
 
-Public model weights are not included in this repository. See
-[docs/real_model_conversion.md](docs/real_model_conversion.md) for how to
-import an external model.
+Options:
+
+| Flag | Effect |
+|------|--------|
+| `--skip-build` | Skip `make clean && make`; use existing `build/` |
+| `--keep-temp` | Keep temp files in `/tmp/att1-demo-XXXXXX` after exit |
+| `--verbose` | Print every command and its full output |
+
+The demo covers: model inspection, capacity planning, cpu-f32 / cpu-q8
+single and cluster inference, placement report generation and schema
+validation, placement advisory, command-plan mapping, fabric-route mapping
+and validation, fabric replay, and the 6-stage integrated execution/replay
+pipeline.
+
+Output not representative of real inference performance — the dummy fixture
+has d_model=4, 2 layers, and 2 attention heads.
 
 ## Documentation
 
