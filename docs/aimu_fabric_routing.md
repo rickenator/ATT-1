@@ -897,7 +897,7 @@ The following are explicitly outside M114 scope:
 |---|---|---|
 | M115 | Fabric route schema and report | Define JSON route descriptor schema (§2.1 fields); `compiler/map_placement_to_fabric_routes.py` reads M109 command plan and emits a `routes` array; `--report-json` option; smoke test: valid plan round-trips, route count matches command count, broadcast route detected |
 | M116 | Fabric route validator | `compiler/validate_fabric_routes.py` checks all 12 rules (F1–F12); exit 0=pass, 1=violations, 2=parse error; fixture set covers each rule; smoke test: 12 cases — **complete** |
-| M117 | Command-plan-to-fabric-route mapper | Extend M109 `map_placement_to_commands.py` output with a `routes` section populated from `routing_requirement` and `reduction_behavior` placement fields; F6 check integrated |
+| M117 | Command-plan-to-fabric-route mapper | Extend M109 `map_placement_to_commands.py` output with a `routes` section populated from `routing_requirement` and `reduction_behavior` placement fields; F6 check integrated — **complete** |
 | M118 | Fabric bandwidth/latency simulator | Extend Phase 1 `att1_fabric_t` with per-packet-type counters and per-route byte accounting; add rule F10 bandwidth check to `att1_fabric_send`/`att1_fabric_broadcast`; no inference behavior change |
 | M119 | Placement + command + fabric replay integration | Extend M113 `tools/att1-aimu-replay.c` to parse and replay `routes` section; emit per-route packet/byte/latency statistics in `--report-json` |
 | M120 | Phase 3 prototype go/no-go review | Cross-document design review covering M103–M119; gap analysis for Phase 3 ASIC; recommended silicon architecture changes; non-goals for Phase 2 close-out |
@@ -1028,3 +1028,126 @@ deferred to M117–M120.
 - No bandwidth validation (F10) — requires timing model from M118.
 - No concat completeness validation (F11) — requires multi-route context.
 - No C, Makefile, binary format, or inference behavior changes.
+
+---
+
+## 13. Command-Plan-to-Fabric-Route Mapper (Milestone 117)
+
+`compiler/map_commands_to_fabric_routes.py` reads an M109 AIMU command plan
+JSON and emits an M115-compatible fabric route report JSON.  This tool is a
+planner and report generator — it does NOT execute routes, change inference
+behavior, access real PCIe/MMIO registers, or implement a kernel driver.
+
+### 13.1 Mapper Overview
+
+| Property | Value |
+|---|---|
+| Tool path | `compiler/map_commands_to_fabric_routes.py` |
+| Primary input | M109 AIMU command plan JSON (`--plan PATH`) |
+| Optional input | M100 placement report JSON (`--placement-report PATH`) |
+| Output | M115 fabric route report JSON (`--route-report-json PATH`) |
+| Exit 0 | Route report generated successfully |
+| Exit 1 | Structural error in command plan, or strict-mode violation |
+| Exit 2 | Parse error (malformed JSON or missing required fields) |
+
+CLI:
+
+```
+python3 compiler/map_commands_to_fabric_routes.py \
+    --plan <PATH> \
+    [--placement-report <PATH>] \
+    [--route-report-json <OUTPUT_PATH>] \
+    [--tokens-per-sec N] \
+    [--fabric-gib-sec N] \
+    [--strict]
+```
+
+`--strict` fails if any warnings are produced or if the command plan
+`header.status` is not `"ok"`.
+
+The `--tokens-per-sec` and `--fabric-gib-sec` flags are informational and
+written into the generated report header for downstream tools.
+
+### 13.2 Route Generation Rules
+
+| Command type | Fabric route emitted | Route type | Notes |
+|---|---|---|---|
+| `LOAD_TENSOR_TILE` | none | — | Host-to-tile DMA; not a tile-to-tile fabric route |
+| `VALIDATE_TENSOR` | yes | `CONTROL_ACK` | 64-byte control payload; source tile → all other tiles |
+| `TILE_BARRIER` | yes | `TILE_BARRIER` | 0-byte barrier token; source tile → all tiles (incl. self); `barriered` ordering |
+| `QUERY_COUNTERS` | yes | `CONTROL_ACK` | 64-byte counter snapshot payload; source tile → all other tiles |
+| `TRACE_SNAPSHOT` | yes | `TRACE_EVENT` | 64-byte trace snapshot payload; source tile → all other tiles |
+| `FABRIC_SEND` | yes | `ACTIVATION_SEND` | `total_bytes` from command; placement report improves estimate |
+| `FABRIC_REDUCE` | yes | `PARTIAL_REDUCE` | `total_bytes` from command; `reduction_behavior` inferred from notes or defaults to `sum` |
+| `EXEC_MATMUL` / `EXEC_*` | none | — | Local tile operation; no fabric transfer |
+| `KV_APPEND` / `KV_READ` | none | — | Local tile KV cache; no fabric transfer |
+| `NOP` / `RESET_TILE` | none | — | Housekeeping; no fabric transfer |
+
+Route IDs are assigned sequentially starting from 1 in command order,
+making the mapping deterministic for the same plan.
+
+Payload bytes for data routes are resolved in priority order:
+1. `total_bytes` field of the command record.
+2. Tensor size from the placement report (by `tensor_id` or `tensor_name`).
+3. Default activation estimate (1024 bytes; a warning is emitted).
+
+### 13.3 Per-Tile Summary Generation
+
+Tile traffic summaries are derived entirely from the emitted route records:
+
+- `outbound_packet_count` — sum of `packet_count_estimate` for routes where
+  `source_tile == tile_id`.
+- `inbound_packet_count` — sum of `packet_count_estimate` for routes where
+  `tile_id` appears in `destination_tiles`.
+- `outbound/inbound_payload_bytes` — analogous byte sums.
+- `barriers_started` / `barriers_completed` — incremented for each
+  `TILE_BARRIER` route that includes the tile.
+- `reductions_started` — incremented for the source tile of each
+  `PARTIAL_REDUCE` route.
+- `reductions_completed` — incremented for each destination tile of each
+  `PARTIAL_REDUCE` route.
+
+Because summaries are derived from routes, the generated report always passes
+the M116 per-tile consistency checks.
+
+### 13.4 Report Header
+
+The generated report header sets:
+
+| Field | Value |
+|---|---|
+| `route_report_version` | 1 |
+| `source_command_plan` | path supplied via `--plan` |
+| `source_placement_report` | path supplied via `--placement-report`, or `null` |
+| `fabric_policy` | `"layer_wise"` (default; no inference topology available at this stage) |
+| `status` | `"pass"` (no warnings), `"warn"` (warnings present), `"fail"` (strict+warnings) |
+| `report_timestamp` | UTC ISO-8601 timestamp of the mapper run |
+
+### 13.5 Fixtures
+
+| Fixture path | Description |
+|---|---|
+| `compiler/fixtures/plan_tiny_barrier_trace.json` | Minimal M109 command plan: TILE_BARRIER + TRACE_SNAPSHOT + QUERY_COUNTERS, 2 tiles |
+| `compiler/fixtures/fabric_route_from_plan_tiny.json` | M115 route report generated from the above plan; passes M116 validator (3 routes: TILE_BARRIER + TRACE_EVENT + CONTROL_ACK) |
+
+### 13.6 Relationship to M116
+
+The mapper's output is designed to pass the M116 validator.  The round-trip:
+
+```
+map_commands_to_fabric_routes.py --plan plan.json --route-report-json routes.json
+validate_fabric_routes.py --report routes.json  # exit 0
+```
+
+is the primary correctness check for M117.  The M116 validator enforces all
+structural and semantic rules defined in §11.
+
+### 13.7 Non-Goals for M117
+
+- No route execution or fabric simulation.
+- No cyclic-dependency check (deferred to M118 bandwidth sim / M120 review).
+- No fence-ordering validation across tiles (requires command-plan context
+  beyond the current scope).
+- No bandwidth estimation (informational flags only; deferred to M118).
+- No C, Makefile, binary format, or inference behavior changes.
+- No CUDA kernels or runtime scheduler changes.
