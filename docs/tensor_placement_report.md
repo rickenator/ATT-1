@@ -1198,3 +1198,105 @@ counts, capacity_failures_observed, warnings_observed.
 
 No C ABI, binary format, inference behaviour, CUDA, PCIe/MMIO, or kernel
 driver change.  The command plan is advisory and simulated only.
+
+---
+
+## 14. Fabric Route Report Schema (Milestone 115)
+
+This section documents how fabric route reports relate to the placement report
+schema defined in §1–§9.  The full route report schema is specified in
+`docs/aimu_fabric_routing.md` §11.
+
+### 14.1 From Placement Records to Routes
+
+Each tensor record in the `tensors` array (§3) contributes to zero or more
+routes in the fabric route report via the following mapping:
+
+| Placement field | Route field | Notes |
+|---|---|---|
+| `routing_requirement = "local"` | no route emitted | tensor does not cross tile boundaries |
+| `routing_requirement = "broadcast"` | `route_type = ACTIVATION_BROADCAST` | full activation sent to all slice owners |
+| `routing_requirement = "reduce"` | `route_type = PARTIAL_REDUCE` | partial results sent to aggregator |
+| `routing_requirement = "unicast"` | `route_type = ACTIVATION_SEND` | single-target activation send |
+| `routing_requirement = "none"` | no route emitted | replicated tensor; no fabric traffic |
+| `reduction_behavior = "sum"` | `reduction_behavior = sum` in route | maps to `FABRIC_REDUCE` `op_param_0=0` |
+| `reduction_behavior = "concat"` | `reduction_behavior = concat` in route | maps to `FABRIC_REDUCE` `op_param_0=1` |
+| `owner_tile` | `source_tile` | tile that sends the activation or partial result |
+| `slice_start`, `slice_end` | `payload_bytes` estimate | `(slice_end - slice_start) × element_size` |
+
+### 14.2 Payload Byte Estimates
+
+The route report's `payload_bytes` for each route is estimated from the
+placement report as follows:
+
+| Route type | Payload bytes formula |
+|---|---|
+| `ACTIVATION_SEND` / `ACTIVATION_BROADCAST` | `d_model × 4` (f32 activation vector) |
+| `PARTIAL_REDUCE` (row-split) | `(slice_end - slice_start) × 4` per sending tile |
+| `LOGITS_REDUCE` (vocab-split) | `(slice_end - slice_start) × 4` per sending tile |
+| `TILE_BARRIER` | `0` (no payload) |
+| `CONTROL_ACK` | `8` (8-byte acknowledgment token) |
+| `KV_TRANSFER` | `n_kv_heads × head_dim × 2 × 4` per page |
+
+For q8 partial results, `element_size = 4` (activations are kept in f32;
+only weights are quantized).  For q4, same as q8 for activations.
+
+### 14.3 Packet Count Estimate
+
+The `packet_count_estimate` in the route report header equals:
+
+```
+sum over all routes of route.packet_count_estimate
+```
+
+Where per-route `packet_count_estimate` is:
+
+- `ACTIVATION_SEND` → `1`
+- `ACTIVATION_BROADCAST` → `len(destination_tiles)`
+- `PARTIAL_REDUCE` / `LOGITS_REDUCE` → `1` per route record (one record per
+  sending tile)
+- `TILE_BARRIER` → `len(destination_tiles)` (one token per participant)
+- `CONTROL_ACK` → `1`
+
+For the two-tile layer-wise baseline: `1` (`ACTIVATION_SEND`) + `2`
+(`TILE_BARRIER` tokens) = `3` total packets per decode step.
+
+### 14.4 Fabric Bandwidth Estimate
+
+The route report's `payload_bytes_estimate` is used to cross-check against the
+placement report's `bandwidth_status` field (§2):
+
+```
+estimated_bw_gib_sec = payload_bytes_estimate × target_tokens_per_sec / 2^30
+```
+
+If `estimated_bw_gib_sec > fabric_gib_sec` (from the placement report header),
+the route report emits a `BANDWIDTH_OVERFLOW` warning (diagnostic code F10).
+
+### 14.5 Fixture
+
+`compiler/fixtures/fabric_route_report_tiny.json` — reference route report for
+the `placement_report_valid.json` baseline (2-tile, 2-layer, f32, layer-wise,
+d_model=64):
+
+- 3 routes: 2 × `ACTIVATION_SEND` + 1 × `TILE_BARRIER`
+- `payload_bytes_estimate = 512` (2 × 256 B; barrier has 0 payload)
+- `packet_count_estimate = 3`
+- 0 warnings, 0 failures, `status = pass`
+
+### 14.6 Tool: `compiler/map_placement_to_fabric_routes.py`
+
+See `docs/aimu_fabric_routing.md` §11.9 for the full tool specification.
+
+**Summary:**
+
+- Input: M109 command plan JSON (`--plan PATH`)
+- Output: fabric route report JSON (`--report-json PATH`) or human-readable text
+- Exit 0: pass or warn; Exit 1: fail; Exit 2: parse error
+- `--strict`: treats warnings as failures
+
+### 14.7 Non-Goals for M115
+
+No C ABI, binary format, inference behaviour, CUDA, PCIe/MMIO, kernel driver,
+fabric execution, or runtime scheduling change.  The route report is advisory
+and simulated only.

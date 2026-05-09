@@ -440,6 +440,436 @@ array using the §2.1 route descriptor fields.
 
 ---
 
+## 11. Fabric Route Report Schema (M115)
+
+This section defines the canonical schema for AIMU fabric route reports.  A
+fabric route report is a structured, serializable record that describes the
+complete set of inter-tile routes required for a single decode step, derived
+from a tensor placement report (M98/M100) and a command plan (M109).
+
+Route reports are **advisory** in M115.  They describe planned fabric traffic
+without changing runtime execution.  Future milestones consume this schema:
+
+| Milestone | Role of route report |
+|---|---|
+| M116 | Validator input — checks route records against validation rules F1–F12 |
+| M117 | Command-plan mapper emits route report from `routing_requirement` fields |
+| M118 | Bandwidth simulator consumes `payload_bytes` estimates to validate rule F10 |
+| M119 | Replay tool produces a route report from observed `FABRIC_SEND`/`FABRIC_REDUCE` completions |
+
+The M115 Python tool `compiler/map_placement_to_fabric_routes.py` (defined in
+§11.9) reads a M109 command plan JSON and emits a fabric route report JSON
+conforming to this schema.
+
+---
+
+### 11.1 Report Header
+
+The header identifies the source artifacts, model, and planning targets.
+
+#### Key-value text format
+
+```
+route_report_version          = 1
+source_placement_report       = <path or empty>
+source_command_plan           = <path or empty>
+model_name                    = <string>
+model_id                      = <string>
+session_id                    = <string>
+tile_count                    = <integer ≥ 1>
+route_count                   = <integer ≥ 0>
+packet_count_estimate         = <integer ≥ 0>
+payload_bytes_estimate        = <integer ≥ 0>
+fabric_policy                 = layer_wise | tensor_wise | row_split | col_split | head_wise | vocab_split | mixed
+status                        = pass | warn | fail
+report_timestamp              = <ISO-8601 UTC string>
+```
+
+#### JSON format
+
+```json
+{
+  "route_report_version": 1,
+  "source_placement_report": "<path or null>",
+  "source_command_plan": "<path or null>",
+  "model_name": "<string>",
+  "model_id": "<string>",
+  "session_id": "<string>",
+  "tile_count": 2,
+  "route_count": 3,
+  "packet_count_estimate": 3,
+  "payload_bytes_estimate": 768,
+  "fabric_policy": "layer_wise",
+  "status": "pass",
+  "report_timestamp": "2026-05-08T00:00:00Z"
+}
+```
+
+**Field notes:**
+
+- `route_report_version`: Schema version; currently `1`.  Must be incremented
+  when any required field is added or renamed.
+- `source_placement_report`: Path to the M98/M100 placement report JSON used
+  as input; `null` if not available.
+- `source_command_plan`: Path to the M109 command plan JSON used as input;
+  `null` if not available.
+- `fabric_policy`: Describes the dominant placement policy that drives the
+  routing graph.  May be `mixed` when multiple policies coexist.
+- `packet_count_estimate`: Sum of `packet_count_estimate` across all route
+  records; one value per decode step.
+- `payload_bytes_estimate`: Sum of `payload_bytes` across all route records.
+- `status`: `pass` if no validation failures, `warn` if warnings only,
+  `fail` if at least one validation failure.
+
+---
+
+### 11.2 Route Records
+
+Each entry in the `routes` array describes one directed fabric data flow for
+the decode step.
+
+#### JSON format (single route record)
+
+```json
+{
+  "route_id": 1,
+  "route_type": "ACTIVATION_SEND",
+  "source_tile": 0,
+  "destination_tiles": [1],
+  "source_tensor": "layers.0.attention.wo.weight",
+  "source_command_id": 8,
+  "destination_tensor": null,
+  "destination_command_id": null,
+  "payload_type": "activation",
+  "payload_bytes": 256,
+  "packet_count_estimate": 1,
+  "dependency_fence": 8,
+  "reduction_id": 0,
+  "reduction_behavior": "none",
+  "ordering_policy": "ordered",
+  "trace_id": 0,
+  "route_status": "ok"
+}
+```
+
+#### Route record field reference
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `route_id` | uint16 | yes | Unique route identifier within this report; monotonically increasing from 1 |
+| `route_type` | string | yes | One of the eight types in §3: `ACTIVATION_SEND`, `ACTIVATION_BROADCAST`, `PARTIAL_REDUCE`, `LOGITS_REDUCE`, `KV_TRANSFER`, `TILE_BARRIER`, `TRACE_EVENT`, `CONTROL_ACK` |
+| `source_tile` | int | yes | Originating tile index (0-based) |
+| `destination_tiles` | int[] | yes | List of destination tile indices; exactly one element for unicast; multiple for broadcast; empty list is invalid |
+| `source_tensor` | string | no | Tensor name in the placement report that triggered this route; `null` for barrier and control routes |
+| `source_command_id` | int | no | `command_id` from the M109 command plan of the producing command; `null` if not derived from a command plan |
+| `destination_tensor` | string | no | Tensor name on the receiving tile, if applicable |
+| `destination_command_id` | int | no | `command_id` of the consuming command on the destination tile |
+| `payload_type` | string | yes | Content class: `activation`, `partial_logit`, `reduction`, `kv_payload`, `trace_event`, `control_ack`, `barrier_token` |
+| `payload_bytes` | int | yes | Expected payload size in bytes; `0` is valid only for `TILE_BARRIER` and `CONTROL_ACK` types |
+| `packet_count_estimate` | int | yes | Number of fabric packets this route generates per decode step; typically 1 for unicast; equal to `len(destination_tiles)` for broadcast |
+| `dependency_fence` | int | yes | Fence ID the sending tile must wait for before issuing this route; `0` = no dependency |
+| `reduction_id` | int | yes | Reduction group tag; all routes sharing a nonzero `reduction_id` contribute to the same `FABRIC_REDUCE`; `0` = no reduction |
+| `reduction_behavior` | string | yes | One of: `none`, `sum`, `concat`, `max`, `topk`, `pass_through` |
+| `ordering_policy` | string | yes | One of: `ordered` (fence-ordered relative to other routes), `unordered` (no ordering constraint), `barriered` (ordered via `TILE_BARRIER`) |
+| `trace_id` | int | yes | Trace correlation token; `0` = not traced |
+| `route_status` | string | yes | Validation result for this route: `ok`, `warn`, or `fail` |
+
+#### `reduction_behavior` values
+
+| Value | Description |
+|---|---|
+| `none` | No reduction; route is a pass-through or barrier |
+| `sum` | Element-wise sum accumulated in tile-ID order (F10-safe, deterministic) |
+| `concat` | Concatenate partial vectors in ascending `slice_start` order |
+| `max` | Element-wise max (reserved; Phase 3) |
+| `topk` | Top-K selection (reserved; Phase 3) |
+| `pass_through` | Unicast with no accumulation; destination receives exactly what the source sent |
+
+#### `ordering_policy` values
+
+| Value | Description |
+|---|---|
+| `ordered` | Route execution is ordered by its `dependency_fence`; the sending tile must not issue this route until the fence is satisfied |
+| `unordered` | Route has no ordering constraint relative to other routes in this decode step |
+| `barriered` | Route is a `TILE_BARRIER` synchronisation token; no execution proceeds past this point until all participants arrive |
+
+---
+
+### 11.3 Per-Tile Route Summary
+
+The `tiles` array provides one summary record per tile in the placement plan.
+
+#### JSON format (single tile record)
+
+```json
+{
+  "tile_id": 0,
+  "outbound_packet_count": 2,
+  "inbound_packet_count": 1,
+  "outbound_payload_bytes": 512,
+  "inbound_payload_bytes": 256,
+  "reductions_started": 0,
+  "reductions_completed": 0,
+  "barriers_started": 1,
+  "barriers_completed": 1,
+  "route_failures": 0,
+  "estimated_bandwidth_gib_sec": null
+}
+```
+
+#### Tile summary field reference
+
+| Field | Type | Description |
+|---|---|---|
+| `tile_id` | int | Tile index (0-based); must match a tile in the placement report |
+| `outbound_packet_count` | int | Sum of `packet_count_estimate` for routes where `source_tile == tile_id` |
+| `inbound_packet_count` | int | Sum of `packet_count_estimate` for routes where `tile_id` is in `destination_tiles` |
+| `outbound_payload_bytes` | int | Sum of `payload_bytes` for outbound routes |
+| `inbound_payload_bytes` | int | Sum of `payload_bytes` for inbound routes |
+| `reductions_started` | int | Count of routes from this tile with a nonzero `reduction_id` |
+| `reductions_completed` | int | Count of `FABRIC_REDUCE`-type routes where this tile is the aggregator |
+| `barriers_started` | int | Count of `TILE_BARRIER` routes where this tile participates |
+| `barriers_completed` | int | Same as `barriers_started` for the report (live execution may differ) |
+| `route_failures` | int | Count of routes assigned `route_status = "fail"` for this tile |
+| `estimated_bandwidth_gib_sec` | float or null | Estimated per-tile fabric bandwidth in GiB/s; computed as `outbound_payload_bytes / step_interval_sec / 2^30` when `target_tokens_per_sec` is known; `null` otherwise |
+
+---
+
+### 11.4 Warnings and Failures
+
+The `warnings` and `failures` arrays collect diagnostic messages.  Each entry
+follows the same structure:
+
+```json
+{
+  "code": "INVALID_TILE_TARGET",
+  "severity": "fail",
+  "route_id": 2,
+  "tile_id": 5,
+  "message": "destination tile 5 is not in [0, tile_count=2)"
+}
+```
+
+#### Diagnostic codes
+
+| Code | Severity | Rule | Description |
+|---|---|---|---|
+| `INVALID_TILE_TARGET` | fail | F1 | `source_tile` or an element of `destination_tiles` is outside `[0, tile_count)` |
+| `EMPTY_DESTINATION` | fail | F2 | `destination_tiles` is empty |
+| `ZERO_PAYLOAD` | fail | F3 | `payload_bytes` is 0 for a non-barrier, non-control-ack route type |
+| `UNKNOWN_PACKET_TYPE` | fail | F4 | `route_type` is not one of the eight defined types |
+| `REDUCTION_NOT_EXPLICIT` | fail | F5 | `reduction_id` is nonzero but no `FABRIC_REDUCE`-type route in the plan references the same `reduction_id` |
+| `MISSING_ROUTE` | fail | F6 | A tensor with `routing_requirement != "local"` has no route in the report whose `destination_tiles` covers the consuming tile |
+| `CYCLIC_DEPENDENCY` | fail | F7 | The routing DAG contains a cycle (detected by DFS over `dependency_fence` chain) |
+| `BARRIER_ORDERING` | fail | F8 | A `TILE_BARRIER` route appears before all activation/partial-result routes in the same decode step |
+| `FENCE_ORDERING` | fail | F9 | A route's `dependency_fence` references a command that appears later in the command plan |
+| `BANDWIDTH_OVERFLOW` | warn | F10 | Sum of `payload_bytes_estimate` exceeds the fabric bandwidth budget derived from `fabric_gib_sec` and `target_tokens_per_sec` |
+| `CONCAT_INCOMPLETE` | fail | F11 | `LOGITS_REDUCE` routes sharing a `reduction_id` do not cover exactly `[0, vocab_size)` |
+| `REDUCTION_PARTICIPANT_MISMATCH` | fail | F12 | The `FABRIC_REDUCE` command's participant bitmask does not match the set of `source_tile` values for all routes sharing that `reduction_id` |
+| `UNKNOWN_COMMAND_REF` | warn | — | `source_command_id` or `destination_command_id` does not match any `command_id` in the source command plan |
+| `MISSING_REDUCTION_BEHAVIOR` | warn | — | `reduction_id != 0` but `reduction_behavior == "none"` |
+| `UNSUPPORTED_PACKET_TYPE` | warn | — | `route_type` is defined in §3 but marked as `deferred` for the current phase |
+
+---
+
+### 11.5 Human-Readable Report Format
+
+When the route report tool is run without `--report-json`, it emits a
+human-readable text summary.  The format consists of five tables.
+
+#### Route summary table
+
+```
+Route Summary
+=============
+  route_report_version : 1
+  model_id             : tiny_test_model
+  session_id           : session_0
+  tile_count           : 2
+  route_count          : 3
+  packet_count_estimate: 3
+  payload_bytes_estimate: 768
+  fabric_policy        : layer_wise
+  status               : pass
+```
+
+#### Per-tile traffic table
+
+```
+Per-Tile Traffic (per decode step)
+===================================
+tile  out_pkts  in_pkts  out_bytes  in_bytes  reductions  barriers  failures
+----  --------  -------  ---------  --------  ----------  --------  --------
+   0         2        1        512       256           0         1         0
+   1         1        2        256       512           0         1         0
+```
+
+#### Reduction summary table
+
+```
+Reductions
+==========
+  (none in this report)
+```
+
+When reductions are present:
+
+```
+Reductions
+==========
+reduction_id  behavior  participants  aggregator_tile
+------------  --------  ------------  ---------------
+           1  sum       0,1,2         3
+           2  concat    0,1           0
+```
+
+#### Barriers and fences table
+
+```
+Barriers / Fences
+=================
+route_id  type          tiles         fence_dep  ordering_policy
+--------  ------------  ------------  ---------  ---------------
+       3  TILE_BARRIER  0,1           0          barriered
+```
+
+#### Warnings / failures table
+
+```
+Warnings / Failures
+===================
+  (none)
+```
+
+When issues are present:
+
+```
+Warnings / Failures
+===================
+severity  code                       route_id  message
+--------  -------------------------  --------  -----------------------------------------------
+fail      INVALID_TILE_TARGET               2  destination tile 5 is not in [0, tile_count=2)
+warn      BANDWIDTH_OVERFLOW              all  payload 9.2 GiB/s exceeds budget 8.0 GiB/s
+```
+
+---
+
+### 11.6 JSON Report Format
+
+The JSON report has four top-level keys with stable names.
+
+#### Top-level schema
+
+```json
+{
+  "header": { ... },
+  "routes": [ ... ],
+  "tiles": [ ... ],
+  "warnings": [ ... ],
+  "failures": [ ... ]
+}
+```
+
+| Key | Type | Description |
+|---|---|---|
+| `header` | object | §11.1 fields |
+| `routes` | array | One §11.2 object per route; ordered by `route_id` ascending |
+| `tiles` | array | One §11.3 object per tile; ordered by `tile_id` ascending |
+| `warnings` | array | §11.4 entries with `severity = "warn"` |
+| `failures` | array | §11.4 entries with `severity = "fail"` |
+
+#### Stability rules
+
+- All field names in `header`, `routes`, `tiles`, `warnings`, and `failures`
+  are stable across tool versions and must not be renamed without a
+  `route_report_version` increment.
+- Optional fields (`source_tensor`, `source_command_id`, `destination_tensor`,
+  `destination_command_id`, `estimated_bandwidth_gib_sec`) may be `null`.
+- Unknown top-level keys must be ignored by consumers (forward compatibility).
+- The `route_report_version` field must be checked before parsing any other
+  field.  Consumers must fail gracefully on unsupported versions.
+
+---
+
+### 11.7 Relationship to Future Tools
+
+| Tool | Milestone | How it uses the route report |
+|---|---|---|
+| `compiler/validate_fabric_routes.py` | M116 | Reads `routes` + `tiles` arrays; applies validation rules F1–F12; emits pass/warn/fail per route; exits 0/1/2 |
+| Extended `map_placement_to_commands.py` | M117 | Emits a `routes` section from `routing_requirement` and `reduction_behavior` fields; adds M117 route records to the command plan JSON alongside the existing `commands` array |
+| Fabric bandwidth/latency simulator | M118 | Reads `payload_bytes` and `packet_count_estimate`; simulates rule F10 bandwidth check; emits per-route latency estimates |
+| `att1-aimu-replay` extended | M119 | Replays `routes` section; emits per-route observed `packet_count` and `payload_bytes` from M112 host harness completions; compares against estimates |
+| Phase 3 go/no-go review | M120 | Aggregates route reports across all placement configurations to size the ASIC fabric ports and buffer depths |
+
+---
+
+### 11.8 Fixture: `compiler/fixtures/fabric_route_report_tiny.json`
+
+A minimal reference fixture for a 2-tile, 2-layer, f32, layer-wise model.
+Contains:
+
+- 2 `ACTIVATION_SEND` routes (tile 0 → tile 1 at layer boundary, tile 1 →
+  host sampler).
+- 1 `TILE_BARRIER` route (both tiles, at end of decode step).
+- 3 route records total; `packet_count_estimate = 3`;
+  `payload_bytes_estimate = 512` (2 × 256 B activation + 0 B barrier).
+- 0 warnings, 0 failures, status = `pass`.
+
+This fixture is used by the M116 validator smoke test (valid-report-passes
+case) and by the M115 tool round-trip smoke test.
+
+See `compiler/fixtures/fabric_route_report_tiny.json` for the full JSON.
+
+---
+
+### 11.9 `compiler/map_placement_to_fabric_routes.py` (M115 Tool Spec)
+
+**Purpose:** Read a M109 command plan JSON (which embeds a placement report
+reference) and emit a fabric route report JSON.
+
+**CLI:**
+
+```
+map_placement_to_fabric_routes.py --plan PATH [--report-json PATH]
+                                              [--strict] [--tile-count N]
+```
+
+**Algorithm (per-command scan):**
+
+1. Read `header.tile_count` and `header.fabric_policy` from the command plan.
+2. For each `FABRIC_SEND` command in `commands`:
+   - Derive `route_type` from `op_param_0`:
+     - `op_param_0 = 0` → `ACTIVATION_SEND` (single dest) or
+       `ACTIVATION_BROADCAST` (multiple dest via dest bitmask).
+     - `op_param_0 = 1` → `PARTIAL_REDUCE` or `LOGITS_REDUCE`.
+   - Set `payload_bytes = input_buf_bytes`.
+   - Set `dependency_fence = fence_id`.
+   - Set `reduction_id = 0`; set `reduction_behavior = none`.
+3. For each `FABRIC_REDUCE` command:
+   - Emit one `PARTIAL_REDUCE` or `LOGITS_REDUCE` route per participant tile.
+   - Set `reduction_id` to a locally-assigned group tag (monotonic from 1).
+   - Set `reduction_behavior = sum` or `concat` per `op_param_0`.
+4. For each `TILE_BARRIER` command:
+   - Emit one `TILE_BARRIER` route covering all participant tiles.
+   - Set `payload_bytes = 0`, `payload_type = barrier_token`,
+     `reduction_behavior = none`, `ordering_policy = barriered`.
+5. Build per-tile summaries by iterating all routes.
+6. Apply validation rules F1–F12; populate `warnings` and `failures`.
+7. Compute `status`: `pass` if no failures; `warn` if warnings only; `fail`
+   if any failures.
+
+**Exit codes:**
+
+- `0`: Report generated; status is `pass` or `warn`.
+- `1`: Report generated; status is `fail` (at least one F-rule violation).
+- `2`: Input parse error (missing required field, JSON syntax error, invalid
+  command plan version).
+
+**In `--strict` mode:** exit 1 if any warning is present (treats warnings as
+failures).
+
+---
+
 ## 9. Non-Goals
 
 The following are explicitly outside M114 scope:
