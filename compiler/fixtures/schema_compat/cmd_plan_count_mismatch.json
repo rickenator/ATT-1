@@ -1,0 +1,5 @@
+{
+  "command_plan_version": 1,
+  "header": {"command_plan_version": 1, "tile_count": 1, "command_count": 10, "status": "ok"},
+  "commands": [{"command_id": 1, "command_type": "TILE_BARRIER"}]
+}

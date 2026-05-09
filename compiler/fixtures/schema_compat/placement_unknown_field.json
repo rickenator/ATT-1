@@ -1,0 +1,6 @@
+{
+  "report_version": 1,
+  "header": {"tile_count": 1, "model_name": "compat_test"},
+  "tiles": [],
+  "undocumented_experimental_field": "harmless_value"
+}
