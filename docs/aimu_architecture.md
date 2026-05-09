@@ -961,3 +961,55 @@ register offsets.
 | Counter snapshot | `COUNTER_SNAPSHOT_CONTROL`; counter registers §7 |
 | Trace buffer | `TRACE_BUFFER_BASE_LOW/HIGH`, `TRACE_WRITE_PTR`, `TRACE_SNAPSHOT_CONTROL` |
 | Tile reset | `TILE_RESET_CONTROL`, `RESET_CONTROL` |
+
+---
+
+## 12. AIMU Fabric Routing Requirements (M114)
+
+This section summarises the M114 fabric routing specification.  The full
+specification is in [docs/aimu_fabric_routing.md](aimu_fabric_routing.md).
+
+### 12.1 What M114 Specifies
+
+M114 defines the routing model for all data that flows across the AIMU tile
+interconnect during multi-tile inference.  It covers:
+
+- **What moves across the fabric** (§1): activation vectors, partial logit
+  vectors, reduction payloads, KV transfer payloads, trace and control events.
+- **What stays local** (§1.2): resident weight tiles, local KV/session memory,
+  activation scratchpad buffers.
+- **Route descriptor fields** (§2): `route_id`, `source_tile`, `dest_tile_mask`,
+  `packet_type`, `payload_type`, `payload_bytes`, `fence_id`,
+  `completion_fence_id`, `reduction_id`, `trace_id`.
+- **Packet types** (§3): `ACTIVATION_SEND`, `ACTIVATION_BROADCAST`,
+  `PARTIAL_REDUCE`, `LOGITS_REDUCE`, `KV_TRANSFER`, `TILE_BARRIER`,
+  `TRACE_EVENT`, `CONTROL_ACK`.
+- **Placement-driven routing topologies** (§4): layer-wise pipeline,
+  row-split matmul, column-split matmul, head-wise attention split,
+  lm_head/vocab split, embedding lookup, replicated norms, KV ownership.
+- **Reduction semantics** (§5): sum reduction (tile-ID-ordered for
+  determinism), concat reduction, tolerances matching M92 CUDA baselines.
+- **Fabric counters** (§6): per-tile packet/byte/type counters, reduction
+  and barrier counters, congestion/stall counters, route failure counters.
+- **Validation rules F1–F12** (§7): tile range, non-empty destination,
+  nonzero payload, known packet type, reduction consistency, no missing
+  routes, acyclic DAG, barrier ordering, fence ordering, bandwidth
+  compatibility, concat completeness, reduction participant completeness.
+- **Relationship to existing simulator** (§8): Phase 1 `att1_fabric_t`
+  API mapping, cluster inference counter mapping, M109 command plan
+  integration, M115–M120 implementation path.
+- **Non-goals** (§9): no hardware fabric, no runtime changes, no new
+  inference kernels, no CUDA changes, no format changes.
+- **Future milestone split** (§10): M115 (route schema), M116 (validator),
+  M117 (command-plan mapper extension), M118 (bandwidth simulator),
+  M119 (replay integration), M120 (Phase 3 go/no-go review).
+
+### 12.2 Relationship to Prior Sections
+
+| Section | Relationship |
+|---|---|
+| §9 (Tensor-level placement, M97) | M114 formalises the fabric routing implications described informally in §9.2 |
+| §10 (M103 command summary) | `FABRIC_SEND` (0x30) and `FABRIC_REDUCE` (0x31) are the command-level fabric primitives; M114 specifies the route model above them |
+| §11 (BAR0 register map, M104) | Fabric/interconnect registers at `0x3000–0x302B` expose the M114 fabric counters |
+| `docs/fabric.md` | Phase 1 simulator API; M114 §8.1 maps Phase 1 calls to M114 route types |
+| `docs/aimu_pcie_command_requirements.md` §12 | M114 row added; future milestone split references M115–M120 |
