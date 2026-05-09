@@ -127,3 +127,19 @@ An inactive example self-hosted workflow is provided at
 | CUDA tests | optional | optional (`--cuda`) | ✗ |
 | JSON report | ✗ | optional | ✗ |
 | Runs automatically | ✗ | ✗ | ✓ (on push/PR) |
+
+---
+
+## 6. Before sharing or releasing
+
+Before sending the repository to an external reviewer or pushing a release
+tag, run the full outside-review checklist in
+[docs/RELEASE_READINESS.md](RELEASE_READINESS.md).
+
+The quick pre-release sequence is:
+
+```sh
+make clean && make && make test   # 781 PASS 0 FAIL
+make regression                   # all 5 layers PASS
+git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)' || echo "PASS: no cache artifacts"
+```

@@ -15,6 +15,16 @@ C with no external dependencies. Phase 2 points toward a PCIe card direction:
 host runtime integration, driver-facing command queues, model placement, and
 multi-tile scheduling against hardware-like constraints.
 
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [docs/testing.md](docs/testing.md) | Build, test, and CI guide |
+| [docs/CUDA_VALIDATION_PLAN.md](docs/CUDA_VALIDATION_PLAN.md) | CUDA signoff policy and self-hosted runner plan |
+| [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) | Release and outside-review readiness checklist |
+| [docs/OPERATION_LOG.md](docs/OPERATION_LOG.md) | Milestone history and next steps |
+| [DESIGN.md](DESIGN.md) | Architecture overview |
+
 ## Build
 
 ```sh
