@@ -498,8 +498,8 @@ The prototype is considered **passing** when all of the following hold:
 | M116 | PCIe latency/bandwidth model | Analytical model for PCIe Gen4/Gen5 latency per command and per DMA transfer; integrate with placement scenario tool bandwidth estimate |
 | M117 | FPGA feasibility notes | Document register-map to AXI-Lite mapping; PCIe IP core options; RTL complexity estimate; resource utilization ballpark; go/no-go criteria for Option C |
 | M118 | Prototype bill-of-materials / board options review | Compare development board options (Alveo U50, Agilex F-Series, custom PCIe card); supply chain, cost, and timeline estimates for Option C/D |
-| M119 | Hardware/software boundary review | Define the exact API surface between the host driver, MMIO register file, DMA engine, command dispatcher, and tile execution fabric; version and freeze the boundary |
-| M120 | Phase 3 prototype go/no-go review | Final decision: Option A (software only), B (userspace MMIO mock), C (FPGA), or D (custom board); gate on M111–M119 completion |
+| M119 | Hardware/software boundary review | **COMPLETE** — Integrated planning pipeline `compiler/run_aimu_planning_pipeline.py`; 8-stage end-to-end pipeline (placement validation → advisory → command plan → replay → fabric routes → route validation → bandwidth simulation → integrated report); subprocess-based; integrated JSON report with 22 fields; strict/non-strict mode; tested against valid, capacity-fail, and strict early-stop scenarios |
+| M120 | Phase 3 prototype go/no-go review | **COMPLETE** — `docs/aimu_phase3_go_no_go.md`; CONDITIONAL GO decision; Option B (userspace MMIO emulator) recommended next; FPGA deferred; Options D/E not recommended; go/no-go gate criteria defined; M121–M127 next milestone proposals; hardware economic notes for 16/32/64/128 GiB SKUs |
 
 ---
 
