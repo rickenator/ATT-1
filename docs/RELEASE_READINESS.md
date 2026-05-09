@@ -280,4 +280,6 @@ Run through this list before sending the repository to any external party.
 | M142 | ASAN/UBSAN local target | Add `make asan` and `make ubsan` Makefile targets for local sanitizer runs |
 | M143 | Loader and parser fuzzing harness | Add a minimal libFuzzer or AFL harness targeting the `.att1` loader |
 | M144 | Public demo script for tiny fixtures | A single-command script that runs a complete inference demo on `models/dummy/` |
-| M145 | External reviewer package checklist | Script that bundles docs + headers + tiny fixtures into a reviewable archive without model weights |
+| M145 | External reviewer package checklist | `docs/EXTERNAL_REVIEW_PACKAGE.md`: included/excluded materials, pre-review validation commands, reviewer quick-start, focus areas, safe sharing notes |
+| M146 | ATT-1 Reference Manual | Complete API reference, `.att1` format spec, runtime semantics, backend matrix, KV-cache MMU, quantization pipeline |
+| M147 | AIMU Intrinsics and Operations Reference Manual | AIMU command set, MMIO register map, fabric packet format, DMA protocol, execution phases |

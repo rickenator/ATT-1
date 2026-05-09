@@ -103,6 +103,7 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 | Schema compatibility | [docs/schema_compatibility.md](docs/schema_compatibility.md) |
 | CUDA signoff policy | [docs/CUDA_VALIDATION_PLAN.md](docs/CUDA_VALIDATION_PLAN.md) |
 | Release / review readiness | [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) |
+| External reviewer package | [docs/EXTERNAL_REVIEW_PACKAGE.md](docs/EXTERNAL_REVIEW_PACKAGE.md) |
 | Milestone history | [docs/OPERATION_LOG.md](docs/OPERATION_LOG.md) |
 
 ## Artifact Policy
