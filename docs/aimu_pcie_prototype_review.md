@@ -581,3 +581,123 @@ to Option C or D hardware:
     host driver at boot, the placement report tool, or the command plan mapper?
     M114 should define the routing table schema and the M109 mapper should
     optionally emit route-table update commands.
+
+---
+
+## 14. Integrated Planning Pipeline (Milestone 119)
+
+`compiler/run_aimu_planning_pipeline.py` implements an end-to-end prototype
+planning pipeline that chains all prior planning tools into a single
+deterministic run.
+
+**Scope:** Control-plane simulation and report generation only.  This tool does
+NOT execute inference, access real PCIe/MMIO registers, change the `.att1`
+binary format, or implement a Linux kernel driver.
+
+### 14.1 Pipeline Stages
+
+| Stage | Tool invoked | M-milestone | Output |
+|---|---|---|---|
+| 1 | `validate_tensor_placement_report.py` | M99 | Placement validation JSON |
+| 2 | `propose_tensor_placement.py` | M101 | Advisory remediation JSON |
+| 3 | `map_placement_to_commands.py` | M109 | AIMU command plan JSON |
+| 4 | `replay_aimu_command_plan.py` | M113 | Control-plane replay JSON |
+| 5 | `map_commands_to_fabric_routes.py` | M117 | Fabric route report JSON |
+| 6 | `validate_fabric_routes.py` | M116 | Route validation JSON |
+| 7 | `simulate_fabric_bandwidth.py` | M118 | Bandwidth/latency simulation JSON |
+| 8 | (pipeline) | M119 | Integrated planning summary JSON |
+
+### 14.2 CLI
+
+```
+python3 compiler/run_aimu_planning_pipeline.py \
+    --placement-report <PATH> \
+    [--model-id ID] \
+    [--session-id ID] \
+    [--target-tokens-per-sec N] \
+    [--fabric-gib-sec N] \
+    [--workdir PATH] \
+    [--report-json PATH] \
+    [--strict]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--placement-report PATH` | required | M98/M100 tensor placement report JSON |
+| `--model-id ID` | (empty) | Model identifier forwarded to command-plan mapper |
+| `--session-id ID` | session_0 | Session identifier forwarded to command-plan mapper |
+| `--target-tokens-per-sec N` | none | Token rate target; forwarded to route mapper and BW simulator |
+| `--fabric-gib-sec N` | none | Fabric bandwidth budget; forwarded to route mapper and BW simulator |
+| `--workdir PATH` | (temp) | Directory for intermediate stage JSON files |
+| `--report-json PATH` | none | Write integrated JSON report to PATH |
+| `--strict` | off | Exit nonzero on any WARN or FAIL at any pipeline stage |
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | PASS or WARN (without `--strict`) |
+| 1 | FAIL, or WARN + `--strict`, or structural stage error |
+| 2 | Input file not found or malformed JSON |
+| 3 | Invalid numeric flag |
+
+### 14.3 Stage Halt Behaviour
+
+- **Strict mode:** pipeline stops immediately when any of stages 1, 2, 4, or 6
+  emit FAIL; exits 1.
+- **Non-strict mode:** pipeline continues past advisory FAIL so all stage
+  reports are emitted; final status is FAIL if any stage failed.
+- Stage 3 (command-plan mapper) always stops on structural error because
+  subsequent stages cannot run without its output.
+
+### 14.4 Integrated Report Fields
+
+The integrated JSON report (`--report-json`) contains:
+
+| Field | Source |
+|---|---|
+| `placement_validation_status` | Stage 1 |
+| `advisory_status` | Stage 2 advisory status |
+| `command_plan_status` | Stage 3 command plan header status |
+| `command_replay_status` | Stage 4 replay status |
+| `fabric_route_map_status` | Stage 5 route mapping status |
+| `fabric_route_validation_status` | Stage 6 route validation status |
+| `fabric_simulation_status` | Stage 7 bandwidth simulation status |
+| `tile_count` | Stage 1/3 |
+| `tensor_count` | Stage 1/3 |
+| `command_count` | Stage 3/4 |
+| `route_count` | Stage 5 |
+| `commands_replayed` | Stage 4 |
+| `completions_seen` | Stage 4 |
+| `failed_commands` | Stage 4 |
+| `unsupported_commands` | Stage 4 |
+| `aggregate_required_fabric_gib_sec` | Stage 7 aggregate |
+| `fabric_utilization_percent` | Stage 7 aggregate |
+| `capacity_status` | Stage 2 advisory status |
+| `bandwidth_status` | Stage 7 aggregate status |
+| `recommended_next_action` | Rule-based (see §14.5) |
+| `status` | Worst of all stage statuses |
+
+### 14.5 Recommendation Rules
+
+The pipeline generates one consolidated recommendation based on the worst
+stage outcome:
+
+| Trigger | Recommendation |
+|---|---|
+| Advisory FAIL | Report advisory `next_action` from Stage 2 |
+| Advisory WARN | Suggest remediation before deployment |
+| Replay FAIL | Review unsupported operations in command plan |
+| Route validation FAIL | Fix route report before bandwidth analysis |
+| Bandwidth FAIL | Increase `--fabric-gib-sec` or reduce token rate |
+| Bandwidth WARN | Consider increasing bandwidth budget |
+| All PASS | Placement is ready for prototype evaluation |
+
+### 14.6 Non-Goals for M119
+
+- No inference execution.
+- No PCIe or MMIO hardware access.
+- No `.att1` binary format changes.
+- No CUDA kernels or runtime scheduler changes.
+- No new C or Makefile changes.
+- No contention, queuing, or NoC arbitration modelling (deferred to M120 review).
