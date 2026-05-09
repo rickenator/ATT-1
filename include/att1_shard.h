@@ -16,8 +16,9 @@ typedef struct att1_layer_shard {
 typedef struct att1_shard_plan {
     size_t tile_count;
     size_t layer_count;
-    att1_layer_shard *tiles;
-    uint32_t *layer_to_tile;
+    att1_layer_shard *tiles;     /* owned array [tile_count]; freed by att1_shard_plan_free */
+    uint32_t *layer_to_tile;     /* owned array [layer_count]; freed by att1_shard_plan_free */
+    /* must not be shallow-copied: owns tiles and layer_to_tile */
 } att1_shard_plan;
 
 /*

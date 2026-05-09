@@ -19,6 +19,7 @@ in `docs/` unless noted otherwise.
 | [kv_mmu.md](kv_mmu.md) | Paged KV-cache MMU: page allocator, eviction policy, hardware-shaped design |
 | [tracing.md](tracing.md) | Tracing and benchmarking: instrumentation, trace capture, output format |
 | [trace_diff.md](trace_diff.md) | Trace diff tool (`compiler/trace_diff.py`): comparing two bench output files |
+| [api_ownership_review.md](api_ownership_review.md) | M141 review: header ownership, lifetime, const-correctness, error consistency, ABI notes |
 
 ---
 

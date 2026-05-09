@@ -8,8 +8,9 @@ typedef struct att1_kv_cache {
     size_t num_heads;
     size_t head_dim;
     size_t length;
-    float *keys;
-    float *values;
+    float *keys;   /* owned; freed by att1_kv_cache_free */
+    float *values; /* owned; freed by att1_kv_cache_free */
+    /* must not be shallow-copied: owns keys and values */
 } att1_kv_cache;
 
 /*
@@ -44,6 +45,8 @@ int att1_kv_cache_append(att1_kv_cache *cache,
  * Return a pointer to a cached key or value vector for one position/head.
  *
  * NULL is returned if indices are outside the populated local cache.
+ * The returned pointer borrows into cache storage; it is valid only while
+ * the cache lives and position < cache->length.
  */
 const float *att1_kv_cache_key(const att1_kv_cache *cache,
                                size_t position,

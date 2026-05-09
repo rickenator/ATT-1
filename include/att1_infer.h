@@ -56,6 +56,10 @@ att1_status_t att1_infer_generate(att1_infer_t *infer,
 
 const float *att1_infer_logits(const att1_infer_t *infer,
                                size_t *out_count);
+/* The returned pointer borrows into the infer context's internal logits buffer.
+ * It is valid only until the next att1_infer_decode_token / att1_infer_generate
+ * call or att1_infer_destroy. Copy the buffer if the values are needed across
+ * multiple decode steps. */
 
 att1_status_t att1_infer_position(const att1_infer_t *infer,
                                   size_t *out_position);
@@ -66,6 +70,9 @@ att1_status_t att1_infer_layer_kv_length(const att1_infer_t *infer,
 
 att1_status_t att1_infer_set_trace(att1_infer_t *infer,
                                    att1_trace_t *trace);
+/* Borrows trace — does NOT take ownership. The caller must keep trace alive
+ * for the entire lifetime of the infer context (or until replaced by another
+ * att1_infer_set_trace call with NULL to detach). */
 
 /*
  * Replace the inference backend. On success, infer takes ownership of backend.

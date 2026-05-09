@@ -26,7 +26,8 @@ typedef struct att1_tensor {
     att1_tensor_desc desc;
     size_t shape[ATT1_TENSOR_MAX_RANK];
     size_t element_count;
-    float *data;
+    float *data; /* owned; freed by att1_tensor_free */
+    /* must not be shallow-copied: owns data */
 } att1_tensor;
 
 /*

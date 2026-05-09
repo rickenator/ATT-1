@@ -103,8 +103,9 @@ int att1_q4_dequantize_group(const uint8_t *src_packed,
 typedef struct att1_q8_matrix {
     size_t rows;
     size_t cols;
-    int8_t *values;
-    float *scales;
+    int8_t *values; /* owned; freed by att1_q8_matrix_free */
+    float *scales;  /* owned; freed by att1_q8_matrix_free */
+    /* must not be shallow-copied: owns values and scales */
 } att1_q8_matrix;
 
 /*
@@ -126,8 +127,9 @@ typedef struct att1_q4_matrix {
     size_t   rows;
     size_t   cols;
     uint32_t group_size;
-    uint8_t *packed;  /* rows * cols / 2 bytes */
-    float   *scales;  /* rows * (cols / group_size) float32 values */
+    uint8_t *packed;  /* owned: rows * cols / 2 bytes; freed by att1_q4_matrix_free */
+    float   *scales;  /* owned: rows * (cols / group_size) float32 values; freed by att1_q4_matrix_free */
+    /* must not be shallow-copied: owns packed and scales */
 } att1_q4_matrix;
 
 /*

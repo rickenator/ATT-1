@@ -52,17 +52,19 @@ typedef struct att1_model_tensor {
     uint64_t nbytes;
     uint32_t shard_id;
     uint32_t flags;
-    const void *data;
+    const void *data; /* borrows into att1_model.file_data; valid only while
+                         the parent att1_model lives */
 } att1_model_tensor;
 
 typedef struct att1_model {
     att1_model_config config;
     uint64_t tensor_count;
-    att1_model_tensor *tensors;
-    unsigned char *file_data;
+    att1_model_tensor *tensors;   /* owned; freed by att1_model_free */
+    unsigned char *file_data;     /* owned; freed by att1_model_free */
     size_t file_size;
     att1_shard_meta shard_meta;
     att1_tok_meta   tok_meta;   /* present==0 when section absent */
+    /* must not be shallow-copied: owns tensors[] and file_data */
 } att1_model;
 
 /*

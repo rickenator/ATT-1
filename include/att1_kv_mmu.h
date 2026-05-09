@@ -51,8 +51,10 @@ typedef struct att1_kv_mmu_page_ref {
 typedef struct att1_kv_mmu {
     att1_kv_mmu_config config;
     att1_kv_mmu_counters counters;
-    att1_kv_mmu_session *sessions;
-    att1_kv_mmu_page *pages;
+    att1_kv_mmu_session *sessions; /* owned array [config.max_sessions] */
+    att1_kv_mmu_page *pages;       /* owned array [config.max_pages]; each
+                                      page has owned token_present/keys/values */
+    /* must not be shallow-copied: owns sessions and pages (and their members) */
 } att1_kv_mmu;
 
 /*
