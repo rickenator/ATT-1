@@ -501,6 +501,7 @@ The prototype is considered **passing** when all of the following hold:
 | M119 | Hardware/software boundary review | **COMPLETE** — Integrated planning pipeline `compiler/run_aimu_planning_pipeline.py`; 8-stage end-to-end pipeline (placement validation → advisory → command plan → replay → fabric routes → route validation → bandwidth simulation → integrated report); subprocess-based; integrated JSON report with 22 fields; strict/non-strict mode; tested against valid, capacity-fail, and strict early-stop scenarios |
 | M120 | Phase 3 prototype go/no-go review | **COMPLETE** — `docs/aimu_phase3_go_no_go.md`; CONDITIONAL GO decision; Option B (userspace MMIO emulator) recommended next; FPGA deferred; Options D/E not recommended; go/no-go gate criteria defined; M121–M127 next milestone proposals; hardware economic notes for 16/32/64/128 GiB SKUs |
 | M121 | Userspace MMIO/register-file emulator workflow | **COMPLETE** — `include/att1_aimu_userspace.h`, `src/aimu_userspace.c`, `tools/att1-aimu-mmio-emulator.c`, `tests/test_aimu_userspace.c`; mmap-backed 64 KiB BAR0 file; probe→enumerate→cmdq→submit→doorbell→drain→snapshot smoke flow; 15 test cases, 77 assertions; 419 PASS 0 FAIL; memory guardrail enforced (tile capacity is register metadata only, no huge buffer); satisfies Option B from M120; M122 next (replay M113 command plans against this emulator) |
+| M122 | Command-plan replay against userspace MMIO emulator | **COMPLETE** — `tools/att1-aimu-mmio-replay.c`, `compiler/replay_command_plan_via_mmio.py`, `compiler/fixtures/plan_mmio_smoke.json`, `tests/test_aimu_mmio_replay.c`; extends M113 replay path to drive M109 plans through M121 `att1_aimu_userspace` interface; adds `--bar0-file`/`--tiles`/`--tile-memory-mib`/`--kv-memory-mib` CLI; validates BAR0 DEVICE_ID and register-map version after probe; emits text + optional JSON report; 10 test cases; M113 in-process replay path unaffected; M123 next |
 
 ---
 
@@ -779,3 +780,73 @@ open → probe → enumerate tiles → setup_cmdq
 - No huge tile memory buffer allocation (register metadata only).
 - No contention, queuing, or NoC arbitration modelling.
 - M122 next: replay M113 command plans against this emulator.
+
+---
+
+## 16. M122 — Command-Plan Replay Against Userspace MMIO Emulator
+
+### 16.1 Overview
+
+M122 extends the M113 replay path so that M109 command-plan JSON files drive
+the M121 `att1_aimu_userspace` interface instead of the M112
+`att1_aimu_host` harness directly.  This exercises the full emulator code
+path: open → probe → enumerate tiles → setup_cmdq → per-command
+validate_dma/submit_cmd/ring_doorbell/process_one → drain → snapshot →
+get_summary → close.
+
+> This is a userspace emulator replay, NOT real PCIe/hardware.
+> The existing M113 in-process replay path (`att1-aimu-replay`) is unaffected.
+
+### 16.2 Deliverables
+
+| File | Description |
+|------|-------------|
+| `tools/att1-aimu-mmio-replay.c` | C11 CLI tool: reads M109 plan JSON, drives M121 emulator, emits text + JSON report |
+| `compiler/replay_command_plan_via_mmio.py` | Python 3 wrapper: validates plan structure then delegates to C binary |
+| `compiler/fixtures/plan_mmio_smoke.json` | 4-command smoke fixture (NOP, QUERY_COUNTERS, TILE_BARRIER, TRACE_SNAPSHOT, 2 tiles) |
+| `tests/test_aimu_mmio_replay.c` | 10 test cases exercising the M121 emulator API (smoke, completion count, fence monotonicity, doorbell, snapshot, invalid tile, register map version, device ID, tile count register, no-CUDA guard) |
+
+### 16.3 CLI Usage
+
+```bash
+# Basic replay
+./build/att1-aimu-mmio-replay --plan compiler/fixtures/plan_mmio_smoke.json
+
+# With persistent BAR0 file, strict mode, and JSON report
+./build/att1-aimu-mmio-replay \
+    --plan compiler/fixtures/plan_tiny_barrier_trace.json \
+    --bar0-file /tmp/bar0_replay.bin \
+    --tiles 2 \
+    --tile-memory-mib 32 \
+    --kv-memory-mib 8 \
+    --strict \
+    --report-json /tmp/replay_report.json \
+    --verbose
+
+# Python wrapper (validates plan JSON before invoking C binary)
+python3 compiler/replay_command_plan_via_mmio.py \
+    --plan compiler/fixtures/plan_mmio_smoke.json \
+    --bar0-file /tmp/bar0.bin
+```
+
+Exit codes: 0 = pass, 1 = failure/strict violation, 2 = parse/arg error.
+
+### 16.4 Key Implementation Differences from M113
+
+| Aspect | M113 (`att1-aimu-replay`) | M122 (`att1-aimu-mmio-replay`) |
+|--------|--------------------------|--------------------------------|
+| Host API | `att1_aimu_host_*` directly | `att1_aimu_userspace_*` + `u->host` for read_completion |
+| BAR0 file | None | Optional mmap-backed register file |
+| Register validation | None | DEVICE_ID and REGISTER_MAP_VERSION checked after probe |
+| Tile count cap | 64 | 16 (M121 emulator limit) |
+| CLI extra flags | — | `--bar0-file`, `--tile-memory-mib`, `--kv-memory-mib` |
+| Report extra fields | — | `bar0_file`, `mmio_doorbell_count`, `device_id`, `register_map_version`, `mmio_tile_count` |
+
+### 16.5 Non-Goals for M122
+
+- No real PCIe or MMIO hardware access.
+- No Linux kernel driver of any kind.
+- No inference execution, CUDA kernels, or `.att1` format changes.
+- No huge tile memory buffer allocation (register metadata only).
+- M113 in-process replay path unchanged.
+- M123 next.
