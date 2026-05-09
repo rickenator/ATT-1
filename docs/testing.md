@@ -143,3 +143,74 @@ make clean && make && make test   # 781 PASS 0 FAIL
 make regression                   # all 5 layers PASS
 git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)' || echo "PASS: no cache artifacts"
 ```
+
+---
+
+## 7. Sanitizer builds (local hardening, M142)
+
+AddressSanitizer (ASAN) and UndefinedBehaviorSanitizer (UBSAN) targets are
+provided for local hardening. They are **not** part of normal CI and are
+**not** CUDA validation.
+
+### Purpose
+
+These tools catch ownership, lifetime, bounds, and undefined-behavior bugs
+at runtime that are invisible to the normal compiler:
+
+| Tool | Catches |
+|------|---------|
+| ASAN | Heap/stack buffer overflows, use-after-free, double-free, memory leaks |
+| UBSAN | Signed overflow, misaligned pointer deref, null deref, invalid casts, shift errors |
+
+### Usage
+
+```sh
+# AddressSanitizer — build and run all C tests
+make clean && make test-asan
+
+# UndefinedBehaviorSanitizer — build and run all C tests
+make clean && make test-ubsan
+
+# Build both sanitizer variants (does not run tests)
+make sanitizer
+
+# Remove sanitizer build directories
+make clean-sanitizer
+```
+
+Sanitizer artifacts live in `build-asan/` and `build-ubsan/` and are
+completely separate from the normal `build/` directory. Running
+`make clean` does **not** remove them; use `make clean-sanitizer`.
+
+### Flags applied
+
+| Target | Extra flags |
+|--------|------------|
+| `test-asan` | `-fsanitize=address -fno-omit-frame-pointer -g` |
+| `test-ubsan` | `-fsanitize=undefined -fno-omit-frame-pointer -g` |
+
+Both targets force `CUDA=0`. Sanitizer flags are never applied to CUDA
+builds.
+
+### Interpreting failures
+
+If a sanitizer reports a violation:
+
+- **ASAN** prints a stack trace starting with `==ERROR: AddressSanitizer:`.
+  The frame addresses can be symbolised with `addr2line` or by building with
+  `-g` (already included).
+- **UBSAN** prints `runtime error:` with a file/line reference. Fix the
+  reported undefined behavior before the next commit.
+
+Sanitizer failures that do not reproduce in the normal build indicate a
+real latent bug. Fix before merging.
+
+### Relationship to CI
+
+| | Normal CI | Sanitizer targets |
+|---|---|---|
+| Runs automatically on push | ✓ | ✗ — local only |
+| CUDA required | ✗ | ✗ |
+| Separate build dir | ✗ | ✓ (`build-asan/`, `build-ubsan/`) |
+| Part of `make regression` | ✗ | ✗ |
+| Required to pass before release | recommended | recommended |

@@ -94,7 +94,7 @@ AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJ
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test test-verbose regression bak restore
+.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -204,6 +204,43 @@ restore:
 		--exclude='models/*.gguf' \
 		--exclude='models/*.safetensors' \
 		"$(BAK_DEST)/" ./
+
+# M142: ASAN / UBSAN sanitizer build targets (CPU-only, separate build dirs)
+# These targets use dedicated build directories so sanitizer artifacts never
+# contaminate the normal build/.
+# Usage:
+#   make clean && make test-asan    # AddressSanitizer
+#   make clean && make test-ubsan   # UndefinedBehaviorSanitizer
+#   make sanitizer                  # build both (does not run tests)
+#   make clean-sanitizer            # remove build-asan/ and build-ubsan/
+BUILD_ASAN  := build-asan
+BUILD_UBSAN := build-ubsan
+ASAN_FLAGS  := -fsanitize=address -fno-omit-frame-pointer -g
+UBSAN_FLAGS := -fsanitize=undefined -fno-omit-frame-pointer -g
+
+asan:
+	$(MAKE) CUDA=0 BUILD_DIR=$(BUILD_ASAN) CFLAGS="$(CFLAGS) $(ASAN_FLAGS)" all
+
+ubsan:
+	$(MAKE) CUDA=0 BUILD_DIR=$(BUILD_UBSAN) CFLAGS="$(CFLAGS) $(UBSAN_FLAGS)" all
+
+sanitizer: asan ubsan
+
+test-asan:
+	$(MAKE) CUDA=0 all
+	$(MAKE) CUDA=0 BUILD_DIR=$(BUILD_ASAN) CFLAGS="$(CFLAGS) $(ASAN_FLAGS)" test
+
+test-ubsan:
+	$(MAKE) CUDA=0 all
+	$(MAKE) CUDA=0 BUILD_DIR=$(BUILD_UBSAN) CFLAGS="$(CFLAGS) $(UBSAN_FLAGS)" test
+
+clean-asan:
+	rm -rf $(BUILD_ASAN)
+
+clean-ubsan:
+	rm -rf $(BUILD_UBSAN)
+
+clean-sanitizer: clean-asan clean-ubsan
 
 clean:
 	rm -rf $(BUILD_DIR)
