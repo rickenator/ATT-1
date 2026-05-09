@@ -214,3 +214,100 @@ real latent bug. Fix before merging.
 | Separate build dir | ✗ | ✓ (`build-asan/`, `build-ubsan/`) |
 | Part of `make regression` | ✗ | ✗ |
 | Required to pass before release | recommended | recommended |
+
+---
+
+## 8. Fuzz/smoke harness (local hardening, M143)
+
+### Purpose
+
+The fuzz/smoke harness validates that hostile or malformed inputs are
+**correctly rejected** by the binary model loader and the JSON schema
+validators.  It is distinct from sanitizer builds:
+
+| Concern | Sanitizer builds (§7) | Fuzz/smoke (§8) |
+|---|---|---|
+| Catches memory safety bugs | ✓ | ✗ |
+| Catches incorrect acceptance of malformed input | ✗ | ✓ |
+| Randomised / long-running | ✗ | ✗ (deterministic only) |
+
+The harness is CPU-only, deterministic, and completes in under 10 seconds.
+
+### Usage
+
+```sh
+# Run both harnesses (recommended before a release)
+make fuzz-smoke
+
+# C binary loader harness only
+make fuzz-loader
+
+# Python JSON schema mutation harness only
+make fuzz-json
+```
+
+### C binary loader harness (`fuzz-loader`)
+
+Source: `tests/fuzz_model_loader.c`
+Binary: `build/fuzz_model_loader`
+
+Builds minimal ATT-1 binary blobs in memory, writes them to `/tmp`, and
+calls `att1_model_load()` on each.  Seed corpus (all inline — no external
+seed files required):
+
+| Case | Expected outcome |
+|------|-----------------|
+| Minimal valid V1 (no tensors) | accepted (status 0) |
+| `models/dummy/model.att1`     | accepted (status 0) |
+| Empty file                    | rejected |
+| 7-byte truncation (below magic) | rejected |
+| 40-byte truncation (incomplete header) | rejected |
+| Bad magic bytes               | rejected |
+| Version = 0                   | rejected |
+| Version = 99 (future)         | rejected |
+| V1 header_size mismatch       | rejected |
+| config_size = 0               | rejected |
+| config_size too large         | rejected |
+| config_offset = UINT64_MAX    | rejected |
+| data_offset = UINT64_MAX      | rejected |
+| tensor_count = UINT64_MAX     | rejected |
+| shard_size without shard_offset | rejected |
+| All-zeros file                | rejected |
+
+### Python JSON schema harness (`fuzz-json`)
+
+Source: `compiler/fuzz_json_schemas.py`
+
+Drives `compiler/check_hostile_inputs.py` (M135) against:
+
+1. **All 27 hostile fixtures** in `compiler/fixtures/hostile/` — each must
+   be rejected (non-zero exit).
+2. **Valid baseline fixtures** (`placement_report_valid.json`,
+   `exec_plan_valid_tiny.json`) — each must pass (exit 0).
+3. **Inline-generated mutation seeds** (truncated JSON, wrong types,
+   negative counts, future versions, deeply nested garbage, etc.) — each
+   must be rejected.
+
+### Adding new seeds
+
+- **C loader seeds**: add a mutation block in `tests/fuzz_model_loader.c`
+  using the `RUN()` macro.
+- **JSON seeds**: add a new entry to `_MUTATIONS` in
+  `compiler/fuzz_json_schemas.py`, or add a new JSON file to
+  `compiler/fixtures/hostile/`.
+
+### Longer fuzz runs
+
+Integration with coverage-guided fuzzers (libFuzzer, AFL++) is planned as
+future work.  The current harness provides a fast deterministic smoke screen
+only.
+
+### Relationship to CI
+
+| | Normal CI | Fuzz/smoke |
+|---|---|---|
+| Runs automatically on push | ✓ | ✗ — local only |
+| CUDA required | ✗ | ✗ |
+| Part of `make test` | ✗ | ✗ |
+| Part of `make regression` | ✗ | ✗ |
+| Required to pass before release | recommended | recommended |

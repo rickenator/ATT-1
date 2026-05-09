@@ -94,7 +94,7 @@ AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJ
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer
+.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-smoke
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -241,6 +241,27 @@ clean-ubsan:
 	rm -rf $(BUILD_UBSAN)
 
 clean-sanitizer: clean-asan clean-ubsan
+
+# M143: Fuzz/smoke harness targets (CPU-only, local hardening only).
+# These are deterministic smoke tests that verify the binary model loader and
+# JSON schema validators correctly reject malformed/hostile input.
+# Usage:
+#   make fuzz-loader            # build and run C binary loader harness
+#   make fuzz-json              # run Python JSON schema mutation harness
+#   make fuzz-smoke             # run both (fast, < 10 seconds)
+FUZZ_LOADER_BIN  := $(BUILD_DIR)/fuzz_model_loader
+FUZZ_LOADER_OBJS := $(BUILD_DIR)/$(TEST_DIR)/fuzz_model_loader.o $(COMMON_OBJS)
+
+$(FUZZ_LOADER_BIN): $(FUZZ_LOADER_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+fuzz-loader: $(FUZZ_LOADER_BIN)
+	$(FUZZ_LOADER_BIN)
+
+fuzz-json:
+	python3 compiler/fuzz_json_schemas.py
+
+fuzz-smoke: fuzz-loader fuzz-json
 
 clean:
 	rm -rf $(BUILD_DIR)
