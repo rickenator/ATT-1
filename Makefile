@@ -94,7 +94,7 @@ AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJ
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test test-verbose bak restore
+.PHONY: all clean test test-verbose regression bak restore
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -146,6 +146,13 @@ test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REP
 		printf '\n=== %s ===\n' "$$test_bin"; \
 		./$$test_bin || exit $$?; \
 	done
+
+# M136: deterministic local regression runner (CPU-only by default)
+# Runs: make clean, make, make test, then all Python validation layers.
+# Pass --cuda for CUDA signoff (requires RTX 3090-class host).
+# Pass --report-json FILE to write a machine-readable summary.
+regression:
+	python3 compiler/run_full_regression.py
 
 bak:
 	@echo "Backing up ATT-1 to $(BAK_DEST)"
