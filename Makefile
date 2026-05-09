@@ -34,7 +34,8 @@ TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer cuda_cluster cuda_bench \
      q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4 cluster_infer_q4 q4_bench cuda_matmul_q4 cuda_infer_q4 cuda_cluster_infer_q4 \
      aimu_cmdq aimu_device aimu_dma aimu_trace aimu_mmio aimu_host aimu_userspace aimu_mmio_replay aimu_mem \
-     aimu_exec
+     aimu_exec \
+     aimu_mmio_regression
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
