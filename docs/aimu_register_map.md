@@ -1375,6 +1375,85 @@ evidence that a command plan ran correctly:
 
 ---
 
+## 17. M111 In-Process MMIO / Register-File Simulator
+
+Milestone 111 implements the full 64 KiB BAR0 register-file described in
+§§ 2–9 above as an in-process C11 simulator.
+
+### Deliverables
+
+| File | Role |
+|------|------|
+| `include/att1_aimu_mmio.h` | Header: BAR0 offset constants, bit definitions, `att1_aimu_mmio` struct, public API |
+| `src/aimu_mmio.c` | Implementation: register access enforcement, WO side-effects, snapshot trigger, render |
+| `tests/test_aimu_mmio.c` | 40+ unit tests covering all API paths |
+
+### Design Overview
+
+**Backing store.**  A flat `uint32_t regs[16384]` heap array (64 KiB) is
+indexed by `offset / 4`.  There is no hardware access path; reads and writes
+are pure in-process memory operations.
+
+**Access type enforcement.**  `mmio_access_type(offset)` returns one of
+`ACCESS_RO`, `ACCESS_RW`, `ACCESS_RW1C`, `ACCESS_WO`, or `ACCESS_RESERVED`
+for every BAR0 offset.  `write32` enforces these as follows:
+
+| Access type | read32 behaviour | write32 behaviour |
+|-------------|-----------------|-------------------|
+| `ACCESS_RO` | returns backing store | returns `ATT1_ERR_UNSUPPORTED` |
+| `ACCESS_RW` | returns backing store | stores value (with SNAP_NOW hook for `COUNTER_SNAPSHOT_CONTROL`) |
+| `ACCESS_RW1C` | returns backing store | `regs[off/4] &= ~value` |
+| `ACCESS_WO` | returns `0` | dispatches to `mmio_wo_write()`, not stored |
+| `ACCESS_RESERVED` | returns `0xDEADBEEF` | discarded, returns `ATT1_OK` |
+
+**WO register side-effects.**
+
+| Register | Side-effect |
+|----------|-------------|
+| `GLOBAL_CONTROL` | Toggles `GLOBAL_STATUS.DEVICE_READY` and `TRACE_ACTIVE` based on ENABLE_/DISABLE_ trigger bits |
+| `RESET_CONTROL` | `SOFT_RESET_ALL`: calls `att1_aimu_device_reset`, re-runs `mmio_set_defaults` + all three `sync_from_*` passes.  `RESET_COUNTERS`: `memset`s counter cells (0xB8 bytes at `0x4000`) and calls `att1_aimu_trace_reset`.  `RESET_TRACE`: zeroes `TRACE_WRITE_PTR` and `TRACE_DROPPED_EVENTS`. |
+| `CQ_DOORBELL` | Increments `m->doorbell_write_count`; stores value[15:0] into `CQ_TAIL` backing cell. |
+| `TILE_RESET_CONTROL[N]` | Calls `att1_aimu_device_reset_tile(dev, N)` then re-runs `sync_from_device`. |
+
+**COUNTER_SNAPSHOT_CONTROL (RW, SNAP_NOW self-clearing).**  Bit 0 (`SNAP_NOW`)
+is not stored in the backing register.  A write with `SNAP_NOW=1`:
+1. Increments `m->snapshot_trigger_count`.
+2. Calls `att1_aimu_trace_snapshot_all()` if a trace is attached, or
+   `sync_from_cmdq()` if only a cmdq is attached.
+3. Stores `value & ~SNAP_NOW` in the backing cell.
+
+**Synchronisation (`att1_aimu_mmio_sync`).**  Populates architectural defaults,
+then calls `sync_from_device`, `sync_from_cmdq`, and `sync_from_trace` in
+that order.  `sync_from_trace` overrides cmdq-sourced counter cells with
+trace-snapshot values when a non-empty snapshot is available.
+
+**64-bit helpers.**  `read64` and `write64` validate 8-byte alignment,
+then delegate to two `read32`/`write32` calls on the LOW and HIGH registers
+respectively.
+
+### What is Not Implemented
+
+The simulator deliberately omits:
+
+* Real PCIe MMIO mapping (no `/dev/mem`, `mmap`, or kernel driver).
+* Hardware interrupt delivery (MSI/MSI-X).
+* DMA engine execution (M107 models the descriptor queue; no real PCIe DMA).
+* Multi-function device or secondary BAR windows.
+* Hardware timing or power state simulation.
+* Concurrent host-thread MMIO safety (single-threaded use assumed for now).
+
+### Key Constants
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `ATT1_AIMU_MMIO_MAGIC` | `0xA771BB10` | Struct validity cookie |
+| `ATT1_AIMU_MMIO_BAR0_SIZE` | `0x10000` | 64 KiB register space |
+| `ATT1_AIMU_MMIO_NREGS` | `16384` | Backing store entries |
+| `ATT1_AIMU_MMIO_RESERVED_RD` | `0xDEADBEEF` | Reserved-offset read sentinel |
+| `ATT1_MMIO_DEVICE_ID_DEFAULT` | `(0xA771 << 16) \| 0x0001` | Vendor 0xA771, class 0x0001 |
+
+---
+
 ## Appendix A: BAR0 Register Map Summary
 
 | Offset range | Region |
