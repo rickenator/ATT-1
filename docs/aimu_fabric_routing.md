@@ -896,8 +896,135 @@ The following are explicitly outside M114 scope:
 | Milestone | Title | Scope |
 |---|---|---|
 | M115 | Fabric route schema and report | Define JSON route descriptor schema (§2.1 fields); `compiler/map_placement_to_fabric_routes.py` reads M109 command plan and emits a `routes` array; `--report-json` option; smoke test: valid plan round-trips, route count matches command count, broadcast route detected |
-| M116 | Fabric route validator | `compiler/validate_fabric_routes.py` checks all 12 rules (F1–F12); exit 0=pass, 1=violations, 2=parse error; fixture set covers each rule; smoke test: 12 cases |
+| M116 | Fabric route validator | `compiler/validate_fabric_routes.py` checks all 12 rules (F1–F12); exit 0=pass, 1=violations, 2=parse error; fixture set covers each rule; smoke test: 12 cases — **complete** |
 | M117 | Command-plan-to-fabric-route mapper | Extend M109 `map_placement_to_commands.py` output with a `routes` section populated from `routing_requirement` and `reduction_behavior` placement fields; F6 check integrated |
 | M118 | Fabric bandwidth/latency simulator | Extend Phase 1 `att1_fabric_t` with per-packet-type counters and per-route byte accounting; add rule F10 bandwidth check to `att1_fabric_send`/`att1_fabric_broadcast`; no inference behavior change |
 | M119 | Placement + command + fabric replay integration | Extend M113 `tools/att1-aimu-replay.c` to parse and replay `routes` section; emit per-route packet/byte/latency statistics in `--report-json` |
 | M120 | Phase 3 prototype go/no-go review | Cross-document design review covering M103–M119; gap analysis for Phase 3 ASIC; recommended silicon architecture changes; non-goals for Phase 2 close-out |
+
+---
+
+## 12. Fabric Route Validator (Milestone 116)
+
+`compiler/validate_fabric_routes.py` implements structural and semantic
+validation of M115 fabric route report JSON files.  The validator runs
+entirely in Python 3 without external dependencies, performs no route
+execution, and does not access real PCIe/MMIO registers.
+
+### 12.1 Validator Overview
+
+| Property | Value |
+|---|---|
+| Tool path | `compiler/validate_fabric_routes.py` |
+| Input schema | M115 fabric route report JSON (§11) |
+| Exit 0 | Validation passed (zero errors; warnings may be present) |
+| Exit 1 | Validation failed (one or more errors) |
+| Exit 2 | Parse error (malformed JSON or missing required fields) |
+
+CLI:
+
+```
+python3 compiler/validate_fabric_routes.py \
+    --report <PATH> \
+    [--report-json <OUTPUT_PATH>] \
+    [--strict]
+```
+
+`--strict` promotes all warnings to errors and treats
+`header.status != "pass"` as an error.
+
+### 12.2 Validation Phases
+
+| Phase | Checks performed |
+|---|---|
+| Header | `route_report_version` present and supported; `tile_count > 0`; `route_count` non-negative; `packet_count_estimate` non-negative; `payload_bytes_estimate` non-negative; `status` recognized |
+| Route records | `route_id` present and unique; `route_type` recognized (8 types); `source_tile` in `[0, tile_count)`; `destination_tiles` non-empty for data/barrier types; no self-routing for send/reduce types; `payload_bytes > 0` for data routes; `packet_count_estimate > 0` for data routes; `reduction_behavior` present and recognized; explicit reduction behavior for `PARTIAL_REDUCE` / `LOGITS_REDUCE`; `reduction_id` present for reduction routes; `ordering_policy` recognized; `TILE_BARRIER` must use `barriered` ordering; `route_status` recognized |
+| Per-tile summaries | `tile_id` unique and in `[0, tile_count)`; all counter fields non-negative integers; `estimated_bandwidth_gib_sec` finite and non-negative when present |
+| Consistency | `header.route_count` matches actual route list length; per-tile `outbound_packet_count` and `inbound_packet_count` reconciled against route records (warnings on mismatch); `warnings`/`failures` lists are arrays |
+
+### 12.3 Rule Coverage
+
+Rules F1–F12 from §7 are covered as follows:
+
+| Rule | Code | Phase | Error / Warning |
+|---|---|---|---|
+| F1 | `INVALID_TILE_TARGET` | Route records | Error |
+| F2 | `EMPTY_DESTINATION` | Route records | Error |
+| F3 | `ZERO_PAYLOAD` | Route records | Error |
+| F4 | `UNSUPPORTED_PACKET_TYPE` | Route records | Error |
+| F5 | `REDUCTION_NOT_EXPLICIT` | Route records | Error |
+| F6 | `ROUTE_COUNT_MISMATCH` | Consistency | Error |
+| F7 | (cyclic dependency — static schema only; no DAG check) | — | — |
+| F8 | `BARRIER_ORDERING` | Route records | Error |
+| F9 | (fence ordering — requires command plan; not checked here) | — | — |
+| F10 | (bandwidth — requires timing model; not checked here) | — | — |
+| F11 | (concat completeness — requires multi-report context) | — | — |
+| F12 | `REDUCTION_NOT_EXPLICIT` / `MISSING_REDUCTION_ID` | Route records | Error |
+
+Rules F7, F9, F10, F11 require runtime or multi-report context and are
+deferred to M117–M120.
+
+### 12.4 Diagnostic Codes
+
+| Code | Severity | Meaning |
+|---|---|---|
+| `MISSING_HEADER` | error | No `header` key |
+| `MISSING_VERSION` | error | `route_report_version` absent |
+| `UNSUPPORTED_VERSION` | error | Version not in supported set |
+| `MISSING_TILE_COUNT` | error | `header.tile_count` absent |
+| `INVALID_TILE_COUNT` | error | `tile_count` not a positive integer |
+| `MISSING_ROUTE_COUNT` | error | `header.route_count` absent |
+| `MISSING_STATUS` | error | `header.status` absent |
+| `INVALID_STATUS` | error | `status` not in valid set |
+| `STRICT_STATUS_NOT_PASS` | error | `--strict` and `status != pass` |
+| `MISSING_ROUTES` | error | No top-level `routes` key |
+| `INVALID_ROUTE_ITEM` | error | Route element is not an object |
+| `MISSING_ROUTE_ID` | error | `route_id` absent |
+| `DUPLICATE_ROUTE_ID` | error | `route_id` seen more than once |
+| `MISSING_ROUTE_TYPE` | error | `route_type` absent |
+| `UNSUPPORTED_PACKET_TYPE` | error | `route_type` not recognized |
+| `INVALID_TILE_TARGET` | error | `source_tile` or destination tile out of range |
+| `EMPTY_DESTINATION` | error | `destination_tiles` null/empty for non-trace types |
+| `SELF_ROUTE` | error | source equals destination for send/reduce types |
+| `ZERO_PAYLOAD` | error | `payload_bytes=0` for a data route |
+| `ZERO_PACKET_COUNT` | error | `packet_count_estimate=0` for a data route |
+| `MISSING_REDUCTION_BEHAVIOR` | error | `reduction_behavior` absent |
+| `UNKNOWN_REDUCTION_BEHAVIOR` | error | Value not in valid set |
+| `REDUCTION_NOT_EXPLICIT` | error | Reduction route uses `none`/`pass_through` |
+| `MISSING_REDUCTION_ID` | error | `reduction_id` absent for reduction route |
+| `MISSING_ORDERING_POLICY` | error | `ordering_policy` absent |
+| `UNKNOWN_ORDERING_POLICY` | error | Value not in valid set |
+| `BARRIER_ORDERING` | error | `TILE_BARRIER` without `barriered` policy |
+| `MISSING_ROUTE_STATUS` | error | `route_status` absent |
+| `MISSING_TILES` | error | No top-level `tiles` key |
+| `INVALID_TILE_ITEM` | error | Tile element is not an object |
+| `MISSING_TILE_ID` | error | `tile_id` absent |
+| `INVALID_TILE_ID` | error | `tile_id` out of range or wrong type |
+| `DUPLICATE_TILE_ID` | error | `tile_id` seen more than once |
+| `MISSING_TILE_FIELD` | error | Required counter field absent |
+| `INVALID_TILE_FIELD` | error | Counter field not a non-negative integer |
+| `INVALID_BANDWIDTH` | error | `estimated_bandwidth_gib_sec` is negative or non-finite |
+| `ROUTE_COUNT_MISMATCH` | error | `header.route_count` != actual list length |
+| `TILE_OUTBOUND_MISMATCH` | warning | Per-tile outbound packet count differs from route sum |
+| `TILE_INBOUND_MISMATCH` | warning | Per-tile inbound packet count differs from route sum |
+| `INVALID_DIAG_LIST` | error | `warnings` or `failures` is not an array |
+
+### 12.5 Fixtures
+
+| Fixture path | Expected result | Triggers |
+|---|---|---|
+| `compiler/fixtures/fabric_route_report_tiny.json` | pass | — (valid) |
+| `compiler/fixtures/fabric_route_invalid_tile.json` | fail | `INVALID_TILE_TARGET` (dest tile 99, tile_count 2) |
+| `compiler/fixtures/fabric_route_duplicate_id.json` | fail | `DUPLICATE_ROUTE_ID` (two routes with route_id=1) |
+| `compiler/fixtures/fabric_route_zero_payload.json` | fail | `ZERO_PAYLOAD` (ACTIVATION_SEND with payload_bytes=0) |
+| `compiler/fixtures/fabric_route_missing_reduction.json` | fail | `REDUCTION_NOT_EXPLICIT` (PARTIAL_REDUCE with reduction_behavior="none") |
+| `compiler/fixtures/fabric_route_count_mismatch.json` | fail | `ROUTE_COUNT_MISMATCH` (header says 5, list has 1) |
+
+### 12.6 Non-Goals for M116
+
+- No route execution or fabric simulation.
+- No DAG cycle detection (F7) — requires full dependency graph from M117.
+- No fence ordering validation (F9) — requires command plan context.
+- No bandwidth validation (F10) — requires timing model from M118.
+- No concat completeness validation (F11) — requires multi-route context.
+- No C, Makefile, binary format, or inference behavior changes.
