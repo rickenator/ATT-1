@@ -500,6 +500,7 @@ The prototype is considered **passing** when all of the following hold:
 | M118 | Prototype bill-of-materials / board options review | Compare development board options (Alveo U50, Agilex F-Series, custom PCIe card); supply chain, cost, and timeline estimates for Option C/D |
 | M119 | Hardware/software boundary review | **COMPLETE** — Integrated planning pipeline `compiler/run_aimu_planning_pipeline.py`; 8-stage end-to-end pipeline (placement validation → advisory → command plan → replay → fabric routes → route validation → bandwidth simulation → integrated report); subprocess-based; integrated JSON report with 22 fields; strict/non-strict mode; tested against valid, capacity-fail, and strict early-stop scenarios |
 | M120 | Phase 3 prototype go/no-go review | **COMPLETE** — `docs/aimu_phase3_go_no_go.md`; CONDITIONAL GO decision; Option B (userspace MMIO emulator) recommended next; FPGA deferred; Options D/E not recommended; go/no-go gate criteria defined; M121–M127 next milestone proposals; hardware economic notes for 16/32/64/128 GiB SKUs |
+| M121 | Userspace MMIO/register-file emulator workflow | **COMPLETE** — `include/att1_aimu_userspace.h`, `src/aimu_userspace.c`, `tools/att1-aimu-mmio-emulator.c`, `tests/test_aimu_userspace.c`; mmap-backed 64 KiB BAR0 file; probe→enumerate→cmdq→submit→doorbell→drain→snapshot smoke flow; 15 test cases, 77 assertions; 419 PASS 0 FAIL; memory guardrail enforced (tile capacity is register metadata only, no huge buffer); satisfies Option B from M120; M122 next (replay M113 command plans against this emulator) |
 
 ---
 
@@ -701,3 +702,80 @@ stage outcome:
 - No CUDA kernels or runtime scheduler changes.
 - No new C or Makefile changes.
 - No contention, queuing, or NoC arbitration modelling (deferred to M120 review).
+
+---
+
+## 15. M121 — Userspace MMIO/Register-File Emulator Workflow
+
+### 15.1 Overview
+
+M121 implements Option B from the M120 Phase 3 go/no-go review: expose the
+M111 AIMU MMIO/register-file simulator through a userspace workflow backed by
+a mmap'd file.  This allows host-side code to probe the simulated device,
+enumerate tile registers, submit commands, drain completions, and snapshot
+counters **without a Linux kernel driver or real PCIe hardware**.
+
+> This is a userspace emulator workflow, not real PCIe/MMIO hardware.
+
+### 15.2 Deliverables
+
+| File | Description |
+|------|-------------|
+| `include/att1_aimu_userspace.h` | API header for the userspace emulator |
+| `src/aimu_userspace.c` | Implementation; wraps M112 `att1_aimu_host` |
+| `tools/att1-aimu-mmio-emulator.c` | CLI tool: `--bar0-file`, `--tiles`, `--tile-memory-mib`, `--kv-memory-mib`, `--run-smoke`, `--report-json`, `--verbose` |
+| `tests/test_aimu_userspace.c` | 15 test cases, 77 assertions |
+
+### 15.3 BAR0 mmap-backed file
+
+When `att1_aimu_userspace_open()` is called with a non-NULL `bar0_path`, the
+implementation creates or opens the file, `ftruncate`s it to 64 KiB
+(`ATT1_AIMU_MMIO_BAR0_SIZE`), and `mmap`s it `MAP_SHARED`.  After every
+state-changing operation, `memcpy` copies the MMIO register array into the
+mmap'd buffer and `msync` flushes to disk.
+
+Register reads and writes always route through M111 MMIO simulator semantics
+(RO enforcement, WO side-effects, RW1C clear-on-write) — **not** through raw
+unchecked mmap buffer mutation.
+
+If `bar0_path` is NULL, the emulator runs entirely in memory without creating
+any file.
+
+### 15.4 Memory guardrail
+
+Tile memory capacity (`tile_memory_bytes`) is stored as register metadata in
+`TILE_MEMORY_CAPACITY_LOW/HIGH` MMIO registers only.  **No buffer of that
+size is ever allocated.**  DMA descriptors are validated descriptor-only
+(64-byte mock, no actual tensor data).  Tests stay well under 1 GiB RAM.
+
+> Memory capacity is metadata/register-only.
+
+### 15.5 Smoke flow
+
+```
+open → probe → enumerate tiles → setup_cmdq
+  → submit NOP → submit LOAD_TENSOR_TILE (64-byte descriptor)
+  → submit VALIDATE_TENSOR → submit QUERY_COUNTERS
+  → ring doorbell → drain → snapshot → print summary → close
+```
+
+### 15.6 CLI tool usage
+
+```bash
+./build/att1-aimu-mmio-emulator \
+    --bar0-file /tmp/bar0.bin \
+    --tiles 4 \
+    --tile-memory-mib 32 \
+    --kv-memory-mib 8 \
+    --run-smoke \
+    --verbose
+```
+
+### 15.7 Non-Goals for M121
+
+- No real PCIe or MMIO hardware access.
+- No Linux kernel driver of any kind.
+- No inference execution, CUDA kernels, or `.att1` format changes.
+- No huge tile memory buffer allocation (register metadata only).
+- No contention, queuing, or NoC arbitration modelling.
+- M122 next: replay M113 command plans against this emulator.
