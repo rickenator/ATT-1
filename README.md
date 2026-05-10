@@ -104,7 +104,8 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 | CUDA signoff policy | [docs/CUDA_VALIDATION_PLAN.md](docs/CUDA_VALIDATION_PLAN.md) |
 | Release / review readiness | [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) |
 | External reviewer package | [docs/EXTERNAL_REVIEW_PACKAGE.md](docs/EXTERNAL_REVIEW_PACKAGE.md) |
-| Reference Manual (M146) | [docs/ATT1_REFERENCE_MANUAL.md](docs/ATT1_REFERENCE_MANUAL.md) |
+| ATT-1 Reference Manual (M146) | [docs/ATT1_REFERENCE_MANUAL.md](docs/ATT1_REFERENCE_MANUAL.md) |
+| AIMU Operations Reference (M147) | [docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) |
 | Milestone history | [docs/OPERATION_LOG.md](docs/OPERATION_LOG.md) |
 
 ## Artifact Policy

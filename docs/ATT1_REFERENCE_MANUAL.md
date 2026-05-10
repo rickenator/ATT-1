@@ -985,8 +985,9 @@ The following are explicitly outside the scope of ATT-1:
 | Milestone | Title | Status |
 |-----------|-------|--------|
 | M147 | AIMU Intrinsics and Operations Reference Manual | Complete — [docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) |
-| M148 (future) | API refactor: migrate `int`-returning init functions to `att1_status_t` | Deferred |
-| M149+ | Additional fuzzing, regression expansion, or hardware prototype work | TBD |
+| M148 | Reference manual consistency pass: cross-check README, INDEX, both reference manuals, RELEASE_READINESS, EXTERNAL_REVIEW_PACKAGE, testing, CUDA validation, and OPERATION_LOG for link consistency, terminology, and status accuracy | Complete — see `docs/OPERATION_LOG.md` |
+| M149 (future) | API refactor: migrate `int`-returning init functions to `att1_status_t`; opacify `att1_kv_mmu` struct; resolve alias duplicates in `att1_status.h` | Deferred |
+| M150+ | Additional fuzzing, regression expansion, or hardware prototype work | TBD |
 
 See `docs/OPERATION_LOG.md` for the full milestone history and
 `docs/RELEASE_READINESS.md` for the current readiness gate status.

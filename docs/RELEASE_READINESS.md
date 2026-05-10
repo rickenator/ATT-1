@@ -273,13 +273,12 @@ Run through this list before sending the repository to any external party.
 
 ## 11. Recommended Next Milestones
 
+Milestones M140–M147 are complete. See `docs/OPERATION_LOG.md` for their full entries.
+
 | Milestone | Working title | Scope |
 |-----------|---------------|-------|
-| M140 | README and doc navigation cleanup | Update `README.md` to reflect current capabilities; add doc index |
-| M141 | API and header ownership review | Audit public headers for internal types leaking into the public API |
-| M142 | ASAN/UBSAN local target | Add `make asan` and `make ubsan` Makefile targets for local sanitizer runs |
-| M143 | Loader and parser fuzzing harness | Add a minimal libFuzzer or AFL harness targeting the `.att1` loader |
-| M144 | Public demo script for tiny fixtures | A single-command script that runs a complete inference demo on `models/dummy/` |
-| M145 | External reviewer package checklist | `docs/EXTERNAL_REVIEW_PACKAGE.md`: included/excluded materials, pre-review validation commands, reviewer quick-start, focus areas, safe sharing notes |
-| M146 | ATT-1 Reference Manual | `docs/ATT1_REFERENCE_MANUAL.md`: 15-section reference covering artifact format, runtime API, backends, inference modes, CLI tools, conversion flow, planning pipeline, testing policy, error codes, non-goals |
-| M147 | AIMU Intrinsics and Operations Reference Manual | `docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md`: 17-section reference covering command packets, EXEC/LOAD/VALIDATE/KV/FABRIC/TRACE semantics, DMA descriptor model, MMIO/register map, dtype/op bitmasks, tensor placement, result codes, replay tools, implemented vs future |
+| M148 | Reference manual consistency pass | Cross-check README, docs index, both reference manuals, RELEASE_READINESS, EXTERNAL_REVIEW_PACKAGE, testing, CUDA validation, and OPERATION_LOG for link consistency, terminology, milestone references, and stale claims — **current milestone** |
+| M149 | API opacity and refactor plan | Migrate `int`-returning init functions to `att1_status_t`; opacify `att1_kv_mmu` struct; resolve alias duplicates in `att1_status.h` |
+| M150 | Public reviewer quickstart polish | Final reviewer quickstart refinements and pre-release packaging review |
+| M151 | Deeper fuzzing and coverage | libFuzzer / AFL++ integration; coverage measurement; expand hostile-input fixture set |
+| M152 | Hardware prototype go/no-go review | Review `docs/aimu_phase3_go_no_go.md` criteria against Phase 1 completion state |

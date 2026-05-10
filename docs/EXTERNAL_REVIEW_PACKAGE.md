@@ -270,17 +270,16 @@ All checks must produce `OK` or an empty result before sharing.
 
 ---
 
-## 11. Future Reference Manuals
+## 11. Reference Manuals
 
-The following reference documents are planned for future milestones:
+The following formal reference documents are complete and available in `docs/`:
 
-| Planned document | Milestone | Description |
-|------------------|-----------|-------------|
-| ATT-1 Reference Manual | M146 | Complete C API reference, `.att1` format specification, runtime semantics, backend selection matrix, KV-cache MMU design, quantization pipeline |
-| AIMU Intrinsics and Operations Reference Manual | M147 | AIMU command set reference, MMIO register map, fabric packet format, DMA protocol, execution phases, simulator correspondence |
+| Document | Milestone | File | Description |
+|----------|-----------|------|-------------|
+| ATT-1 Reference Manual | M146 | [ATT1_REFERENCE_MANUAL.md](ATT1_REFERENCE_MANUAL.md) | Complete C API reference, `.att1` format specification, runtime semantics, backend selection matrix, KV-cache MMU design, quantization pipeline |
+| AIMU Intrinsics and Operations Reference Manual | M147 | [AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) | AIMU command set reference, MMIO register map, fabric packet format, DMA protocol, execution phases, simulator correspondence |
 
-These manuals are not required for the current review package. The documentation
-in `docs/` covers the same material in milestone-oriented form.
+Both manuals are included in the review package and cross-reference each other.
 
 ---
 
