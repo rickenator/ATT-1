@@ -7,7 +7,7 @@ control-plane pipeline, testing policy, and artifact hygiene.
 
 **Not in scope:** AIMU intrinsics, AIMU command set, MMIO register map, DMA
 protocol, fabric packet format, and execution phases are documented separately
-in the AIMU Intrinsics and Operations Reference Manual (M147).
+in the [AIMU Intrinsics and Operations Reference Manual](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) (M147).
 
 ---
 
@@ -984,7 +984,7 @@ The following are explicitly outside the scope of ATT-1:
 
 | Milestone | Title | Status |
 |-----------|-------|--------|
-| M147 | AIMU Intrinsics and Operations Reference Manual | Planned |
+| M147 | AIMU Intrinsics and Operations Reference Manual | Complete — [docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) |
 | M148 (future) | API refactor: migrate `int`-returning init functions to `att1_status_t` | Deferred |
 | M149+ | Additional fuzzing, regression expansion, or hardware prototype work | TBD |
 

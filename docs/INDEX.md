@@ -117,6 +117,7 @@ in `docs/` unless noted otherwise.
 | Document | Description |
 |----------|-------------|
 | [ATT1_REFERENCE_MANUAL.md](ATT1_REFERENCE_MANUAL.md) | ATT-1 Reference Manual (M146): artifact format, runtime API, backends, inference modes, CLI tools, conversion flow, planning pipeline, testing policy, error codes, non-goals |
+| [AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) | AIMU Intrinsics and Operations Reference Manual (M147): command packets, EXEC/LOAD/VALIDATE/KV/FABRIC/TRACE semantics, DMA descriptor model, MMIO/register map, dtype/op bitmasks, tensor placement implications, result codes, replay tools, implemented vs future |
 
 ---
 

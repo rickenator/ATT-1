@@ -143,9 +143,7 @@ docs/        Documentation (see docs/INDEX.md)
   modes, CLI tools, conversion flow, planning pipeline, testing policy, error codes,
   non-goals. See [docs/ATT1_REFERENCE_MANUAL.md](docs/ATT1_REFERENCE_MANUAL.md).
 
-## Future Manuals
-
-The following reference documents are planned but not yet written:
-
-- **AIMU Intrinsics and Operations Reference Manual (M147)** — AIMU command set,
-  MMIO register map, fabric packet format, DMA protocol, execution phases.
+- **AIMU Intrinsics and Operations Reference Manual** — AIMU command packets,
+  EXEC/LOAD/VALIDATE/KV/FABRIC/TRACE semantics, DMA descriptor model, MMIO/register
+  map, dtype/op bitmasks, tensor placement implications, result codes, replay tools,
+  implemented vs future. See [docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md).
