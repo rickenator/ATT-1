@@ -12,7 +12,7 @@
 
 | Field | Value |
 |-------|-------|
-| Project | ATT-1 — Attention Tile Transformer runtime and simulator |
+| Project | ATT-1 — Aniviza Tensor Tile runtime and simulator |
 | Milestone | M150 release candidate checkpoint |
 | Package type | Reviewable software/runtime/simulator repository |
 | Runtime language | C11 (`-std=c11 -Wall -Wextra -Wpedantic -Werror -pthread`) |
