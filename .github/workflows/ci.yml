@@ -80,3 +80,9 @@ jobs:
             exit 1
           fi
           echo "OK: no tracked Python cache artifacts"
+
+      # ------------------------------------------------------------------ #
+      # Step 5: documentation lint and link checker (M149)
+      # ------------------------------------------------------------------ #
+      - name: Documentation lint and link check (M149)
+        run: python3 compiler/check_docs.py

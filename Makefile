@@ -94,7 +94,7 @@ AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJ
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-smoke
+.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-smoke docs-check
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -262,6 +262,17 @@ fuzz-json:
 	python3 compiler/fuzz_json_schemas.py
 
 fuzz-smoke: fuzz-loader fuzz-json
+
+# M149: Documentation lint and link checker.
+# Validates internal Markdown links, required docs, forbidden patterns,
+# and milestone/status consistency. CPU-only, no network, no CUDA.
+# Usage:
+#   make docs-check
+#   make docs-check DOCS_CHECK_ARGS="--warn-anchors"
+#   make docs-check DOCS_CHECK_ARGS="--report-json /tmp/docs_report.json"
+DOCS_CHECK_ARGS ?=
+docs-check:
+	python3 compiler/check_docs.py $(DOCS_CHECK_ARGS)
 
 clean:
 	rm -rf $(BUILD_DIR)

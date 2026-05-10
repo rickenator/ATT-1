@@ -124,6 +124,7 @@ An inactive example self-hosted workflow is provided at
 | Hostile inputs (M135) | ✗ | ✓ | ✓ |
 | Pipeline smoke (M132) | ✗ | ✓ | ✓ |
 | Cache artifact check | ✗ | ✓ | ✓ |
+| Docs lint/link check (M149) | ✗ | ✓ | ✓ |
 | CUDA tests | optional | optional (`--cuda`) | ✗ |
 | JSON report | ✗ | optional | ✗ |
 | Runs automatically | ✗ | ✗ | ✓ (on push/PR) |
@@ -311,3 +312,61 @@ only.
 | Part of `make test` | ✗ | ✗ |
 | Part of `make regression` | ✗ | ✗ |
 | Required to pass before release | recommended | recommended |
+
+---
+
+## 9. Documentation lint and link checker (`make docs-check`, M149)
+
+### Purpose
+
+`compiler/check_docs.py` validates the documentation tree without
+executing inference, accessing the network, or requiring CUDA.  It catches
+broken internal Markdown links, missing required documents, stale status
+claims, and basic milestone/status consistency errors.
+
+### Usage
+
+```sh
+# Basic run — exits 0 on success, 1 on any error
+make docs-check
+
+# With anchor validation warnings
+make docs-check DOCS_CHECK_ARGS="--warn-anchors"
+
+# Write a machine-readable JSON report
+make docs-check DOCS_CHECK_ARGS="--report-json /tmp/docs_report.json"
+
+# Or invoke directly
+python3 compiler/check_docs.py
+python3 compiler/check_docs.py --report-json report.json
+```
+
+### What is checked
+
+| Check | Description |
+|-------|-------------|
+| Internal Markdown links | For every `[text](url-or-path)` in a `.md` file, verify the target file exists. External `http://` links are not followed (no network). |
+| Required documents | All 16 key documents (README.md, docs/INDEX.md, both reference manuals, testing, release readiness, CUDA validation, OPERATION_LOG, AIMU architecture, PCIe, command requirements, register map, fabric routing, tensor placement/execution docs) must exist on disk. |
+| Tracked cache artifacts | `git ls-files` must not return any `__pycache__`, `.pyc`, or `.pyo` files. |
+| Absolute local paths | Warns when `/home/…` or `/usr/export/…` absolute paths appear in documentation. |
+| Stale "future manual" claims | Errors if non-historical docs still use obsolete section titles or describe completed milestones as pending. OPERATION_LOG.md is excluded as a historical record. |
+| Milestone/status consistency | OPERATION_LOG must contain a Milestone 149 entry and a Milestone 148 complete entry. CUDA signoff must be described as manual RTX 3090. |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All checks pass (warnings may appear) |
+| 1 | One or more lint/link failures detected |
+| 2 | Tool/parser error (unexpected exception) |
+
+### Relationship to CI and regression
+
+| | Normal CI | `make regression` | `make docs-check` |
+|---|---|---|---|
+| Runs automatically on push | ✓ | ✗ | ✗ |
+| CUDA required | ✗ | ✗ | ✗ |
+| Part of `make test` | — | — | ✗ — separate |
+| Part of `make regression` | ✗ (CI step) | ✓ — step 9 | — |
+| Network required | ✗ | ✗ | ✗ |
+| Required to pass before release | — | ✓ | ✓ |

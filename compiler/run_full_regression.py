@@ -16,6 +16,7 @@ Layers executed (CPU-only default):
   Step 6  hostile inputs       — M135 test_hostile_inputs.py
   Step 7  pipeline smoke       — M132 run_execution_replay_pipeline.py
   Step 8  cache artifact check — git ls-files | grep …
+  Step 9  docs lint/link check — M149 check_docs.py
 
 With --cuda the first three steps become:
   Step 1  make clean
@@ -68,6 +69,7 @@ _GOLDEN = str(_COMPILER / "check_golden_regressions.py")
 _SCHEMA_COMPAT = str(_COMPILER / "test_schema_compat.py")
 _HOSTILE = str(_COMPILER / "test_hostile_inputs.py")
 _PIPELINE = str(_COMPILER / "run_execution_replay_pipeline.py")
+_CHECK_DOCS = str(_COMPILER / "check_docs.py")
 _EXEC_PLAN = str(_COMPILER / "fixtures" / "exec_plan_valid_tiny.json")
 
 _PY = sys.executable
@@ -203,6 +205,11 @@ def _step_pipeline_smoke() -> list[str]:
     return [_PY, _PIPELINE, "--execution-plan", _EXEC_PLAN]
 
 
+def _step_docs_check() -> list[str]:
+    """M149 documentation lint and link checker."""
+    return [_PY, _CHECK_DOCS]
+
+
 def _check_cache_artifacts() -> StepResult:
     """
     Step 8: verify no __pycache__ / *.pyc / *.pyo files are git-tracked.
@@ -298,7 +305,7 @@ _STATUS_ICON = {
 def _print_summary(report: RegressionReport) -> None:
     print()
     print("=" * 72)
-    print("ATT-1 M136 Full Regression Summary")
+    print("ATT-1 M136+M149 Full Regression Summary")
     print(f"  Mode   : {'CUDA' if report.cuda_flag else 'CPU-only'}")
     print(f"  Overall: {report.overall.upper()}")
     print(f"  Elapsed: {report.elapsed:.1f}s")
@@ -474,6 +481,15 @@ def main() -> int:
     # ------------------------------------------------------------------ #
     print("[run ] cache artifact check")
     step = _check_cache_artifacts()
+    report.steps.append(step)
+    if step.status != "pass":
+        report.record_failure()
+
+    # ------------------------------------------------------------------ #
+    # Step 9: documentation lint and link checker (M149)
+    # ------------------------------------------------------------------ #
+    print("[run ] documentation lint and link checker (M149)")
+    step = _run_quiet("docs lint/link check (M149)", _step_docs_check())
     report.steps.append(step)
     if step.status != "pass":
         report.record_failure()

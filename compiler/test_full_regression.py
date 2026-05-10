@@ -127,6 +127,7 @@ _EXPECTED_STEP_NAMES = [
     "hostile-input regression (M135)",
     "pipeline smoke (M132)",
     "cache artifact check",
+    "docs lint/link check (M149)",
 ]
 
 
