@@ -346,7 +346,7 @@ python3 compiler/check_docs.py --report-json report.json
 | Check | Description |
 |-------|-------------|
 | Internal Markdown links | For every `[text](url-or-path)` in a `.md` file, verify the target file exists. External `http://` links are not followed (no network). |
-| Required documents | All 16 key documents (README.md, docs/INDEX.md, both reference manuals, testing, release readiness, CUDA validation, OPERATION_LOG, AIMU architecture, PCIe, command requirements, register map, fabric routing, tensor placement/execution docs) must exist on disk. |
+| Required documents | All 17 key documents (README.md, docs/INDEX.md, both reference manuals, release candidate checkpoint, testing, release readiness, CUDA validation, OPERATION_LOG, AIMU architecture, PCIe, command requirements, register map, fabric routing, tensor placement/execution docs) must exist on disk. |
 | Tracked cache artifacts | `git ls-files` must not return any `__pycache__`, `.pyc`, or `.pyo` files. |
 | Absolute local paths | Warns when `/home/…` or `/usr/export/…` absolute paths appear in documentation. |
 | Stale "future manual" claims | Errors if non-historical docs still use obsolete section titles or describe completed milestones as pending. OPERATION_LOG.md is excluded as a historical record. |

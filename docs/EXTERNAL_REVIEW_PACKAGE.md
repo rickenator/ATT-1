@@ -48,6 +48,7 @@ The following are tracked in Git and present in the repository:
 | Documentation index | `docs/INDEX.md` |
 | README | `README.md` |
 | Release readiness checklist | `docs/RELEASE_READINESS.md` |
+| Release candidate checkpoint | `docs/RELEASE_CANDIDATE_M150.md` |
 | Testing guide | `docs/testing.md` |
 | CUDA validation policy | `docs/CUDA_VALIDATION_PLAN.md` |
 | API ownership review | `docs/api_ownership_review.md` |
@@ -86,22 +87,25 @@ All commands must exit 0.
 # 1. Baseline build and test (CPU-only, no CUDA)
 make clean && make && make test
 
-# 2. Full regression (schema, hostile-input, golden, pipeline smoke)
+# 2. Full regression (schema, hostile-input, golden, pipeline smoke, docs-check)
 make regression
 
-# 3. ASAN build and test
+# 3. Documentation lint and link checker
+make docs-check
+
+# 4. ASAN build and test
 make clean && make test-asan
 
-# 4. UBSAN build and test
+# 5. UBSAN build and test
 make clean && make test-ubsan
 
-# 5. Loader and schema fuzz/smoke
+# 6. Loader and schema fuzz/smoke
 make fuzz-smoke
 
-# 6. End-to-end tiny fixture demo
+# 7. End-to-end tiny fixture demo
 ./tools/demo_tiny_att1.sh
 
-# 7. Python cache artifact check (must print "No tracked Python cache artifacts")
+# 8. Python cache artifact check (must print "No tracked Python cache artifacts")
 git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)' || echo "No tracked Python cache artifacts"
 ```
 
@@ -110,7 +114,8 @@ Expected baselines:
 | Check | Expected result |
 |-------|-----------------|
 | `make test` | 781 PASS 0 FAIL |
-| `make regression` | All steps PASS |
+| `make regression` | All steps PASS (9 steps) |
+| `make docs-check` | PASS (0 errors) |
 | `make test-asan` | 781 PASS 0 FAIL (ASAN) |
 | `make test-ubsan` | 781 PASS 0 FAIL (UBSAN) |
 | `make fuzz-smoke` | fuzz_loader 17/17 PASS; fuzz_json 40/40 PASS |

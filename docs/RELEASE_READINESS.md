@@ -68,7 +68,7 @@ Or equivalently:
 python3 compiler/run_full_regression.py
 ```
 
-All five post-build layers must report PASS:
+All nine post-build layers must report PASS:
 
 | Layer | Tool |
 |-------|------|
@@ -77,6 +77,7 @@ All five post-build layers must report PASS:
 | M135 hostile-input regression | `compiler/test_hostile_inputs.py` |
 | M132 pipeline smoke | `compiler/run_execution_replay_pipeline.py` |
 | Cache artifact check | `git ls-files` grep |
+| M149 docs lint/link check | `compiler/check_docs.py` |
 
 ### 2.3 GitHub Actions CI status
 
@@ -257,7 +258,8 @@ grep -rn --include="*.md" --include="*.h" --include="*.c" \
 Run through this list before sending the repository to any external party.
 
 - [ ] `make clean && make && make test` — **781 PASS 0 FAIL**
-- [ ] `make regression` — all five layers PASS
+- [ ] `make regression` — all nine layers PASS
+- [ ] `make docs-check` — PASS (0 errors)
 - [ ] GitHub Actions CI is green on `master`
 - [ ] No tracked `__pycache__` / `.pyc` / `.pyo` (see §1)
 - [ ] No public model artifacts in the index (see §1)
@@ -267,18 +269,22 @@ Run through this list before sending the repository to any external party.
 - [ ] CUDA signoff status is accurately labeled in all recent milestone entries
 - [ ] No patent-claim wording in any committed doc (see §9 grep)
 - [ ] `docs/CUDA_VALIDATION_PLAN.md` reflects current signoff state
+- [ ] `docs/RELEASE_CANDIDATE_M150.md` review decision is current
 - [ ] `docs/RELEASE_READINESS.md` (this file) is current
 
 ---
 
 ## 11. Recommended Next Milestones
 
-Milestones M140–M147 are complete. See `docs/OPERATION_LOG.md` for their full entries.
+Milestones M140–M150 are complete. See `docs/OPERATION_LOG.md` for their full entries.
 
 | Milestone | Working title | Scope |
 |-----------|---------------|-------|
-| M148 | Reference manual consistency pass | Cross-check README, docs index, both reference manuals, RELEASE_READINESS, EXTERNAL_REVIEW_PACKAGE, testing, CUDA validation, and OPERATION_LOG for link consistency, terminology, milestone references, and stale claims — **current milestone** |
-| M149 | API opacity and refactor plan | Migrate `int`-returning init functions to `att1_status_t`; opacify `att1_kv_mmu` struct; resolve alias duplicates in `att1_status.h` |
-| M150 | Public reviewer quickstart polish | Final reviewer quickstart refinements and pre-release packaging review |
-| M151 | Deeper fuzzing and coverage | libFuzzer / AFL++ integration; coverage measurement; expand hostile-input fixture set |
-| M152 | Hardware prototype go/no-go review | Review `docs/aimu_phase3_go_no_go.md` criteria against Phase 1 completion state |
+| M150 | Release candidate checkpoint | Release candidate summary doc, validation baselines, review decision — **current milestone** |
+| M151 | API opacity and refactor plan | Migrate `int`-returning init functions to `att1_status_t`; opacify `att1_kv_mmu` struct; resolve alias duplicates in `att1_status.h` |
+| M152 | Deeper fuzzing and coverage expansion | libFuzzer / AFL++ integration; coverage measurement; expand hostile-input fixture set beyond 37 |
+| M153 | Release package dry-run | `git archive` tarball verification; reviewer quick-start validation on clean VM |
+| M154 | External review response log | Structured log for tracking outside reviewer questions, findings, and responses |
+| M155 | Public small-model demo policy | Define opt-in public SmolLM2-135M demo with external weight download |
+| M156 | Self-hosted CUDA runner decision | Decide whether to activate `cuda-self-hosted.example.yml` or formally defer |
+| M157 | Tensor-level execution simulator next slice | Advance AIMU EXEC simulation from control-flow-only to partial tensor-math validation |

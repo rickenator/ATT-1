@@ -127,6 +127,7 @@ in `docs/` unless noted otherwise.
 | Document | Description |
 |----------|-------------|
 | [RELEASE_READINESS.md](RELEASE_READINESS.md) | Release and outside-review checklist: hygiene, build status, artifact policy, security, patent handling |
+| [RELEASE_CANDIDATE_M150.md](RELEASE_CANDIDATE_M150.md) | M150 release candidate checkpoint: validation baselines, capability summary, known limitations, review decision |
 | [EXTERNAL_REVIEW_PACKAGE.md](EXTERNAL_REVIEW_PACKAGE.md) | External reviewer package checklist: included/excluded materials, pre-review validation commands, reviewer quick-start, suggested focus areas, safe sharing notes |
 
 ---
