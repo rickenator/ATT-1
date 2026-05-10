@@ -112,6 +112,14 @@ in `docs/` unless noted otherwise.
 
 ---
 
+## Reference Manuals
+
+| Document | Description |
+|----------|-------------|
+| [ATT1_REFERENCE_MANUAL.md](ATT1_REFERENCE_MANUAL.md) | ATT-1 Reference Manual (M146): artifact format, runtime API, backends, inference modes, CLI tools, conversion flow, planning pipeline, testing policy, error codes, non-goals |
+
+---
+
 ## Release Readiness
 
 | Document | Description |

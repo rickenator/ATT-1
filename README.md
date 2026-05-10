@@ -104,6 +104,7 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 | CUDA signoff policy | [docs/CUDA_VALIDATION_PLAN.md](docs/CUDA_VALIDATION_PLAN.md) |
 | Release / review readiness | [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) |
 | External reviewer package | [docs/EXTERNAL_REVIEW_PACKAGE.md](docs/EXTERNAL_REVIEW_PACKAGE.md) |
+| Reference Manual (M146) | [docs/ATT1_REFERENCE_MANUAL.md](docs/ATT1_REFERENCE_MANUAL.md) |
 | Milestone history | [docs/OPERATION_LOG.md](docs/OPERATION_LOG.md) |
 
 ## Artifact Policy
@@ -136,11 +137,15 @@ models/      Tiny fixture models only (no public weights)
 docs/        Documentation (see docs/INDEX.md)
 ```
 
+## Reference Manuals
+
+- **ATT-1 Reference Manual** — artifact format, runtime API, backends, inference
+  modes, CLI tools, conversion flow, planning pipeline, testing policy, error codes,
+  non-goals. See [docs/ATT1_REFERENCE_MANUAL.md](docs/ATT1_REFERENCE_MANUAL.md).
+
 ## Future Manuals
 
 The following reference documents are planned but not yet written:
 
-- **ATT-1 Reference Manual** — complete API, .att1 format, runtime
-  semantics, backend selection matrix, KV-cache MMU, quantization pipeline.
-- **AIMU Intrinsics and Operations Reference Manual** — AIMU command set,
+- **AIMU Intrinsics and Operations Reference Manual (M147)** — AIMU command set,
   MMIO register map, fabric packet format, DMA protocol, execution phases.
