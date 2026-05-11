@@ -20,7 +20,7 @@
 | Test baseline | 781 PASS 0 FAIL (C unit and integration tests) |
 | Regression baseline | ALL STEPS PASSED (9 steps) |
 | CI | CPU-only GitHub Actions (ubuntu-latest) |
-| CUDA status | Manual signoff on RTX 3090; not validated by CI |
+| CUDA status | Manual signoff on CUDA-capable GPU; not validated by CI |
 | Hardware | None — software simulator only |
 | Patent disclosure | None — engineering architecture language only |
 | Public model deployment | None — no public model weights in repository |
@@ -84,7 +84,7 @@ git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)' || echo "No tracked Python 
 | Workflow | Runner | Scope | Status |
 |----------|--------|-------|--------|
 | `.github/workflows/ci.yml` | `ubuntu-latest` (GitHub Actions) | CPU-only build, test, regression, ASAN, UBSAN, fuzz-smoke, demo, cache check, docs-check | Active; must be green on `master` |
-| `.github/workflows/cuda-self-hosted.example.yml` | Self-hosted RTX 3090 | CUDA build + test | Inactive example; not run in CI |
+| `.github/workflows/cuda-self-hosted.example.yml` | Self-hosted CUDA-capable GPU | CUDA build + test | Inactive example; not run in CI |
 
 **CI does not validate CUDA kernels, download public model weights, or require
 any public artifacts.** The CPU CI gate is a necessary but not sufficient
@@ -98,9 +98,9 @@ condition for a CUDA-touching change.
 |------|--------|
 | CUDA backend implemented | Yes (`src/backend_cuda.c`, `make CUDA=1`) |
 | CUDA CI runner | Not active (manual only) |
-| CUDA signoff host | RTX 3090-class, local |
+| CUDA signoff host | CUDA-capable GPU, local |
 | CUDA signoff for this checkpoint | Not performed — CPU CI only |
-| CUDA labeled in docs | Yes — every CUDA-touching milestone entry is labeled "manual signoff pending" or "validated on RTX 3090" |
+| CUDA labeled in docs | Yes — every CUDA-touching milestone entry is labeled "manual signoff pending" or "validated on CUDA-capable host" |
 
 Any CUDA-touching change must complete manual signoff before that change is
 considered validated. CPU CI green does not imply CUDA correctness.
@@ -127,9 +127,9 @@ See [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md) for full policy.
 | CPU f32 single-tile inference | Implemented |
 | CPU q8 quantized inference | Implemented |
 | CPU q4 quantized inference | Implemented |
-| CUDA f32 inference | Implemented (manual RTX 3090 signoff required) |
-| CUDA q8 inference | Implemented (manual RTX 3090 signoff required) |
-| CUDA q4 inference | Implemented (manual RTX 3090 signoff required) |
+| CUDA f32 inference | Implemented (manual CUDA signoff required) |
+| CUDA q8 inference | Implemented (manual CUDA signoff required) |
+| CUDA q4 inference | Implemented (manual CUDA signoff required) |
 | Single-tile inference pipeline | Implemented |
 | Multi-tile cluster inference (simulated fabric) | Implemented |
 | Source text inference (`--prompt`) | Implemented |
@@ -278,7 +278,7 @@ labeled conditions:
 
 | Condition | Label |
 |-----------|-------|
-| CUDA kernels | Not validated by CI — manual RTX 3090 signoff required |
+| CUDA kernels | Not validated by CI — manual CUDA signoff required |
 | Real hardware | Not implemented — software simulator only |
 | Public model weights | External — not included in repository |
 | Production deployment | Not applicable — research/simulation package |
@@ -299,5 +299,5 @@ or production readiness.
 | M153 | Release package dry-run | `git archive` tarball verification; reviewer quick-start validation on clean VM; archive artifact inspection checklist |
 | M154 | External review response log | Structured log for tracking outside reviewer questions, findings, and responses |
 | M155 | Public small-model demo policy | Define and document policy for enabling opt-in public SmolLM2-135M or equivalent demo with external weight download |
-| M156 | Self-hosted CUDA runner decision | Decide whether to activate `cuda-self-hosted.example.yml`; document RTX 3090 runner setup; activate or formally defer |
+| M156 | Self-hosted CUDA runner decision | Decide whether to activate `cuda-self-hosted.example.yml`; document CUDA runner setup; activate or formally defer |
 | M157 | Tensor-level execution simulator next slice | Advance AIMU EXEC simulation from control-flow-only to partial tensor-math validation for a single op (e.g. RMSNORM) |

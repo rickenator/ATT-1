@@ -850,7 +850,7 @@ inference.
 
 ### 11.6 CUDA Manual Signoff
 
-CUDA validation requires a manual run on an RTX 3090-class host:
+CUDA validation requires a manual run on a CUDA-capable host:
 
 ```sh
 make clean && make CUDA=1 && make test CUDA=1

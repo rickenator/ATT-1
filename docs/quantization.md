@@ -1656,7 +1656,7 @@ Exercises the script with the checked-in real_tiny fixtures (no `--include-cuda`
 - At least one `note:` line present.
 - JSON report contains `"runs"`, `"result"`, `"pass"`.
 
-Passes on CPU-only hosts.  CUDA host verification: pending RTX 3090 signoff.
+Passes on CPU-only hosts.  CUDA host verification: pending CUDA signoff.
 
 ---
 

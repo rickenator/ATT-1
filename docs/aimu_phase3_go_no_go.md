@@ -74,7 +74,7 @@ The following have been implemented, tested, and committed through M119.
 | Fabric bandwidth and latency simulator | M118 | `compiler/simulate_fabric_bandwidth.py` |
 | Integrated end-to-end planning pipeline | M119 | `compiler/run_aimu_planning_pipeline.py` |
 
-**Test baseline:** 342 PASS 0 FAIL (CPU-only host). CUDA signoff on RTX 3090 per
+**Test baseline:** 342 PASS 0 FAIL (CPU-only host). CUDA signoff on a CUDA-capable host per
 `docs/CUDA_VALIDATION_PLAN.md`.
 
 ---
@@ -231,7 +231,7 @@ The Phase 3 prototype is ready to advance to Option C (FPGA) when all of the fol
 | No silent fallback in backend matrix | `test_backend_matrix.c`; zero `ATT1_ERR_OK` for known-bad input | Proven (M29, M41, M90) |
 | No hostile-input validation gaps | `validate_tensor_placement_report.py` and `att1-inspect` reject all malformed inputs | Proven (M6, M99) |
 | Public artifacts remain out of repo | `git ls-files` contains no public-weight `.att1` files | Enforced (standing rule) |
-| CUDA signoff completed when CUDA behavior touched | Manual RTX 3090 validation per `docs/CUDA_VALIDATION_PLAN.md` | Enforced per checklist |
+| CUDA signoff completed when CUDA behavior touched | Manual CUDA validation per `docs/CUDA_VALIDATION_PLAN.md` | Enforced per checklist |
 | Userspace MMIO emulator passes end-to-end command cycle | M121 target | **NOT YET MET** |
 | Command-plan replay against MMIO emulator passes | M122 target | **NOT YET MET** |
 | Fabric route replay simulation passes | M123 target | **NOT YET MET** |

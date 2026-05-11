@@ -97,14 +97,14 @@ Current status column to use in milestone entries:
 | Phrase | Meaning |
 |--------|---------|
 | `CPU validation complete; CUDA signoff pending` | CPU CI passed; no GPU validation yet |
-| `CUDA validation complete on RTX 3090` | Manual signoff completed (see signoff report) |
+| `CUDA validation complete on CUDA-capable host` | Manual signoff completed (see signoff report) |
 
 ---
 
 ## 3. CUDA Validation Policy Summary
 
 - CPU CI (`ci.yml`) is **not** CUDA validation.
-- CUDA signoff is **manual** on a physical RTX 3090-class host.
+- CUDA signoff is **manual** on a physical CUDA-capable host.
 - A self-hosted runner (`.github/workflows/cuda-self-hosted.example.yml`)
   is available as an inactive example; rename to `.yml` and configure to
   activate.

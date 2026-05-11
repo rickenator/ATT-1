@@ -69,7 +69,7 @@ outside the Git repository:
 | Public model weights (e.g. SmolLM2-135M safetensors) | Too large; license and redistribution constraints |
 | Generated large `.att1` artifacts from real models | Derived from excluded weights |
 | Local model directories (`~/models/`, `/data/`, etc.) | External; local paths must not be committed |
-| CUDA benchmark claims without RTX 3090 manual signoff | Unvalidated on CPU-only CI |
+| CUDA benchmark claims without manual CUDA signoff | Unvalidated on CPU-only CI |
 | Patent claim drafts | Must stay outside version control |
 | Private invention disclosures | Must stay outside version control |
 | Hardware implementation details beyond architectural docs | Not implemented |
@@ -130,7 +130,7 @@ CPU CI does **not** validate CUDA kernels. CUDA paths compile cleanly in
 CPU-only builds behind `#ifdef CUDA_ENABLED` guards and skip their test
 bodies on hosts without a GPU.
 
-**CUDA signoff is manual, on an RTX 3090-class host:**
+**CUDA signoff is manual, on a CUDA-capable host:**
 
 ```sh
 make clean && make CUDA=1 && make test CUDA=1
@@ -142,8 +142,8 @@ Mark CUDA status clearly in any review communication:
 | Status | Meaning |
 |--------|---------|
 | `not validated` | CUDA path not reviewed; CPU-only signoff only |
-| `pending` | CUDA build clean; awaiting RTX 3090 manual signoff |
-| `validated on RTX 3090` | `make test CUDA=1` and `run_full_regression.py --cuda` passed |
+| `pending` | CUDA build clean; awaiting manual CUDA signoff |
+| `validated on CUDA-capable host` | `make test CUDA=1` and `run_full_regression.py --cuda` passed |
 
 See `docs/CUDA_VALIDATION_PLAN.md` for full policy and signoff commands.
 
@@ -208,7 +208,7 @@ Reviewers should be aware of the following limitations:
 | No tensor-level placement against real hardware | Planning pipeline is advisory/simulation |
 | No production ASIC | Not planned within this project scope |
 | No performance claims for large real models | All perf numbers from tiny dummy fixture only |
-| CUDA validation requires RTX 3090 manual signoff | CPU CI does not validate CUDA kernels |
+| CUDA validation requires manual signoff on a CUDA-capable host | CPU CI does not validate CUDA kernels |
 | Public model artifacts are external | No public model weights in repo |
 | Fabric routing is planner-level only | No physical interconnect |
 | KV-MMU is software simulated | No hardware page-table walker |

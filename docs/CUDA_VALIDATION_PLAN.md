@@ -17,7 +17,7 @@ full comparison of testing levels.
 
 ### 1.2 CUDA validation is manual
 
-CUDA validation is performed manually on a physical RTX 3090-class host
+CUDA validation is performed manually on a physical CUDA-capable host
 by Rick. A future optional self-hosted runner (§5) could automate this,
 but it is not required.
 
@@ -28,7 +28,7 @@ Milestones that touch CUDA code use one of two status states:
 | State | Meaning |
 |-------|---------|
 | **CPU validation complete; CUDA signoff pending** | All CPU-only tests pass; CUDA paths have not yet been validated on hardware |
-| **CUDA validation complete on RTX 3090** | Manual signoff performed; see signoff report (§7) |
+| **CUDA validation complete on CUDA-capable host** | Manual signoff performed; see signoff report (§7) |
 
 Any milestone that adds or modifies a CUDA kernel, CUDA test, CUDA backend
 path, or CUDA-facing API is **not fully complete** until Rick performs the
@@ -45,7 +45,7 @@ enforce the inverse: CPU-only builds must not contain CUDA symbols.
 
 ## 2. Required Manual CUDA Signoff Commands
 
-Run these on the RTX 3090 host. Record output in a signoff report (§7).
+Run these on a CUDA-capable host. Record output in a signoff report (§7).
 
 ### 2.1 Full CUDA build and test suite
 
@@ -193,7 +193,7 @@ signoff via a dedicated GitHub Actions self-hosted runner.
 
 | Item | Requirement |
 |------|-------------|
-| GPU | RTX 3090 or equivalent (24 GiB VRAM) |
+| GPU | Any CUDA-capable GPU (RTX 3090 or equivalent used for initial signoff) |
 | OS | Ubuntu 22.04 LTS or 24.04 LTS |
 | NVIDIA driver | 535+ recommended |
 | CUDA toolkit | 12.x |

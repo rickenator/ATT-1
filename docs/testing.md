@@ -88,11 +88,11 @@ request. The CI pipeline is **CPU-only** and does the following:
 | CUDA q4 / q8 / f32 runtime | Same — CUDA=0 by default |
 | Public model inference accuracy | Model weights are external and not committed |
 | PCIe / MMIO hardware access | No real hardware; emulator is userspace-only |
-| RTX 3090 signoff | Manual — see below |
+| CUDA signoff | Manual — see below |
 
 ---
 
-## 4. CUDA signoff (manual, RTX 3090-class host)
+## 4. CUDA signoff (manual, CUDA-capable host)
 
 CUDA validation requires a physical GPU and is not run in CI. To perform
 a full CUDA signoff on a capable host:
@@ -350,7 +350,7 @@ python3 compiler/check_docs.py --report-json report.json
 | Tracked cache artifacts | `git ls-files` must not return any `__pycache__`, `.pyc`, or `.pyo` files. |
 | Absolute local paths | Warns when `/home/…` or `/usr/export/…` absolute paths appear in documentation. |
 | Stale "future manual" claims | Errors if non-historical docs still use obsolete section titles or describe completed milestones as pending. OPERATION_LOG.md is excluded as a historical record. |
-| Milestone/status consistency | OPERATION_LOG must contain a Milestone 149 entry and a Milestone 148 complete entry. CUDA signoff must be described as manual RTX 3090. |
+| Milestone/status consistency | OPERATION_LOG must contain a Milestone 149 entry and a Milestone 148 complete entry. CUDA signoff must be described as manual on a CUDA-capable host. |
 
 ### Exit codes
 
