@@ -1,13 +1,20 @@
 # ATT-1 / Aniviza Tensor Tile
 
-ATT-1 is a phase-1 C11 software simulator for a future LLM inference
-architecture built around programmable tensor tiles. Model tensor space is
-partitioned across memory-owned tiles; each tile executes quantized inference
-operations near local memory while a packetized fabric handles routing,
-synchronization, reductions, and traceable execution. The runtime supports
-f32, q8, and q4 quantized inference in single-tile and multi-tile cluster
-configurations, with CPU and CUDA backends, a KV-cache MMU, a tokenizer, and
-a schema-validated planning/control-plane simulator.
+ATT-1 is a software prototype for a memory-centric inference architecture.
+Instead of treating memory as passive storage behind a GPU or TPU, ATT-1 models
+the idea that large neural-network tensor space can be divided into owned tensor
+tiles. Each tile carries metadata describing shape, dtype, quantization,
+placement, validation, routing, and execution constraints. In today's prototype
+those tiles are simulated by C11 runtime components, CPU/CUDA backends, shard
+metadata, placement reports, command queues, and fabric-route tools. In the
+intended future architecture those same concepts map onto AIMU tiles:
+programmable near-memory inference units that own local tensor memory and
+participate in a fabric. The core doctrine: **move less data by executing closer
+to where the tensor data lives.**
+
+The runtime supports f32, q8, and q4 quantized inference in single-tile and
+multi-tile cluster configurations, with CPU and CUDA backends, a KV-cache MMU,
+a tokenizer, and a schema-validated planning/control-plane simulator.
 
 ## AIMU
 
@@ -19,6 +26,37 @@ routing entirely in userspace C with no hardware dependency. Phase 2 points
 toward a PCIe card form factor: host driver command queues, multi-tile
 scheduling, and placement against hardware-like memory constraints.
 
+## Architecture
+
+ATT-1 separates the model into explicit, validated, executable structure. A
+conventional accelerator pipeline often relies on runtime scheduling to decide
+where tensors go and how work is split. ATT-1 pushes more of that knowledge
+into artifacts, metadata, placement reports, and deterministic traces — enabling
+the system to reason about memory capacity, quantization, KV pressure, tile
+ownership, fabric traffic, reductions, and command replay before hardware exists.
+For example, the current placement tooling can show when a synthetic q4 120B
+shape fails on 8×16 GiB tiles while still producing a structurally valid
+placement report; that distinction between "valid report" and "feasible
+placement" is exactly the kind of engineering signal needed before hardware
+design.
+
+The project has matured beyond a simple inference runtime. It now has CPU and CUDA
+backends, f32/q8/q4 paths, single and cluster inference, safetensors conversion,
+tokenizer/pretokenized input handling, source comparison reports, backend
+matrices, tensor placement reports, advisory tools, command-plan mapping,
+MMIO/register sketches, command queues, DMA descriptor simulation,
+trace/counter integration, and AIMU fabric route planning. The result is an
+architecture validation platform: it can test model correctness, estimate memory
+and bandwidth pressure, simulate control-plane behavior, and prepare for a
+future PCIe/AIMU prototype without prematurely committing to silicon details.
+
+> **In short:** ATT-1 is the executable simulator; AIMU is the future hardware
+> concept; the fabric is the movement/reduction layer; placement metadata is the
+> bridge between software and silicon. Its advantage is not merely faster math —
+> its advantage is making tensor locality, ownership, quantization, validation,
+> and routing explicit enough that inference can be planned around memory
+> movement instead of being dominated by it.
+
 ## Current Status
 
 | Capability | Status |
@@ -26,7 +64,7 @@ scheduling, and placement against hardware-like memory constraints.
 | CPU f32 inference (single-tile, cluster) | Complete |
 | CPU q8 quantized inference | Complete |
 | CPU q4 quantized inference | Complete |
-| CUDA f32/q8/q4 inference | Implemented; manual RTX 3090 signoff pending |
+| CUDA f32/q8/q4 inference | Implemented; manual CUDA signoff pending |
 | AIMU command queue / MMIO simulation | Complete |
 | AIMU DMA / host / device simulation | Complete |
 | Fabric routing simulation | Complete |
@@ -34,7 +72,7 @@ scheduling, and placement against hardware-like memory constraints.
 | Tensor placement reports and scenarios | Complete |
 | Schema-validated planning outputs | Complete (M134/M135) |
 | CPU-only GitHub Actions CI | Complete (M137) |
-| CUDA signoff (manual, RTX 3090) | Plan in place (M138); signoff pending |
+| CUDA signoff (manual, CUDA-capable host) | Plan in place (M138); signoff pending |
 
 ## Quick Build and Test
 
