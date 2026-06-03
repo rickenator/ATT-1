@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rickenator/ATT-1)
+
 # ATT-1 / Aniviza Tensor Tile
 
 ATT-1 is a software prototype for a memory-centric inference architecture.
