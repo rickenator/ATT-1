@@ -1,0 +1,9 @@
+{
+  "pipeline_version": 132,
+  "tile_count": 1,
+  "command_count": 2,
+  "commands_replayed": 2,
+  "completions_seen": 2,
+  "failed_commands": 0,
+  "final_status": "maybe"
+}

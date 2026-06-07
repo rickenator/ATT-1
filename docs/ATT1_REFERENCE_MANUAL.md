@@ -804,10 +804,10 @@ simulation). They do not:
 | Command | Description | Expected result |
 |---------|-------------|-----------------|
 | `make clean && make && make test` | Build and run all C tests | 781 PASS 0 FAIL |
-| `make regression` | Python validation layers (M133–M136) | All steps PASS |
+| `make regression` | Python validation layers and M152 fuzz coverage | All steps PASS |
 | `make clean && make test-asan` | ASAN-instrumented build and test | 781 PASS 0 FAIL |
 | `make clean && make test-ubsan` | UBSAN-instrumented build and test | 781 PASS 0 FAIL |
-| `make fuzz-smoke` | Binary loader + JSON schema fuzz smoke | 17 loader + 40 JSON PASS |
+| `make fuzz-smoke` | Binary loader + JSON schema fuzz smoke + coverage guard | 22 loader + 45 JSON PASS; 67 total |
 | `./tools/demo_tiny_att1.sh` | End-to-end tiny fixture demo | 14/14 PASS |
 
 ### 11.2 Regression Layers
@@ -818,9 +818,11 @@ simulation). They do not:
 2. `make test` (C test suite)
 3. `compiler/check_golden_regressions.py` — 12 golden baseline checks
 4. `compiler/test_schema_compat.py` — 31 schema compatibility tests
-5. `compiler/test_hostile_inputs.py` — 37 hostile-input tests
+5. `compiler/test_hostile_inputs.py` — 42 hostile-input tests
 6. `compiler/run_execution_replay_pipeline.py` (M132 pipeline smoke)
 7. Python cache artifact check
+8. `compiler/check_docs.py` (M149 docs lint/link check)
+9. `make fuzz-smoke` (M152 deterministic fuzz smoke + coverage guard)
 
 ### 11.3 Sanitizer Targets
 
@@ -836,9 +838,12 @@ Normal `make clean` does **not** remove sanitizer directories.
 
 | Target | Tool | Cases |
 |--------|------|-------|
-| `make fuzz-loader` | `tests/fuzz_model_loader.c` | 17 (2 valid + 15 hostile) |
-| `make fuzz-json` | `compiler/fuzz_json_schemas.py` | 40 (27 hostile + 2 valid + 11 inline mutations) |
-| `make fuzz-smoke` | Both | 57 total |
+| `make fuzz-loader` | `tests/fuzz_model_loader.c` | 22 (2 valid + 20 hostile) |
+| `make fuzz-json` | `compiler/fuzz_json_schemas.py` | 45 (32 hostile + 2 valid + 11 inline mutations) |
+| `make fuzz-coverage` | `compiler/report_fuzz_coverage.py` | Static corpus guard |
+| `make fuzz-smoke` | Loader + JSON + coverage | 67 total |
+| `make fuzz-libfuzzer` | Optional `tests/fuzz_model_loader_guided.c` | Builds libFuzzer binary when `clang` exists |
+| `make fuzz-afl` | Optional `tests/fuzz_model_loader_guided.c` | Builds AFL-compatible binary when `afl-clang-fast` exists |
 
 ### 11.5 CI Policy
 
@@ -991,7 +996,8 @@ The following are explicitly outside the scope of ATT-1:
 | M149 | Documentation lint and link checker | Complete — see `compiler/check_docs.py` |
 | M150 | Release candidate checkpoint | Complete — see [docs/RELEASE_CANDIDATE_M150.md](RELEASE_CANDIDATE_M150.md) |
 | M151 | API opacity and refactor plan | Complete — KV cache/MMU status APIs, opaque KV-MMU handle, status alias cleanup |
-| M152+ | Additional fuzzing, regression expansion, or hardware prototype work | TBD |
+| M152 | Deeper fuzzing and coverage expansion | Complete — 67 deterministic fuzz cases, coverage guard, optional libFuzzer/AFL harnesses |
+| M153+ | Release dry-run, external review response log, or hardware prototype work | TBD |
 
 See `docs/OPERATION_LOG.md` for the full milestone history and
 `docs/RELEASE_READINESS.md` for the current readiness gate status.

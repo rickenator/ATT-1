@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 151: API opacity and refactor plan (complete).
+Milestone 152: deeper fuzzing and coverage expansion (complete).
 
 ## Active Task
 
-Prepare Milestone 152.
+Prepare Milestone 153.
 
 ## Hard Rules
 
@@ -185,9 +185,11 @@ Prepare Milestone 152.
 
 - Milestone 151: API opacity and refactor plan — `include/att1_status.h` removed deprecated status aliases `ATT1_ERR_INVALID` and `ATT1_ERR_NO_MEMORY`; all C/test callers now use canonical `ATT1_ERR_INVALID_ARG` and `ATT1_ERR_OOM`; `att1_kv_cache_init` now returns `att1_status_t` with `ATT1_ERR_INVALID_ARG` and `ATT1_ERR_OOM` failure detail instead of plain `-1`; `att1_kv_mmu` is now an opaque heap-owned handle with `att1_kv_mmu_create()` / `att1_kv_mmu_destroy()` replacing public stack `att1_kv_mmu_init()` / `att1_kv_mmu_free()`; KV-MMU page/session storage structs moved from the public header into `src/kv_mmu.c`; KV-MMU public operations now return `att1_status_t` while preserving existing pass/fail behavior for callers that check `!= 0`; KV-MMU creation now rejects capacity shapes where `max_positions > max_pages * page_tokens`; `tests/test_kv_mmu.c` updated to use opaque-handle lifecycle and cover invalid create arguments; docs updated in `docs/ATT1_REFERENCE_MANUAL.md`, `docs/api_ownership_review.md`, `docs/kv_mmu.md`, `docs/RELEASE_READINESS.md`, `docs/testing.md`, and `docs/OPERATION_LOG.md`; `compiler/check_docs.py` milestone consistency advanced to M151/M150; no CUDA, binary-format, model-converter, or inference behavior changed.
 
+- Milestone 152: Deeper fuzzing and coverage expansion — deterministic fuzz coverage expanded and made first-class in regression; `tests/fuzz_model_loader.c` grew from 17 to 22 binary loader smoke cases with additional malformed header/config/descriptor/shard layouts; five checked-in hostile JSON fixtures added (`placement_invalid_tile_id_type.json`, `cmd_plan_negative_scale_bytes.json`, `route_missing_destination_tiles.json`, `exec_empty_output_for_attention.json`, `pipeline_invalid_final_status.json`) bringing the hostile fixture corpus to 32 files; `compiler/check_hostile_inputs.py` now rejects data fabric routes without a non-empty `destination_tiles` list; `compiler/test_hostile_inputs.py` now covers 42 checks; `compiler/report_fuzz_coverage.py` added as a static corpus guard requiring at least 22 loader cases, 32 hostile fixtures, and 11 inline JSON mutations; `make fuzz-coverage` added and `make fuzz-smoke` now runs loader, JSON, and coverage checks for 67 deterministic cases; optional guided-fuzzer harness `tests/fuzz_model_loader_guided.c` added with `make fuzz-libfuzzer` and `make fuzz-afl` opt-in build targets plus `compiler/fixtures/fuzz-seeds/README.md`; `compiler/run_full_regression.py` now includes `make fuzz-smoke` as step 10 and `compiler/test_full_regression.py` updated accordingly; docs updated in `docs/testing.md`, `docs/ATT1_REFERENCE_MANUAL.md`, `docs/EXTERNAL_REVIEW_PACKAGE.md`, `docs/RELEASE_CANDIDATE_M150.md`, `docs/RELEASE_READINESS.md`, and `docs/OPERATION_LOG.md`; `compiler/check_docs.py` milestone consistency advanced to M152/M151; no CUDA, binary-format version, model-converter, or inference behavior changed.
+
 ## Next Prompt for Codex
 
-Implement Milestone 152 only.
+Implement Milestone 153 only.
 
 ## Known Risks
 - q4 metadata/packing mismatch.

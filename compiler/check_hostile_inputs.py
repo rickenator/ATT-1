@@ -11,6 +11,7 @@ with deeper hostile-input validation:
     ordering_policy, expected_status, dtype)
   - Missing required references (tensor_name for tensor commands, output
     buffers for LOAD ops, tensor_dependencies for EXEC_MATMUL)
+  - Missing destination_tiles on fabric data routes
   - Negative byte counts in command plans
   - Q4 tensor missing group_size
   - Non-existent owner tile references
@@ -391,6 +392,7 @@ def check_fabric_route(data: dict, strict: bool = False) -> CompatResult:
       - E_DUPLICATE_ID: duplicate route_id values
       - E_UNKNOWN_TYPE: route_type not in allowed set
       - E_INVALID_TILE_ID: source_tile < 0
+      - E_EMPTY_DESTINATION: data route without destination_tiles
       - E_ZERO_PAYLOAD: data route with payload_bytes == 0
       - E_MISSING_REDUCTION: reduction route without explicit reduction_behavior
       - E_INVALID_ORDERING: ordering_policy not in allowed set
@@ -435,6 +437,17 @@ def check_fabric_route(data: dict, strict: bool = False) -> CompatResult:
             r.add_error(
                 "E_INVALID_TILE_ID",
                 f"{ctx}.source_tile={src} is negative — invalid tile identifier",
+            )
+
+        # Data routes require an explicit non-empty destination list.
+        dst = route.get("destination_tiles")
+        if rtype in _DATA_ROUTE_TYPES and (
+            not isinstance(dst, list) or len(dst) == 0
+        ):
+            r.add_error(
+                "E_EMPTY_DESTINATION",
+                f"{ctx} route_type={rtype!r} requires a non-empty "
+                "destination_tiles list",
             )
 
         # Data route with zero payload

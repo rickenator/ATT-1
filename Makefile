@@ -94,7 +94,7 @@ AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJ
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
-.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-smoke docs-check
+.PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-coverage fuzz-smoke fuzz-libfuzzer fuzz-afl clean-fuzz docs-check
 .SECONDARY:
 
 all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
@@ -242,18 +242,49 @@ clean-ubsan:
 
 clean-sanitizer: clean-asan clean-ubsan
 
-# M143: Fuzz/smoke harness targets (CPU-only, local hardening only).
+# M143/M152: Fuzz/smoke harness targets (CPU-only, local hardening only).
 # These are deterministic smoke tests that verify the binary model loader and
 # JSON schema validators correctly reject malformed/hostile input.
 # Usage:
 #   make fuzz-loader            # build and run C binary loader harness
 #   make fuzz-json              # run Python JSON schema mutation harness
-#   make fuzz-smoke             # run both (fast, < 10 seconds)
+#   make fuzz-coverage          # report deterministic fuzz corpus coverage
+#   make fuzz-smoke             # run all deterministic fuzz checks
+#   make fuzz-libfuzzer         # optional guided fuzzer binary (requires clang)
+#   make fuzz-afl               # optional AFL-compatible binary (requires AFL_CC)
 FUZZ_LOADER_BIN  := $(BUILD_DIR)/fuzz_model_loader
 FUZZ_LOADER_OBJS := $(BUILD_DIR)/$(TEST_DIR)/fuzz_model_loader.o $(COMMON_OBJS)
+FUZZ_CC ?= clang
+AFL_CC ?= afl-clang-fast
+FUZZ_BUILD_DIR := build-fuzz
+FUZZ_AFL_BUILD_DIR := build-afl
+FUZZ_LIBFUZZER_BIN := $(FUZZ_BUILD_DIR)/fuzz_model_loader_libfuzzer
+FUZZ_AFL_BIN := $(FUZZ_AFL_BUILD_DIR)/fuzz_model_loader_afl
+FUZZ_GUIDED_SRC := $(TEST_DIR)/fuzz_model_loader_guided.c
+FUZZ_LIBFUZZER_COMMON_OBJS := $(patsubst %.c,$(FUZZ_BUILD_DIR)/%.o,$(COMMON_SRCS))
+FUZZ_LIBFUZZER_OBJS := $(FUZZ_BUILD_DIR)/$(FUZZ_GUIDED_SRC:.c=.o) $(FUZZ_LIBFUZZER_COMMON_OBJS)
+FUZZ_AFL_COMMON_OBJS := $(patsubst %.c,$(FUZZ_AFL_BUILD_DIR)/%.o,$(COMMON_SRCS))
+FUZZ_AFL_OBJS := $(FUZZ_AFL_BUILD_DIR)/$(FUZZ_GUIDED_SRC:.c=.o) $(FUZZ_AFL_COMMON_OBJS)
+FUZZ_LIBFUZZER_CFLAGS := $(CFLAGS) -DATT1_LIBFUZZER -fsanitize=fuzzer-no-link,address,undefined
+FUZZ_LIBFUZZER_LDFLAGS := $(LDFLAGS) -fsanitize=fuzzer,address,undefined
+FUZZ_AFL_CFLAGS := $(CFLAGS)
 
 $(FUZZ_LOADER_BIN): $(FUZZ_LOADER_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(FUZZ_BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ_LIBFUZZER_CFLAGS) -c -o $@ $<
+
+$(FUZZ_LIBFUZZER_BIN): $(FUZZ_LIBFUZZER_OBJS)
+	$(FUZZ_CC) $(FUZZ_LIBFUZZER_LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(FUZZ_AFL_BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(AFL_CC) $(FUZZ_AFL_CFLAGS) -c -o $@ $<
+
+$(FUZZ_AFL_BIN): $(FUZZ_AFL_OBJS)
+	$(AFL_CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 fuzz-loader: $(FUZZ_LOADER_BIN)
 	$(FUZZ_LOADER_BIN)
@@ -261,7 +292,31 @@ fuzz-loader: $(FUZZ_LOADER_BIN)
 fuzz-json:
 	python3 compiler/fuzz_json_schemas.py
 
-fuzz-smoke: fuzz-loader fuzz-json
+fuzz-coverage:
+	python3 compiler/report_fuzz_coverage.py
+
+fuzz-smoke: fuzz-loader fuzz-json fuzz-coverage
+
+fuzz-libfuzzer:
+	@if ! command -v $(FUZZ_CC) >/dev/null 2>&1; then \
+		echo "SKIP: fuzz-libfuzzer requires $(FUZZ_CC)"; \
+	else \
+		$(MAKE) $(FUZZ_LIBFUZZER_BIN); \
+		echo "Built $(FUZZ_LIBFUZZER_BIN)"; \
+		echo "Example: $(FUZZ_LIBFUZZER_BIN) -runs=1000 compiler/fixtures/fuzz-seeds"; \
+	fi
+
+fuzz-afl:
+	@if ! command -v $(AFL_CC) >/dev/null 2>&1; then \
+		echo "SKIP: fuzz-afl requires $(AFL_CC)"; \
+	else \
+		$(MAKE) $(FUZZ_AFL_BIN); \
+		echo "Built $(FUZZ_AFL_BIN)"; \
+		echo "Example: afl-fuzz -i compiler/fixtures/fuzz-seeds -o /tmp/att1-afl -- $(FUZZ_AFL_BIN) @@"; \
+	fi
+
+clean-fuzz:
+	rm -rf $(FUZZ_BUILD_DIR) $(FUZZ_AFL_BUILD_DIR)
 
 # M149: Documentation lint and link checker.
 # Validates internal Markdown links, required docs, forbidden patterns,

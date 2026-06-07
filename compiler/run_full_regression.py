@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ATT-1 M136: local full-regression runner.
+ATT-1 M136+M149+M152: local full-regression runner.
 
 Executes ATT-1 validation layers in a stable order and reports one
 consolidated pass/fail summary.  This is test orchestration only;
@@ -17,6 +17,7 @@ Layers executed (CPU-only default):
   Step 7  pipeline smoke       — M132 run_execution_replay_pipeline.py
   Step 8  cache artifact check — git ls-files | grep …
   Step 9  docs lint/link check — M149 check_docs.py
+  Step 10 fuzz smoke/coverage — M152 make fuzz-smoke
 
 With --cuda the first three steps become:
   Step 1  make clean
@@ -210,6 +211,11 @@ def _step_docs_check() -> list[str]:
     return [_PY, _CHECK_DOCS]
 
 
+def _step_fuzz_smoke() -> list[str]:
+    """M152 deterministic fuzz smoke plus corpus coverage guard."""
+    return ["make", "fuzz-smoke"]
+
+
 def _check_cache_artifacts() -> StepResult:
     """
     Step 8: verify no __pycache__ / *.pyc / *.pyo files are git-tracked.
@@ -305,7 +311,7 @@ _STATUS_ICON = {
 def _print_summary(report: RegressionReport) -> None:
     print()
     print("=" * 72)
-    print("ATT-1 M136+M149 Full Regression Summary")
+    print("ATT-1 M136+M149+M152 Full Regression Summary")
     print(f"  Mode   : {'CUDA' if report.cuda_flag else 'CPU-only'}")
     print(f"  Overall: {report.overall.upper()}")
     print(f"  Elapsed: {report.elapsed:.1f}s")
@@ -371,7 +377,7 @@ def _write_json_report(report: RegressionReport, path: str) -> None:
 
 def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="ATT-1 M136 local full-regression runner",
+        description="ATT-1 M136+M149+M152 local full-regression runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -411,7 +417,7 @@ def main() -> int:
     t_start = time.monotonic()
 
     print()
-    print("ATT-1 M136 Full Regression Runner")
+    print("ATT-1 M136+M149+M152 Full Regression Runner")
     print(f"  Mode: {'CUDA signoff (RTX 3090-class required)' if cuda else 'CPU-only (default)'}")
     print(f"  Repo: {_REPO}")
     print()
@@ -490,6 +496,15 @@ def main() -> int:
     # ------------------------------------------------------------------ #
     print("[run ] documentation lint and link checker (M149)")
     step = _run_quiet("docs lint/link check (M149)", _step_docs_check())
+    report.steps.append(step)
+    if step.status != "pass":
+        report.record_failure()
+
+    # ------------------------------------------------------------------ #
+    # Step 10: deterministic fuzz smoke and coverage guard (M152)
+    # ------------------------------------------------------------------ #
+    print("[run ] fuzz smoke and coverage guard (M152)")
+    step = _run_quiet("fuzz smoke/coverage (M152)", _step_fuzz_smoke())
     report.steps.append(step)
     if step.status != "pass":
         report.record_failure()

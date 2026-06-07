@@ -249,6 +249,11 @@ int main(void)
     w32le(buf + 12, 99u);
     RUN("bad_header_size_v1_mismatch", buf, VALID_BASE_SIZE, 0);
 
+    /* ---- HOSTILE: version = 1 but header_size = 0 ---- */
+    build_valid_base(buf);
+    w32le(buf + 12, 0u);
+    RUN("bad_header_size_zero", buf, VALID_BASE_SIZE, 0);
+
     /* ---- HOSTILE: config_size = 0 (must be 36) ---- */
     build_valid_base(buf);
     w64le(buf + 24, 0u);
@@ -264,6 +269,16 @@ int main(void)
     w64le(buf + 16, UINT64_MAX);
     RUN("bad_config_offset_overflow", buf, VALID_BASE_SIZE, 0);
 
+    /* ---- HOSTILE: config_offset points beyond EOF ---- */
+    build_valid_base(buf);
+    w64le(buf + 16, 4096u);
+    RUN("bad_config_offset_past_eof", buf, VALID_BASE_SIZE, 0);
+
+    /* ---- HOSTILE: data_size extends beyond EOF while data_offset is valid ---- */
+    build_valid_base(buf);
+    w64le(buf + 56, 1u);
+    RUN("bad_data_size_past_eof", buf, VALID_BASE_SIZE, 0);
+
     /* ---- HOSTILE: data_offset past end of file ---- */
     build_valid_base(buf);
     w64le(buf + 48, UINT64_MAX);
@@ -275,11 +290,22 @@ int main(void)
     w64le(buf + 40, UINT64_MAX);
     RUN("bad_tensor_count_max", buf, VALID_BASE_SIZE, 0);
 
+    /* ---- HOSTILE: tensor_count requires descriptors that are absent ---- */
+    build_valid_base(buf);
+    w64le(buf + 40, 1u);
+    RUN("bad_tensor_count_without_descriptor", buf, VALID_BASE_SIZE, 0);
+
     /* ---- HOSTILE: shard_size non-zero but shard_offset = 0 ---- */
     build_valid_base(buf);
     w64le(buf + 64, 0u);  /* shard_offset */
     w64le(buf + 72, 1u);  /* shard_size (inconsistent) */
     RUN("bad_shard_size_without_offset", buf, VALID_BASE_SIZE, 0);
+
+    /* ---- HOSTILE: shard_offset overflows while shard_size is non-zero ---- */
+    build_valid_base(buf);
+    w64le(buf + 64, UINT64_MAX);
+    w64le(buf + 72, 1u);
+    RUN("bad_shard_offset_overflow", buf, VALID_BASE_SIZE, 0);
 
     /* ---- HOSTILE: all-zeros file (no valid magic) ---- */
     memset(zeros, 0, sizeof(zeros));

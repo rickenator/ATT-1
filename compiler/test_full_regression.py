@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-ATT-1 M136: test suite for run_full_regression.py.
+ATT-1 M136+M149+M152: test suite for run_full_regression.py.
 
 Tests:
   1  Help exits 0
   2  --no-build exits 0 on clean repo (skips build steps)
   3  --report-json produces valid JSON with all expected keys
-  4  JSON report contains all 5 post-build step names
+  4  JSON report contains all 7 post-build step names
   5  JSON report overall field is "pass" or "fail" (string, not bool)
   6  Runner does not import CUDA-specific modules
   7  No tracked Python cache artefacts in this repo
@@ -128,6 +128,7 @@ _EXPECTED_STEP_NAMES = [
     "pipeline smoke (M132)",
     "cache artifact check",
     "docs lint/link check (M149)",
+    "fuzz smoke/coverage (M152)",
 ]
 
 
@@ -283,7 +284,7 @@ def test_report_json_exit_codes_are_ints() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    print("ATT-1 M136 test_full_regression.py")
+    print("ATT-1 M136+M149+M152 test_full_regression.py")
     print("-" * 40)
 
     test_help_exits_0()

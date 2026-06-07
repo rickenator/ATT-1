@@ -39,6 +39,8 @@ validation layers in a stable order:
 | 6 | M135 hostile-input regression suite (`compiler/test_hostile_inputs.py`) |
 | 7 | M132 integrated pipeline smoke (`compiler/run_execution_replay_pipeline.py`) |
 | 8 | Git-tracked Python cache artifact check |
+| 9 | M149 docs lint/link check (`compiler/check_docs.py`) |
+| 10 | M152 fuzz smoke and coverage guard (`make fuzz-smoke`) |
 
 ```sh
 # CPU-only (default)
@@ -67,7 +69,7 @@ request. The CI pipeline is **CPU-only** and does the following:
 1. `make clean`
 2. `make`
 3. `make test`
-4. `python3 compiler/run_full_regression.py --no-build` (M133–M135 Python layers + pipeline smoke)
+4. `python3 compiler/run_full_regression.py --no-build` (M133–M135 Python layers, pipeline smoke, docs-check, fuzz-smoke)
 5. `git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)'` — fail if any hit
 
 ### What CI validates
@@ -125,6 +127,7 @@ An inactive example self-hosted workflow is provided at
 | Pipeline smoke (M132) | ✗ | ✓ | ✓ |
 | Cache artifact check | ✗ | ✓ | ✓ |
 | Docs lint/link check (M149) | ✗ | ✓ | ✓ |
+| Fuzz smoke/coverage (M152) | ✗ | ✓ | ✓ |
 | CUDA tests | optional | optional (`--cuda`) | ✗ |
 | JSON report | ✗ | optional | ✗ |
 | Runs automatically | ✗ | ✗ | ✓ (on push/PR) |
@@ -141,7 +144,8 @@ The quick pre-release sequence is:
 
 ```sh
 make clean && make && make test   # 781 PASS 0 FAIL
-make regression                   # all 5 layers PASS
+make regression                   # all steps PASS
+make fuzz-smoke                   # 67 deterministic fuzz cases PASS
 git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)' || echo "PASS: no cache artifacts"
 ```
 
@@ -237,7 +241,7 @@ The harness is CPU-only, deterministic, and completes in under 10 seconds.
 ### Usage
 
 ```sh
-# Run both harnesses (recommended before a release)
+# Run deterministic harnesses and corpus coverage guard
 make fuzz-smoke
 
 # C binary loader harness only
@@ -245,6 +249,13 @@ make fuzz-loader
 
 # Python JSON schema mutation harness only
 make fuzz-json
+
+# Static corpus coverage summary only
+make fuzz-coverage
+
+# Optional coverage-guided fuzzer binaries
+make fuzz-libfuzzer
+make fuzz-afl
 ```
 
 ### C binary loader harness (`fuzz-loader`)
@@ -267,12 +278,17 @@ seed files required):
 | Version = 0                   | rejected |
 | Version = 99 (future)         | rejected |
 | V1 header_size mismatch       | rejected |
+| header_size = 0               | rejected |
 | config_size = 0               | rejected |
 | config_size too large         | rejected |
 | config_offset = UINT64_MAX    | rejected |
+| config_offset past EOF        | rejected |
+| data_size extends past EOF | rejected |
 | data_offset = UINT64_MAX      | rejected |
 | tensor_count = UINT64_MAX     | rejected |
+| tensor_count without descriptors | rejected |
 | shard_size without shard_offset | rejected |
+| shard_offset = UINT64_MAX     | rejected |
 | All-zeros file                | rejected |
 
 ### Python JSON schema harness (`fuzz-json`)
@@ -281,7 +297,7 @@ Source: `compiler/fuzz_json_schemas.py`
 
 Drives `compiler/check_hostile_inputs.py` (M135) against:
 
-1. **All 27 hostile fixtures** in `compiler/fixtures/hostile/` — each must
+1. **All 32 hostile fixtures** in `compiler/fixtures/hostile/` — each must
    be rejected (non-zero exit).
 2. **Valid baseline fixtures** (`placement_report_valid.json`,
    `exec_plan_valid_tiny.json`) — each must pass (exit 0).
@@ -297,11 +313,37 @@ Drives `compiler/check_hostile_inputs.py` (M135) against:
   `compiler/fuzz_json_schemas.py`, or add a new JSON file to
   `compiler/fixtures/hostile/`.
 
-### Longer fuzz runs
+### Coverage summary (`fuzz-coverage`)
 
-Integration with coverage-guided fuzzers (libFuzzer, AFL++) is planned as
-future work.  The current harness provides a fast deterministic smoke screen
-only.
+Source: `compiler/report_fuzz_coverage.py`
+
+This static guard reports the deterministic corpus size and fails if it drops
+below M152 baselines:
+
+| Corpus | M152 baseline |
+|--------|---------------|
+| Binary loader cases | 22 |
+| Hostile JSON fixtures | 32 |
+| JSON inline mutations | 11 |
+| Combined deterministic cases | 67 |
+
+### Optional coverage-guided fuzzers
+
+Source: `tests/fuzz_model_loader_guided.c`
+
+`make fuzz-libfuzzer` builds `build-fuzz/fuzz_model_loader_libfuzzer` when
+`clang` is available. `make fuzz-afl` builds
+`build-afl/fuzz_model_loader_afl` when `afl-clang-fast` is available. These
+targets are opt-in and skipped cleanly if the requested fuzzer toolchain is
+absent. Suggested seed location:
+`compiler/fixtures/fuzz-seeds/`.
+
+Example commands:
+
+```sh
+build-fuzz/fuzz_model_loader_libfuzzer -runs=1000 compiler/fixtures/fuzz-seeds
+afl-fuzz -i compiler/fixtures/fuzz-seeds -o /tmp/att1-afl -- build-afl/fuzz_model_loader_afl @@
+```
 
 ### Relationship to CI
 
@@ -310,7 +352,7 @@ only.
 | Runs automatically on push | ✓ | ✗ — local only |
 | CUDA required | ✗ | ✗ |
 | Part of `make test` | ✗ | ✗ |
-| Part of `make regression` | ✗ | ✗ |
+| Part of `make regression` | ✓ | ✓ |
 | Required to pass before release | recommended | recommended |
 
 ---
@@ -350,7 +392,7 @@ python3 compiler/check_docs.py --report-json report.json
 | Tracked cache artifacts | `git ls-files` must not return any `__pycache__`, `.pyc`, or `.pyo` files. |
 | Absolute local paths | Warns when `/home/…` or `/usr/export/…` absolute paths appear in documentation. |
 | Stale "future manual" claims | Errors if non-historical docs still use obsolete section titles or describe completed milestones as pending. OPERATION_LOG.md is excluded as a historical record. |
-| Milestone/status consistency | OPERATION_LOG must contain a Milestone 151 entry and a Milestone 150 complete entry. CUDA signoff must be described as manual on a CUDA-capable host. |
+| Milestone/status consistency | OPERATION_LOG must contain a Milestone 152 entry and a Milestone 151 complete entry. CUDA signoff must be described as manual on a CUDA-capable host. |
 
 ### Exit codes
 

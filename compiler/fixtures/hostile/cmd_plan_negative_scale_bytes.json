@@ -1,0 +1,28 @@
+{
+  "command_plan_version": 1,
+  "header": {
+    "command_plan_version": 1,
+    "model_name": "hostile_test",
+    "tile_count": 1,
+    "command_count": 1,
+    "status": "ok"
+  },
+  "commands": [
+    {
+      "command_id": 1,
+      "command_type": "LOAD_TENSOR_TILE",
+      "tile_id": 0,
+      "aimu_id": 0,
+      "tensor_id": 0,
+      "tensor_name": "layers.0.attention.wq.weight",
+      "dtype": "q8",
+      "quantization": "q8",
+      "quantization_group_size": null,
+      "packed_bytes": 1024,
+      "scale_bytes": -4,
+      "total_bytes": 1020,
+      "fence_id": 1,
+      "expected_status": "ATT1_AIMU_ERR_OK"
+    }
+  ]
+}

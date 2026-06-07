@@ -69,11 +69,11 @@ git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)' || echo "No tracked Python 
 |---------|----------------|-------------|
 | `make clean && make` | Build succeeds, 0 errors | PASS |
 | `make test` | 781 PASS 0 FAIL | 781 PASS 0 FAIL |
-| `make regression` | ALL STEPS PASSED (9 steps) | ALL STEPS PASSED |
+| `make regression` | ALL STEPS PASSED (10 steps as of M152) | ALL STEPS PASSED |
 | `make docs-check` | PASS (0 errors) | PASS (0 errors) |
 | `make test-asan` | 781 PASS 0 FAIL (ASAN) | (run locally before review) |
 | `make test-ubsan` | 781 PASS 0 FAIL (UBSAN) | (run locally before review) |
-| `make fuzz-smoke` | fuzz_loader 17/17; fuzz_json 40/40 | 17/17 PASS; 40/40 PASS |
+| `make fuzz-smoke` | fuzz_loader 22/22; fuzz_json 45/45; coverage PASS as of M152 | 17/17 PASS; 40/40 PASS at M150 |
 | `./tools/demo_tiny_att1.sh` | 14 PASS 0 FAIL; `ATT-1 tiny demo: PASS` | 14 PASS 0 FAIL |
 | Cache artifact check | No tracked Python cache artifacts | No tracked Python cache artifacts |
 
@@ -165,7 +165,7 @@ See [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md) for full policy.
 | Local full-regression runner (`make regression`) | Implemented (M136) — 9 steps |
 | CPU-only GitHub Actions CI | Implemented (M137) |
 | CUDA signoff plan and self-hosted runner example | Implemented (M138) |
-| Fuzz and loader smoke tests | Implemented (`make fuzz-smoke`) |
+| Fuzz and loader smoke tests | Implemented (`make fuzz-smoke`); expanded in M152 |
 | Documentation lint and link checker | Implemented (M149) |
 
 ### 5.5 Documentation coverage

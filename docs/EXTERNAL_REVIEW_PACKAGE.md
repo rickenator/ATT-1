@@ -87,7 +87,7 @@ All commands must exit 0.
 # 1. Baseline build and test (CPU-only, no CUDA)
 make clean && make && make test
 
-# 2. Full regression (schema, hostile-input, golden, pipeline smoke, docs-check)
+# 2. Full regression (schema, hostile-input, golden, pipeline, docs, fuzz)
 make regression
 
 # 3. Documentation lint and link checker
@@ -114,11 +114,11 @@ Expected baselines:
 | Check | Expected result |
 |-------|-----------------|
 | `make test` | 781 PASS 0 FAIL |
-| `make regression` | All steps PASS (9 steps) |
+| `make regression` | All steps PASS (10 steps) |
 | `make docs-check` | PASS (0 errors) |
 | `make test-asan` | 781 PASS 0 FAIL (ASAN) |
 | `make test-ubsan` | 781 PASS 0 FAIL (UBSAN) |
-| `make fuzz-smoke` | fuzz_loader 17/17 PASS; fuzz_json 40/40 PASS |
+| `make fuzz-smoke` | fuzz_loader 22/22 PASS; fuzz_json 45/45 PASS; coverage PASS |
 | `./tools/demo_tiny_att1.sh` | 14/14 PASS; `ATT-1 tiny demo: PASS` |
 | Cache artifact check | No tracked Python cache artifacts |
 

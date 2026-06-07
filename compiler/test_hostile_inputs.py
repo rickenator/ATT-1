@@ -12,6 +12,7 @@ Coverage:
     - negative tile_count
     - tile_count mismatch
     - duplicate tile_id
+    - non-integer tile_id
     - q4 tensor missing group_size
     - non-existent owner_tile
 
@@ -19,6 +20,7 @@ Coverage:
     - duplicate command_id
     - unknown command_type
     - negative byte count
+    - negative scale byte count
     - missing tensor_name for tensor command
     - unsupported dtype
     - invalid tile_id (< 0)
@@ -28,6 +30,7 @@ Coverage:
     - invalid route_type
     - invalid source_tile (< 0)
     - zero payload on data route
+    - missing destination_tiles for data route
     - reduction route missing explicit reduction_behavior
     - invalid ordering_policy
 
@@ -36,12 +39,14 @@ Coverage:
     - duplicate plan_command_id
     - invalid tile_id (< 0)
     - LOAD_TENSOR_TILE with no output_buffers
+    - EXEC_ATTENTION with no output_buffers
     - EXEC_MATMUL with no tensor_dependencies
     - unknown expected_status
 
   Pipeline hostile inputs:
     - negative tile_count
     - missing final_status
+    - invalid final_status
     - commands_replayed > command_count
 
   Regression guard:
@@ -115,6 +120,8 @@ def _test_placement() -> None:
             1, _run("placement", _HOSTILE / "placement_tile_count_mismatch.json"))
     _expect("placement: duplicate tile_id",
             1, _run("placement", _HOSTILE / "placement_duplicate_tile_id.json"))
+    _expect("placement: invalid tile_id type",
+            1, _run("placement", _HOSTILE / "placement_invalid_tile_id_type.json"))
     _expect("placement: q4 missing group_size",
             1, _run("placement", _HOSTILE / "placement_q4_missing_group_size.json"))
     _expect("placement: nonexistent owner_tile",
@@ -132,6 +139,8 @@ def _test_command_plan() -> None:
             1, _run("command_plan", _HOSTILE / "cmd_plan_unknown_command_type.json"))
     _expect("command_plan: negative byte count",
             1, _run("command_plan", _HOSTILE / "cmd_plan_negative_byte_count.json"))
+    _expect("command_plan: negative scale bytes",
+            1, _run("command_plan", _HOSTILE / "cmd_plan_negative_scale_bytes.json"))
     _expect("command_plan: missing tensor_name",
             1, _run("command_plan", _HOSTILE / "cmd_plan_missing_tensor_name.json"))
     _expect("command_plan: unsupported dtype",
@@ -153,6 +162,8 @@ def _test_fabric_route() -> None:
             1, _run("fabric_route", _HOSTILE / "route_invalid_source_tile.json"))
     _expect("fabric_route: zero payload on data route",
             1, _run("fabric_route", _HOSTILE / "route_zero_payload_data.json"))
+    _expect("fabric_route: missing destination_tiles",
+            1, _run("fabric_route", _HOSTILE / "route_missing_destination_tiles.json"))
     _expect("fabric_route: missing reduction_behavior",
             1, _run("fabric_route", _HOSTILE / "route_missing_reduction_behavior.json"))
     _expect("fabric_route: invalid ordering_policy",
@@ -172,6 +183,8 @@ def _test_execution_plan() -> None:
             1, _run("execution_plan", _HOSTILE / "exec_invalid_tile_id.json"))
     _expect("execution_plan: missing output_buffer for LOAD",
             1, _run("execution_plan", _HOSTILE / "exec_missing_output_buffer.json"))
+    _expect("execution_plan: missing output_buffer for ATTENTION",
+            1, _run("execution_plan", _HOSTILE / "exec_empty_output_for_attention.json"))
     _expect("execution_plan: missing tensor_dep for EXEC_MATMUL",
             1, _run("execution_plan", _HOSTILE / "exec_missing_tensor_dep.json"))
     _expect("execution_plan: unknown expected_status",
@@ -187,6 +200,8 @@ def _test_pipeline() -> None:
             1, _run("pipeline", _HOSTILE / "pipeline_negative_tile_count.json"))
     _expect("pipeline: missing final_status",
             1, _run("pipeline", _HOSTILE / "pipeline_missing_final_status.json"))
+    _expect("pipeline: invalid final_status",
+            1, _run("pipeline", _HOSTILE / "pipeline_invalid_final_status.json"))
     _expect("pipeline: commands_replayed > command_count",
             1, _run("pipeline", _HOSTILE / "pipeline_inconsistent_counts.json"))
 
