@@ -6,7 +6,7 @@ use the existing fabric simulator for activation send/receive placeholders.
 
 ## Lifecycle Policy
 
-- Commands before `att1_runtime_start` fail with `ATT1_ERR_INVALID`.
+- Commands before `att1_runtime_start` fail with `ATT1_ERR_INVALID_ARG`.
 - Starting an already-started runtime returns `ATT1_ERR_ALREADY_STARTED`.
 - Stopping an already-stopped runtime succeeds as a no-op.
 - `att1_runtime_destroy` calls stop before releasing resources.

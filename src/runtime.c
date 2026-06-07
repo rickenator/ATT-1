@@ -61,20 +61,20 @@ static int att1_runtime_queue_init(att1_runtime_queue *queue, size_t capacity)
 
     queue->commands = calloc(capacity, sizeof(*queue->commands));
     if (queue->commands == NULL) {
-        return ATT1_ERR_NO_MEMORY;
+        return ATT1_ERR_OOM;
     }
 
     if (pthread_mutex_init(&queue->mutex, NULL) != 0) {
         free(queue->commands);
         memset(queue, 0, sizeof(*queue));
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (pthread_cond_init(&queue->cond, NULL) != 0) {
         pthread_mutex_destroy(&queue->mutex);
         free(queue->commands);
         memset(queue, 0, sizeof(*queue));
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     return ATT1_OK;
@@ -195,7 +195,7 @@ int att1_runtime_execute_barrier(att1_runtime *runtime, uint32_t tile_id)
     uint64_t generation = 0u;
 
     if ((impl == NULL) || !att1_runtime_valid_tile(runtime, tile_id)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     fabric_group = malloc(runtime->config.tile_count * sizeof(*fabric_group));
@@ -203,7 +203,7 @@ int att1_runtime_execute_barrier(att1_runtime *runtime, uint32_t tile_id)
         fabric_group = (uint32_t *)fabric_group_stack;
         if (runtime->config.tile_count != 1u) {
             att1_runtime_count_error(runtime, tile_id);
-            return ATT1_ERR_NO_MEMORY;
+            return ATT1_ERR_OOM;
         }
     }
 
@@ -248,7 +248,7 @@ int att1_runtime_execute_barrier(att1_runtime *runtime, uint32_t tile_id)
     if (impl->stop_requested != 0) {
         pthread_mutex_unlock(&impl->barrier_mutex);
         att1_runtime_count_error(runtime, tile_id);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     pthread_mutex_unlock(&impl->barrier_mutex);
@@ -263,7 +263,7 @@ int att1_runtime_create(att1_runtime *runtime,
     size_t i = 0u;
 
     if ((runtime == NULL) || !att1_runtime_config_valid(config)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     memset(runtime, 0, sizeof(*runtime));
@@ -275,7 +275,7 @@ int att1_runtime_create(att1_runtime *runtime,
         free(impl);
         free(runtime->tiles);
         memset(runtime, 0, sizeof(*runtime));
-        return ATT1_ERR_NO_MEMORY;
+        return ATT1_ERR_OOM;
     }
 
     runtime->impl = impl;
@@ -287,27 +287,27 @@ int att1_runtime_create(att1_runtime *runtime,
         (impl->queues == NULL) ||
         (impl->state_mutexes == NULL)) {
         att1_runtime_destroy(runtime);
-        return ATT1_ERR_NO_MEMORY;
+        return ATT1_ERR_OOM;
     }
 
     if ((pthread_mutex_init(&impl->fabric_mutex, NULL) != 0) ||
         (pthread_mutex_init(&impl->barrier_mutex, NULL) != 0) ||
         (pthread_cond_init(&impl->barrier_cond, NULL) != 0)) {
         att1_runtime_destroy(runtime);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     for (i = 0u; i < config->tile_count; i++) {
         att1_tile_state_init(&runtime->tiles[i], (uint32_t)i);
         if (pthread_mutex_init(&impl->state_mutexes[i], NULL) != 0) {
             att1_runtime_destroy(runtime);
-            return ATT1_ERR_INVALID;
+            return ATT1_ERR_INVALID_ARG;
         }
 
         if (att1_runtime_queue_init(&impl->queues[i],
                                     config->command_queue_capacity) != ATT1_OK) {
             att1_runtime_destroy(runtime);
-            return ATT1_ERR_NO_MEMORY;
+            return ATT1_ERR_OOM;
         }
     }
 
@@ -316,7 +316,7 @@ int att1_runtime_create(att1_runtime *runtime,
     fabric_config.max_payload_bytes = config->fabric_max_payload_bytes;
     if (att1_fabric_create(&runtime->fabric, &fabric_config) != ATT1_OK) {
         att1_runtime_destroy(runtime);
-        return ATT1_ERR_NO_MEMORY;
+        return ATT1_ERR_OOM;
     }
 
     return ATT1_OK;
@@ -366,7 +366,7 @@ int att1_runtime_start(att1_runtime *runtime)
     size_t i = 0u;
 
     if (impl == NULL) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (impl->threads_started != 0) {
@@ -390,7 +390,7 @@ int att1_runtime_start(att1_runtime *runtime)
         att1_tile_thread_arg *arg = malloc(sizeof(*arg));
         if (arg == NULL) {
             (void)att1_runtime_stop(runtime);
-            return ATT1_ERR_NO_MEMORY;
+            return ATT1_ERR_OOM;
         }
 
         arg->runtime = runtime;
@@ -401,7 +401,7 @@ int att1_runtime_start(att1_runtime *runtime)
                            arg) != 0) {
             free(arg);
             (void)att1_runtime_stop(runtime);
-            return ATT1_ERR_INVALID;
+            return ATT1_ERR_INVALID_ARG;
         }
     }
 
@@ -453,19 +453,19 @@ int att1_runtime_send_command(att1_runtime *runtime,
     size_t slot = 0u;
 
     if ((impl == NULL) || (command == NULL)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (impl->threads_started == 0) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_runtime_valid_tile(runtime, tile_id)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (command->payload_bytes > ATT1_RUNTIME_MAX_COMMAND_PAYLOAD) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     queue = &impl->queues[tile_id];
@@ -491,7 +491,7 @@ int att1_runtime_get_tile_state(att1_runtime *runtime,
 
     if ((impl == NULL) || (out_state == NULL) ||
         !att1_runtime_valid_tile(runtime, tile_id)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     pthread_mutex_lock(&impl->state_mutexes[tile_id]);

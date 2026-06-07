@@ -350,7 +350,7 @@ python3 compiler/check_docs.py --report-json report.json
 | Tracked cache artifacts | `git ls-files` must not return any `__pycache__`, `.pyc`, or `.pyo` files. |
 | Absolute local paths | Warns when `/home/…` or `/usr/export/…` absolute paths appear in documentation. |
 | Stale "future manual" claims | Errors if non-historical docs still use obsolete section titles or describe completed milestones as pending. OPERATION_LOG.md is excluded as a historical record. |
-| Milestone/status consistency | OPERATION_LOG must contain a Milestone 149 entry and a Milestone 148 complete entry. CUDA signoff must be described as manual on a CUDA-capable host. |
+| Milestone/status consistency | OPERATION_LOG must contain a Milestone 151 entry and a Milestone 150 complete entry. CUDA signoff must be described as manual on a CUDA-capable host. |
 
 ### Exit codes
 

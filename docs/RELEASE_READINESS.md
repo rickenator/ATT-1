@@ -276,12 +276,12 @@ Run through this list before sending the repository to any external party.
 
 ## 11. Recommended Next Milestones
 
-Milestones M140–M150 are complete. See `docs/OPERATION_LOG.md` for their full entries.
+Milestones M140–M151 are complete. See `docs/OPERATION_LOG.md` for their full entries.
 
 | Milestone | Working title | Scope |
 |-----------|---------------|-------|
-| M150 | Release candidate checkpoint | Release candidate summary doc, validation baselines, review decision — **current milestone** |
-| M151 | API opacity and refactor plan | Migrate `int`-returning init functions to `att1_status_t`; opacify `att1_kv_mmu` struct; resolve alias duplicates in `att1_status.h` |
+| M150 | Release candidate checkpoint | Release candidate summary doc, validation baselines, review decision — complete |
+| M151 | API opacity and refactor plan | Migrate KV cache/MMU lifecycle APIs to `att1_status_t`; opacify `att1_kv_mmu`; remove status aliases — **current milestone** |
 | M152 | Deeper fuzzing and coverage expansion | libFuzzer / AFL++ integration; coverage measurement; expand hostile-input fixture set beyond 37 |
 | M153 | Release package dry-run | `git archive` tarball verification; reviewer quick-start validation on clean VM |
 | M154 | External review response log | Structured log for tracking outside reviewer questions, findings, and responses |

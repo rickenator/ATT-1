@@ -85,7 +85,7 @@ static int test_lifecycle_and_dispatch(void)
     command.layer_start = 2u;
     command.layer_end = 5u;
 
-    if (att1_runtime_send_command(&runtime, 0u, &command) != ATT1_ERR_INVALID) {
+    if (att1_runtime_send_command(&runtime, 0u, &command) != ATT1_ERR_INVALID_ARG) {
         fputs("runtime pre-start command policy failed\n", stderr);
         att1_runtime_destroy(&runtime);
         return 0;
@@ -132,7 +132,7 @@ static int test_lifecycle_and_dispatch(void)
         return 0;
     }
 
-    if (att1_runtime_send_command(&runtime, 9u, &command) != ATT1_ERR_INVALID) {
+    if (att1_runtime_send_command(&runtime, 9u, &command) != ATT1_ERR_INVALID_ARG) {
         fputs("runtime invalid tile command failed\n", stderr);
         att1_runtime_destroy(&runtime);
         return 0;

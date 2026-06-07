@@ -3,6 +3,20 @@
 Milestone 3 adds a simulator for a future hardware-shaped KV-cache MMU. It is
 separate from the Milestone 2 local contiguous KV cache.
 
+## Lifecycle
+
+As of M151, `att1_kv_mmu` is an opaque heap-owned handle:
+
+```c
+att1_kv_mmu *mmu = NULL;
+att1_status_t st = att1_kv_mmu_create(&config, &mmu);
+/* ... use mmu ... */
+att1_kv_mmu_destroy(mmu);
+```
+
+The public header exposes configuration, counter, and page-reference value
+types, but not the live page/session storage layout.
+
 ## Address Shape
 
 KV entries are addressed by:
@@ -20,6 +34,8 @@ token_slot   = position % page_tokens
 ```
 
 Positions are valid in the range `0..max_positions - 1`.
+Creation rejects configurations where `max_positions` exceeds
+`max_pages * page_tokens`.
 
 Each physical page stores float32 keys and values as:
 

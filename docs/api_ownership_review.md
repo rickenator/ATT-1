@@ -20,11 +20,11 @@ The main findings are:
 |---------|----------|-------------|
 | Several structs with owned pointers lacked "must not be shallow-copied" comments | Medium | Fixed in M141 (comments added) |
 | `att1_infer_set_trace` borrow lifetime undocumented | Medium | Fixed in M141 (comment added) |
-| `att1_kv_cache`, `att1_kv_mmu` init functions return `int` rather than `att1_status_t` | Low | Deferred — would require callers to update |
+| `att1_kv_cache`, `att1_kv_mmu` init functions return `int` rather than `att1_status_t` | Low | Resolved in M151 for KV cache/MMU |
 | `att1_tensor_alloc_f32` returns `int` rather than `att1_status_t` | Low | Deferred |
 | `att1_q8_matrix`, `att1_q4_matrix` alloc functions return `int` not `att1_status_t` | Low | Deferred |
-| `att1_kv_mmu` is not opaque — internal pointer fields exposed | Low | Deferred — no external callers iterate internal page/session arrays |
-| `att1_status_t` has two alias duplicates (`ATT1_ERR_INVALID`, `ATT1_ERR_NO_MEMORY`) | Low | Deferred — aliases are backward-compat guards |
+| `att1_kv_mmu` is not opaque — internal pointer fields exposed | Low | Resolved in M151 |
+| `att1_status_t` has two alias duplicates (`ATT1_ERR_INVALID`, `ATT1_ERR_NO_MEMORY`) | Low | Resolved in M151 |
 | AIMU error codes (`att1_aimu_result`) are a parallel enum to `att1_status_t` | Info | By design; AIMU protocol codes are wire-format values |
 | No thread-safety annotations or documentation | Info | Added to review doc (§6); no code change |
 
@@ -41,8 +41,7 @@ No behavior-changing fixes were made. All headers compile cleanly.
 
 | Item | Finding |
 |------|---------|
-| `ATT1_ERR_INVALID` | Alias of `ATT1_ERR_INVALID_ARG` — kept for backward compat, but prefer the full name in new code |
-| `ATT1_ERR_NO_MEMORY` | Alias of `ATT1_ERR_OOM` — same as above |
+| Deprecated aliases | `ATT1_ERR_INVALID` and `ATT1_ERR_NO_MEMORY` existed during M141; both were removed in M151. Use `ATT1_ERR_INVALID_ARG` and `ATT1_ERR_OOM`. |
 | Missing: `ATT1_ERR_DTYPE` | Some APIs that reject a dtype use `ATT1_ERR_UNSUPPORTED` or `ATT1_ERR_BAD_FORMAT` — inconsistently |
 | Enum is `typedef att1_status` → `att1_status_t` | Clean; consistent naming |
 
@@ -194,7 +193,7 @@ att1_infer_decode_token(infer, tok2, &next);
 | Item | Finding |
 |------|---------|
 | `att1_kv_cache` owns `keys` and `values` | Must not be shallow-copied; added comment in M141 |
-| `att1_kv_cache_init` returns `int` | Inconsistency; deferred |
+| `att1_kv_cache_init` returns `att1_status_t` | Resolved in M151 |
 | `att1_kv_cache_key` / `_value` return `const float *` | ✓ correct const; pointer lifetime added in M141 |
 | Return pointer lifetime | Valid only while cache lives and position ≤ cache->length |
 
@@ -206,15 +205,13 @@ att1_infer_decode_token(infer, tok2, &next);
 
 | Item | Finding |
 |------|---------|
-| `att1_kv_mmu` is not opaque | Exposes `sessions *` and `pages *` — internal implementation details |
-| `att1_kv_mmu_page` has owned `token_present`, `keys`, `values` | Internal struct with owned pointers; must not be copied by callers |
-| `att1_kv_mmu_session` is visible | Fine for phase-1; no external callers iterate it |
-| `att1_kv_mmu` must not be shallow-copied | Added comment in M141 |
-| `att1_kv_mmu_init` returns `int` | Inconsistency; deferred |
+| `att1_kv_mmu` is opaque | Resolved in M151; page/session storage moved private to `src/kv_mmu.c` |
+| `att1_kv_mmu_create` returns `att1_status_t` | Resolved in M151 |
 | `att1_kv_mmu_lookup_page` returns `att1_kv_mmu_page_ref` | Value struct (no pointers); safe to return by out-param |
 | `att1_kv_mmu_counters` — no pointers | Safe to copy |
 
-**Recommended future fix**: Make `att1_kv_mmu` opaque in a later milestone.
+**M151 note**: `att1_kv_mmu` is now a heap-owned opaque handle created with
+`att1_kv_mmu_create()` and destroyed with `att1_kv_mmu_destroy()`.
 
 ---
 
@@ -266,7 +263,7 @@ The following require caller care to avoid double-free or use-after-free:
 | `att1_q8_matrix` | Double-free on shallow copy | Never copy; use `att1_q8_matrix_free` |
 | `att1_q4_matrix` | Double-free on shallow copy | Never copy; use `att1_q4_matrix_free` |
 | `att1_kv_cache` | Double-free on shallow copy | Never copy; use `att1_kv_cache_free` |
-| `att1_kv_mmu` | Double-free on shallow copy | Never copy; use `att1_kv_mmu_free` |
+| `att1_kv_mmu` | Opaque heap handle | Never copy; use `att1_kv_mmu_destroy` |
 | `att1_shard_plan` | Double-free on shallow copy | Never copy; use `att1_shard_plan_free` |
 | `att1_backend` after `att1_infer_set_backend` | Use-after-free if caller destroys | Infer owns backend after `set_backend` |
 | `att1_infer_logits` return value | Use-after-free after next decode | Copy logits buffer if needed across decodes |
@@ -306,16 +303,13 @@ would be safe to add without touching implementation files.
 
 **Specific inconsistencies (deferred to future milestone)**:
 
-- `att1_kv_cache_init` → `int`; should be `att1_status_t`
-- `att1_kv_mmu_init` → `int`; should be `att1_status_t`
 - `att1_tensor_alloc_f32` → `int`; should be `att1_status_t`
 - `att1_q8_matrix_alloc`, `att1_q4_matrix_alloc` → `int`; should be `att1_status_t`
 - `att1_q8_matrix_free`, `att1_q4_matrix_free`, `att1_kv_cache_free` → `void`; correct (free cannot fail)
 
-These inconsistencies are low risk in practice because callers check `!= 0`
-and the actual error semantics are the same (-1 vs negative `att1_status_t`).
-However, moving to `att1_status_t` uniformly would allow callers to print
-named error codes.
+M151 resolved the KV-cache and KV-MMU lifecycle cases. The remaining
+inconsistencies are low risk in practice because callers check `!= 0`, but
+moving them to `att1_status_t` would allow callers to print named error codes.
 
 ---
 
@@ -347,7 +341,7 @@ No ATT-1 public API is documented as thread-safe. The following rules apply:
 | `att1_model_tensor` | Wire-facing; fixed layout |
 | `att1_aimu_cmd` | **Hard wire format** — 64-byte struct with static-assert; must not change |
 | `att1_tok_meta` | 96-byte wire format; must not change without version bump |
-| `att1_kv_mmu` | Not opaque — any field reorder or add breaks callers |
+| `att1_kv_mmu` | Opaque as of M151; layout changes are private to `src/kv_mmu.c` |
 | `att1_backend_ops` | Vtable — adding new ops is an ABI break for external implementors |
 | `att1_shard_plan` | Not opaque — field layout exposed |
 
@@ -365,11 +359,11 @@ targeted milestone.
 
 | # | Item | Suggested milestone |
 |---|------|-------------------|
-| 1 | Migrate `att1_kv_cache_init`, `att1_kv_mmu_init`, `att1_tensor_alloc_f32`, `att1_q8_matrix_alloc`, `att1_q4_matrix_alloc` to return `att1_status_t` | M148 |
-| 2 | Make `att1_kv_mmu` opaque (hide `sessions` and `pages` pointers) | M148 |
+| 1 | Migrate `att1_tensor_alloc_f32`, `att1_q8_matrix_alloc`, `att1_q4_matrix_alloc` to return `att1_status_t` | Future |
+| 2 | Keep `att1_kv_mmu` opacity stable; do not re-expose page/session storage | Ongoing |
 | 3 | Add `/* not thread-safe */` annotations to `att1_kv_cache`, `att1_kv_mmu`, `att1_infer_t` | M148 |
 | 4 | Add `ATT1_ERR_DTYPE` status code and use it consistently for dtype-rejection paths | M148 |
-| 5 | Remove deprecated aliases `ATT1_ERR_INVALID` and `ATT1_ERR_NO_MEMORY` (after audit of callers) | M148 |
+| 5 | Add compile-time/API migration notes for projects that still used removed status aliases | Future |
 | 6 | Make `att1_shard_plan` opaque | M148 |
 | 7 | `att1_backend_ops` vtable: add new ops only via capability query to avoid ABI breaks | M146+ |
 

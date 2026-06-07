@@ -107,7 +107,7 @@ int main(void)
                          ATT1_PACKET_CONTROL,
                          payload_a,
                          sizeof(payload_a),
-                         13u) != ATT1_ERR_INVALID) {
+                         13u) != ATT1_ERR_INVALID_ARG) {
         fputs("fabric invalid tile send check failed\n", stderr);
         att1_fabric_destroy(&fabric);
         return 1;

@@ -68,7 +68,7 @@ void att1_runtime_destroy(att1_runtime *runtime);
 /*
  * Start/stop worker threads.
  *
- * Commands sent before start fail with ATT1_ERR_INVALID. Starting an already
+ * Commands sent before start fail with ATT1_ERR_INVALID_ARG. Starting an already
  * running runtime returns ATT1_ERR_ALREADY_STARTED. Stop is idempotent and
  * succeeds as a no-op when the runtime is already stopped. A runtime may be
  * started again after stop.

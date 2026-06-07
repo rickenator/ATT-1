@@ -23,43 +23,43 @@ static float *att1_kv_cache_slot(float *base,
     return &base[((position * num_heads) + head) * head_dim];
 }
 
-int att1_kv_cache_init(att1_kv_cache *cache,
-                       size_t max_positions,
-                       size_t num_heads,
-                       size_t head_dim)
+att1_status_t att1_kv_cache_init(att1_kv_cache *cache,
+                                 size_t max_positions,
+                                 size_t num_heads,
+                                 size_t head_dim)
 {
     size_t vectors = 0u;
     size_t elements = 0u;
 
     if (cache == NULL) {
-        return -1;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     memset(cache, 0, sizeof(*cache));
 
     if ((max_positions == 0u) || (num_heads == 0u) || (head_dim == 0u)) {
-        return -1;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (att1_mul_size(max_positions, num_heads, &vectors) != 0) {
-        return -1;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (att1_mul_size(vectors, head_dim, &elements) != 0) {
-        return -1;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     cache->keys = calloc(elements, sizeof(float));
     cache->values = calloc(elements, sizeof(float));
     if ((cache->keys == NULL) || (cache->values == NULL)) {
         att1_kv_cache_free(cache);
-        return -1;
+        return ATT1_ERR_OOM;
     }
 
     cache->max_positions = max_positions;
     cache->num_heads = num_heads;
     cache->head_dim = head_dim;
-    return 0;
+    return ATT1_OK;
 }
 
 void att1_kv_cache_free(att1_kv_cache *cache)

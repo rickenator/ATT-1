@@ -315,13 +315,17 @@ The `att1_kv_cache_t` provides per-layer paged key-value storage. The
 memory management. Both are session-local and not thread-safe.
 
 ```c
-int att1_kv_cache_init(att1_kv_cache_t *kv, /* ... */);
-int att1_kv_mmu_init(att1_kv_mmu_t *mmu, /* ... */);
+att1_status_t att1_kv_cache_init(att1_kv_cache *cache, /* ... */);
+att1_status_t att1_kv_mmu_create(const att1_kv_mmu_config *config,
+                                 att1_kv_mmu **out_mmu);
+void att1_kv_mmu_destroy(att1_kv_mmu *mmu);
 ```
 
-- Both `_init` functions return `int` (not `att1_status_t`); `-1` on failure.
-- `att1_kv_mmu_t` is fully exposed in `include/att1_kv_mmu.h` (ABI risk noted
-  in M141 API review; opacification deferred).
+- `att1_kv_cache_init` returns `att1_status_t` as of M151.
+- `att1_kv_mmu` is an opaque handle as of M151. Callers create it through
+  `att1_kv_mmu_create` and release it with `att1_kv_mmu_destroy`.
+- `att1_kv_mmu_create` rejects invalid capacity shapes, including
+  `max_positions > max_pages * page_tokens`.
 
 See `docs/kv_mmu.md`.
 
@@ -915,8 +919,6 @@ pre-sharing validation commands, and `git archive` tarball instructions.
 | `ATT1_ERR_QUEUE_EMPTY` | -10 | Queue polled when empty |
 | `ATT1_ERR_TIMEOUT` | -11 | Operation timed out |
 | `ATT1_ERR_ALREADY_STARTED` | -12 | Context already started; double-start prevented |
-| `ATT1_ERR_INVALID` | alias for -1 | Alias for `ATT1_ERR_INVALID_ARG` |
-| `ATT1_ERR_NO_MEMORY` | alias for -2 | Alias for `ATT1_ERR_OOM` |
 
 ### 13.2 Two Error Systems
 
@@ -930,21 +932,21 @@ ATT-1 has two distinct error systems by design:
 These systems are intentionally separate. Do not mix them. AIMU result codes
 are documented in the AIMU Intrinsics and Operations Reference Manual (M147).
 
-### 13.3 `int`-Returning Init Functions
+### 13.3 Remaining `int`-Returning Allocation Functions
 
-Some early allocation and init functions return `int` rather than
-`att1_status_t`:
+M151 migrated `att1_kv_cache_init` to `att1_status_t` and replaced the
+stack-allocated `att1_kv_mmu_init` API with opaque `att1_kv_mmu_create` /
+`att1_kv_mmu_destroy`. The remaining early allocation functions that still use
+plain `int` are:
 
 | Function | Returns |
 |----------|---------|
 | `att1_tensor_alloc_f32` | `int`: `0` success, `-1` failure |
-| `att1_kv_cache_init` | `int`: `0` success, `-1` failure |
-| `att1_kv_mmu_init` | `int`: `0` success, `-1` failure |
 | `att1_q8_matrix_alloc` | `int`: `0` success, `-1` failure |
 | `att1_q4_matrix_alloc` | `int`: `0` success, `-1` failure |
 
-This inconsistency was identified in the M141 API ownership review. Migration
-to `att1_status_t` is deferred.
+This remaining inconsistency was identified in the M141 API ownership review
+and is left for a later, narrower refactor.
 
 ### 13.4 No-Silent-Fallback Rule
 
@@ -986,8 +988,10 @@ The following are explicitly outside the scope of ATT-1:
 |-----------|-------|--------|
 | M147 | AIMU Intrinsics and Operations Reference Manual | Complete — [docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) |
 | M148 | Reference manual consistency pass: cross-check README, INDEX, both reference manuals, RELEASE_READINESS, EXTERNAL_REVIEW_PACKAGE, testing, CUDA validation, and OPERATION_LOG for link consistency, terminology, and status accuracy | Complete — see `docs/OPERATION_LOG.md` |
-| M149 (future) | API refactor: migrate `int`-returning init functions to `att1_status_t`; opacify `att1_kv_mmu` struct; resolve alias duplicates in `att1_status.h` | Deferred |
-| M150+ | Additional fuzzing, regression expansion, or hardware prototype work | TBD |
+| M149 | Documentation lint and link checker | Complete — see `compiler/check_docs.py` |
+| M150 | Release candidate checkpoint | Complete — see [docs/RELEASE_CANDIDATE_M150.md](RELEASE_CANDIDATE_M150.md) |
+| M151 | API opacity and refactor plan | Complete — KV cache/MMU status APIs, opaque KV-MMU handle, status alias cleanup |
+| M152+ | Additional fuzzing, regression expansion, or hardware prototype work | TBD |
 
 See `docs/OPERATION_LOG.md` for the full milestone history and
 `docs/RELEASE_READINESS.md` for the current readiness gate status.

@@ -57,7 +57,7 @@ static void att1_runtime_handle_send_activation(att1_runtime *runtime,
     att1_runtime_impl *impl = (att1_runtime_impl *)runtime->impl;
     const int rc_payload = (command->payload_bytes <=
                             runtime->config.fabric_max_payload_bytes);
-    int rc = ATT1_ERR_INVALID;
+    int rc = ATT1_ERR_INVALID_ARG;
 
     if (rc_payload != 0) {
         pthread_mutex_lock(&impl->fabric_mutex);
@@ -85,7 +85,7 @@ static void att1_runtime_handle_recv_activation(att1_runtime *runtime,
     unsigned char payload[ATT1_RUNTIME_MAX_COMMAND_PAYLOAD];
     att1_fabric_packet packet;
     size_t payload_bytes = 0u;
-    int rc = ATT1_ERR_INVALID;
+    int rc = ATT1_ERR_INVALID_ARG;
 
     pthread_mutex_lock(&impl->fabric_mutex);
     rc = att1_fabric_receive(&runtime->fabric,

@@ -11,8 +11,8 @@ Checks performed:
      must be present on disk.
   3. Forbidden/stale patterns — tracked __pycache__/.pyc/.pyo files,
      absolute local paths in docs, stale "future manual" claims.
-  4. Milestone/status consistency — OPERATION_LOG mentions M150;
-     M149 marked complete; M146/M147 manuals not still "pending".
+  4. Milestone/status consistency — OPERATION_LOG mentions M151;
+     M150 marked complete; M146/M147 manuals not still "pending".
 
 This tool does NOT access the network, execute inference, run real MMIO,
 require CUDA, or modify any file.  All checking is static analysis only.
@@ -365,8 +365,8 @@ def check_stale_claims(repo: Path, report: CheckReport) -> None:
 def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     """
     Validate key milestone/status invariants:
-      - OPERATION_LOG must contain a Milestone 150 entry.
-      - OPERATION_LOG must show M149 as complete.
+      - OPERATION_LOG must contain a Milestone 151 entry.
+      - OPERATION_LOG must show M150 as complete.
       - CPU CI must be described as CPU-only somewhere in testing docs.
       - CUDA signoff described as manual RTX 3090.
     """
@@ -376,20 +376,20 @@ def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     if op_log.exists():
         text = op_log.read_text(encoding="utf-8", errors="replace")
 
-        # M150 should appear (at minimum in "Next Prompt for Codex" or as an entry)
-        if not re.search(r"Milestone\s+150|M150", text):
+        # M151 should appear (at minimum in "Next Prompt for Codex" or as an entry)
+        if not re.search(r"Milestone\s+151|M151", text):
             report.add_error(
                 "milestone-consistency",
                 "docs/OPERATION_LOG.md",
-                "OPERATION_LOG does not mention Milestone 150 (M150 not started or missing)",
+                "OPERATION_LOG does not mention Milestone 151 (M151 not started or missing)",
             )
 
-        # M149 should be listed as complete (have a "Milestone 149:" entry)
-        if not re.search(r"^- Milestone 149:", text, re.MULTILINE):
+        # M150 should be listed as complete (have a "Milestone 150:" entry)
+        if not re.search(r"^- Milestone 150:", text, re.MULTILINE):
             report.add_error(
                 "milestone-consistency",
                 "docs/OPERATION_LOG.md",
-                "OPERATION_LOG has no '- Milestone 149:' entry (M149 not yet recorded as complete)",
+                "OPERATION_LOG has no '- Milestone 150:' entry (M150 not yet recorded as complete)",
             )
 
     # CPU CI described as CPU-only in testing.md or RELEASE_READINESS

@@ -107,39 +107,39 @@ static int test_isolation_and_boundaries(void)
     float range_values[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     float out_key[2] = {0.0f, 0.0f};
     float out_value[2] = {0.0f, 0.0f};
-    att1_kv_mmu mmu;
+    att1_kv_mmu *mmu = NULL;
 
-    if (att1_kv_mmu_init(&mmu, &config) != 0) {
+    if (att1_kv_mmu_create(&config, &mmu) != 0) {
         fputs("kv mmu init failed\n", stderr);
         return 0;
     }
 
-    if ((att1_kv_mmu_create_session(&mmu, 100u) != 0) ||
-        (att1_kv_mmu_create_session(&mmu, 200u) != 0) ||
-        (att1_kv_mmu_create_session(&mmu, 300u) != 0)) {
+    if ((att1_kv_mmu_create_session(mmu, 100u) != 0) ||
+        (att1_kv_mmu_create_session(mmu, 200u) != 0) ||
+        (att1_kv_mmu_create_session(mmu, 300u) != 0)) {
         fputs("kv mmu session setup failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if ((att1_kv_mmu_append(&mmu, 100u, 0u, 0u, key_a0, val_a0) != 0) ||
-        (att1_kv_mmu_append(&mmu, 200u, 0u, 0u, key_b0, val_b0) != 0) ||
-        (att1_kv_mmu_append(&mmu, 100u, 1u, 0u, key_l1, val_l1) != 0)) {
+    if ((att1_kv_mmu_append(mmu, 100u, 0u, 0u, key_a0, val_a0) != 0) ||
+        (att1_kv_mmu_append(mmu, 200u, 0u, 0u, key_b0, val_b0) != 0) ||
+        (att1_kv_mmu_append(mmu, 100u, 1u, 0u, key_l1, val_l1) != 0)) {
         fputs("kv mmu isolation append failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (!read_head(&mmu, 100u, 0u, 0u, 0u, expected_a_head0, expected_a_val0) ||
-        !read_head(&mmu, 100u, 0u, 1u, 0u, expected_a_head1, expected_a_val1) ||
-        !read_head(&mmu, 200u, 0u, 0u, 0u, expected_b_head0, expected_b_val0) ||
-        !read_head(&mmu, 100u, 1u, 0u, 0u, expected_l1_head0, expected_l1_val0)) {
+    if (!read_head(mmu, 100u, 0u, 0u, 0u, expected_a_head0, expected_a_val0) ||
+        !read_head(mmu, 100u, 0u, 1u, 0u, expected_a_head1, expected_a_val1) ||
+        !read_head(mmu, 200u, 0u, 0u, 0u, expected_b_head0, expected_b_val0) ||
+        !read_head(mmu, 100u, 1u, 0u, 0u, expected_l1_head0, expected_l1_val0)) {
         fputs("kv mmu isolation read failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_read(&mmu,
+    if (att1_kv_mmu_read(mmu,
                          100u,
                          0u,
                          0u,
@@ -147,35 +147,35 @@ static int test_isolation_and_boundaries(void)
                          out_key,
                          out_value) != 0) {
         fputs("kv mmu session A read failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
     if (exact_vec(out_key, expected_b_head0, 2u) ||
         exact_vec(out_value, expected_b_val0, 2u)) {
         fputs("kv mmu session isolation returned session B data\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if ((att1_kv_mmu_append(&mmu, 100u, 0u, 1u, key_a1, val_a1) != 0) ||
-        (att1_kv_mmu_append(&mmu, 100u, 0u, 2u, key_a2, val_a2) != 0) ||
-        (att1_kv_mmu_append(&mmu, 100u, 0u, 3u, key_a3, val_a3) != 0)) {
+    if ((att1_kv_mmu_append(mmu, 100u, 0u, 1u, key_a1, val_a1) != 0) ||
+        (att1_kv_mmu_append(mmu, 100u, 0u, 2u, key_a2, val_a2) != 0) ||
+        (att1_kv_mmu_append(mmu, 100u, 0u, 3u, key_a3, val_a3) != 0)) {
         fputs("kv mmu page boundary append failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (!expect_page(&mmu, 100u, 0u, 0u, 0u) ||
-        !expect_page(&mmu, 100u, 0u, 1u, 0u) ||
-        !expect_page(&mmu, 100u, 0u, 2u, 1u) ||
-        !expect_page(&mmu, 100u, 0u, 3u, 1u)) {
+    if (!expect_page(mmu, 100u, 0u, 0u, 0u) ||
+        !expect_page(mmu, 100u, 0u, 1u, 0u) ||
+        !expect_page(mmu, 100u, 0u, 2u, 1u) ||
+        !expect_page(mmu, 100u, 0u, 3u, 1u)) {
         fputs("kv mmu page boundary lookup failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_copy_range(&mmu,
+    if (att1_kv_mmu_copy_range(mmu,
                                100u,
                                0u,
                                1u,
@@ -184,31 +184,31 @@ static int test_isolation_and_boundaries(void)
                                range_keys,
                                range_values) != 0) {
         fputs("kv mmu page-crossing range copy failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
     if (!exact_vec(range_keys, expected_range_keys, 6u) ||
         !exact_vec(range_values, expected_range_values, 6u)) {
         fputs("kv mmu page-crossing range order failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_append(&mmu, 300u, 0u, 5u, key_a0, val_a0) == 0) {
+    if (att1_kv_mmu_append(mmu, 300u, 0u, 5u, key_a0, val_a0) == 0) {
         fputs("kv mmu gap append did not fail\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_append(&mmu, 300u, 0u, 0u, key_a0, val_a0) != 0) {
+    if (att1_kv_mmu_append(mmu, 300u, 0u, 0u, key_a0, val_a0) != 0) {
         fputs("kv mmu sequential append after gap rejection failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if ((att1_kv_mmu_read(&mmu, 300u, 0u, 0u, 1u, out_key, out_value) == 0) ||
-        (att1_kv_mmu_copy_range(&mmu,
+    if ((att1_kv_mmu_read(mmu, 300u, 0u, 0u, 1u, out_key, out_value) == 0) ||
+        (att1_kv_mmu_copy_range(mmu,
                                 300u,
                                 0u,
                                 0u,
@@ -217,21 +217,21 @@ static int test_isolation_and_boundaries(void)
                                 range_keys,
                                 range_values) == 0)) {
         fputs("kv mmu missing sequential position check failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_append(&mmu, 100u, 0u, 1u, key_a1, val_a1) == 0) {
+    if (att1_kv_mmu_append(mmu, 100u, 0u, 1u, key_a1, val_a1) == 0) {
         fputs("kv mmu duplicate append did not fail\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if ((att1_kv_mmu_read(&mmu, 999u, 0u, 0u, 0u, out_key, out_value) == 0) ||
-        (att1_kv_mmu_read(&mmu, 100u, 3u, 0u, 0u, out_key, out_value) == 0) ||
-        (att1_kv_mmu_read(&mmu, 100u, 0u, 2u, 0u, out_key, out_value) == 0) ||
-        (att1_kv_mmu_read(&mmu, 100u, 0u, 0u, 6u, out_key, out_value) == 0) ||
-        (att1_kv_mmu_copy_range(&mmu,
+    if ((att1_kv_mmu_read(mmu, 999u, 0u, 0u, 0u, out_key, out_value) == 0) ||
+        (att1_kv_mmu_read(mmu, 100u, 3u, 0u, 0u, out_key, out_value) == 0) ||
+        (att1_kv_mmu_read(mmu, 100u, 0u, 2u, 0u, out_key, out_value) == 0) ||
+        (att1_kv_mmu_read(mmu, 100u, 0u, 0u, 6u, out_key, out_value) == 0) ||
+        (att1_kv_mmu_copy_range(mmu,
                                 100u,
                                 0u,
                                 0u,
@@ -239,7 +239,7 @@ static int test_isolation_and_boundaries(void)
                                 2u,
                                 range_keys,
                                 range_values) == 0) ||
-        (att1_kv_mmu_copy_range(&mmu,
+        (att1_kv_mmu_copy_range(mmu,
                                 100u,
                                 0u,
                                 0u,
@@ -248,11 +248,11 @@ static int test_isolation_and_boundaries(void)
                                 range_keys,
                                 range_values) == 0)) {
         fputs("kv mmu invalid access checks failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    att1_kv_mmu_free(&mmu);
+    att1_kv_mmu_destroy(mmu);
     return 1;
 }
 
@@ -271,55 +271,92 @@ static int test_trace_counters(void)
     const float value[2] = {3.0f, 4.0f};
     att1_kv_mmu_page_ref page_ref;
     att1_kv_mmu_counters counters;
-    att1_kv_mmu mmu;
+    att1_kv_mmu *mmu = NULL;
 
-    if (att1_kv_mmu_init(&mmu, &config) != 0) {
+    if (att1_kv_mmu_create(&config, &mmu) != 0) {
         fputs("kv mmu counter init failed\n", stderr);
         return 0;
     }
 
-    if (att1_kv_mmu_create_session(&mmu, 1u) != 0) {
+    if (att1_kv_mmu_create_session(mmu, 1u) != 0) {
         fputs("kv mmu counter session failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    att1_kv_mmu_reset_counters(&mmu);
+    att1_kv_mmu_reset_counters(mmu);
 
-    if (att1_kv_mmu_lookup_page(&mmu, 1u, 0u, 0u, &page_ref) == 0) {
+    if (att1_kv_mmu_lookup_page(mmu, 1u, 0u, 0u, &page_ref) == 0) {
         fputs("kv mmu missing lookup unexpectedly hit\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_append(&mmu, 1u, 0u, 0u, key, value) != 0) {
+    if (att1_kv_mmu_append(mmu, 1u, 0u, 0u, key, value) != 0) {
         fputs("kv mmu counter append failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    if (att1_kv_mmu_lookup_page(&mmu, 1u, 0u, 0u, &page_ref) != 0) {
+    if (att1_kv_mmu_lookup_page(mmu, 1u, 0u, 0u, &page_ref) != 0) {
         fputs("kv mmu hit lookup failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    att1_kv_mmu_get_counters(&mmu, &counters);
+    att1_kv_mmu_get_counters(mmu, &counters);
     if ((counters.page_allocations != 1u) ||
         (counters.page_hits != 1u) ||
         (counters.page_misses != 2u) ||
         (counters.append_ops != 1u)) {
         fputs("kv mmu counter values failed\n", stderr);
-        att1_kv_mmu_free(&mmu);
+        att1_kv_mmu_destroy(mmu);
         return 0;
     }
 
-    att1_kv_mmu_free(&mmu);
+    att1_kv_mmu_destroy(mmu);
+    return 1;
+}
+
+static int test_create_validation(void)
+{
+    const att1_kv_mmu_config undersized_pages = {
+        .max_sessions = 1u,
+        .max_pages = 1u,
+        .num_layers = 1u,
+        .num_heads = 1u,
+        .head_dim = 2u,
+        .page_tokens = 2u,
+        .max_positions = 3u
+    };
+    att1_kv_mmu *mmu = NULL;
+
+    if (att1_kv_mmu_create(&undersized_pages, &mmu) != ATT1_ERR_INVALID_ARG) {
+        fputs("kv mmu create accepted undersized page capacity\n", stderr);
+        att1_kv_mmu_destroy(mmu);
+        return 0;
+    }
+
+    if (mmu != NULL) {
+        fputs("kv mmu create left output handle set on failure\n", stderr);
+        att1_kv_mmu_destroy(mmu);
+        return 0;
+    }
+
+    if (att1_kv_mmu_create(&undersized_pages, NULL) != ATT1_ERR_INVALID_ARG) {
+        fputs("kv mmu create null output did not return INVALID_ARG\n", stderr);
+        return 0;
+    }
+
     return 1;
 }
 
 int main(void)
 {
+    if (!test_create_validation()) {
+        return 1;
+    }
+
     if (!test_isolation_and_boundaries()) {
         return 1;
     }

@@ -1,6 +1,8 @@
 #ifndef ATT1_KV_CACHE_H
 #define ATT1_KV_CACHE_H
 
+#include "att1_status.h"
+
 #include <stddef.h>
 
 typedef struct att1_kv_cache {
@@ -19,10 +21,10 @@ typedef struct att1_kv_cache {
  * This is a simple contiguous cache, not the future paged KV-MMU. Storage is
  * laid out as [position][head][head_dim] for both keys and values.
  */
-int att1_kv_cache_init(att1_kv_cache *cache,
-                       size_t max_positions,
-                       size_t num_heads,
-                       size_t head_dim);
+att1_status_t att1_kv_cache_init(att1_kv_cache *cache,
+                                 size_t max_positions,
+                                 size_t num_heads,
+                                 size_t head_dim);
 
 /*
  * Release local cache storage and clear metadata.

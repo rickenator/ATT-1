@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 110: minimal PCIe/AIMU prototype design review (complete).
+Milestone 151: API opacity and refactor plan (complete).
 
 ## Active Task
 
-Prepare Milestone 111.
+Prepare Milestone 152.
 
 ## Hard Rules
 
@@ -183,9 +183,11 @@ Prepare Milestone 111.
 
 - Milestone 150: Release candidate checkpoint — documentation-only checkpoint; `docs/RELEASE_CANDIDATE_M150.md` added: §1 release candidate summary (M150, commit afdc02b, CPU-only by default, not production hardware, not patent disclosure, not public model deployment); §2 validation commands and confirmed baselines at afdc02b (make test: 781 PASS 0 FAIL; make regression: ALL STEPS PASSED 9 steps; make docs-check: PASS 0 errors; make fuzz-smoke: fuzz_loader 17/17 PASS fuzz_json 40/40 PASS; demo_tiny_att1.sh: 14 PASS 0 FAIL); §3 CI status (CPU-only GitHub Actions active; CUDA self-hosted inactive example; no public model downloads; no CUDA in CI); §4 CUDA status (manual RTX 3090 signoff required; CPU CI not CUDA proof; CUDA labeled throughout docs); §5 capability summary covering .att1 format, hostile loader validation, CPU f32/q8/q4, CUDA f32/q8/q4, single and cluster inference, tokenizer/pretokenized input, real tiny conversion paths, placement reports/advisory/scenarios, AIMU command/control simulation, userspace MMIO emulator, command/fabric replay, execution-plan validation and replay, golden/schema/hostile/fuzz/docs regression coverage, public tiny demo; §6 documentation status listing all 16+ key docs with state Current or Complete; §7 artifact policy (tiny fixtures allowed, public weights external, large .att1 external, no cache, no absolute paths); §8 known limitations (no real PCIe, no kernel driver, no FPGA RTL, no production ASIC, no hardware fabric, no hardware-backed AIMU tensor math, tensor-level execution simulated/planned, CUDA signoff manual, large public model artifacts external); §9 outside-review recommendation listing reviewer focus areas (C11 API ownership, hostile-input validation, model format and converter assumptions, backend no-silent-fallback, q4/q8 tolerance policy, AIMU control-plane model, MMIO emulator and replay stack, docs clarity); §10 review decision: READY FOR LIMITED OUTSIDE TECHNICAL REVIEW with CUDA and hardware limitations clearly labeled; §11 next milestone proposals M151–M157; `docs/RELEASE_READINESS.md` updated: §2.2 layer count updated from five to nine (added M149 docs lint/link check layer); §10 outside-review checklist updated to add make docs-check gate and RELEASE_CANDIDATE_M150.md currency check; §11 recommended next milestones updated to M150 as current plus M151–M157; `docs/EXTERNAL_REVIEW_PACKAGE.md` updated: §2 included materials table updated to add RELEASE_CANDIDATE_M150.md row; §4 pre-review validation commands updated to add make docs-check step 3 (renumbered ASAN to 4, UBSAN to 5, fuzz to 6, demo to 7, cache check to 8); §4 expected baselines table updated to add make docs-check row and note regression as 9 steps; `docs/INDEX.md` updated: Release Readiness section updated to add RELEASE_CANDIDATE_M150.md row; `compiler/check_docs.py` updated: _REQUIRED_DOCS expanded from 16 to 17 entries (added docs/RELEASE_CANDIDATE_M150.md); check_milestone_consistency updated to check for M150 and "- Milestone 149:" complete entry (was M149/"- Milestone 148:"); docstring updated to 17 key documents and M150/M149 references; `docs/testing.md` updated: §9 required documents cell updated from "All 16 key documents" to "All 17 key documents" noting release candidate checkpoint; make test: 781 PASS 0 FAIL maintained; make regression: ALL STEPS PASSED (9 steps) maintained; make docs-check: PASS (0 errors) maintained; no C/Makefile/inference/backend/CUDA kernel/tokenizer/binary-format behavior changed; tagged milestone-150-release-candidate-checkpoint.
 
+- Milestone 151: API opacity and refactor plan — `include/att1_status.h` removed deprecated status aliases `ATT1_ERR_INVALID` and `ATT1_ERR_NO_MEMORY`; all C/test callers now use canonical `ATT1_ERR_INVALID_ARG` and `ATT1_ERR_OOM`; `att1_kv_cache_init` now returns `att1_status_t` with `ATT1_ERR_INVALID_ARG` and `ATT1_ERR_OOM` failure detail instead of plain `-1`; `att1_kv_mmu` is now an opaque heap-owned handle with `att1_kv_mmu_create()` / `att1_kv_mmu_destroy()` replacing public stack `att1_kv_mmu_init()` / `att1_kv_mmu_free()`; KV-MMU page/session storage structs moved from the public header into `src/kv_mmu.c`; KV-MMU public operations now return `att1_status_t` while preserving existing pass/fail behavior for callers that check `!= 0`; KV-MMU creation now rejects capacity shapes where `max_positions > max_pages * page_tokens`; `tests/test_kv_mmu.c` updated to use opaque-handle lifecycle and cover invalid create arguments; docs updated in `docs/ATT1_REFERENCE_MANUAL.md`, `docs/api_ownership_review.md`, `docs/kv_mmu.md`, `docs/RELEASE_READINESS.md`, `docs/testing.md`, and `docs/OPERATION_LOG.md`; `compiler/check_docs.py` milestone consistency advanced to M151/M150; no CUDA, binary-format, model-converter, or inference behavior changed.
+
 ## Next Prompt for Codex
 
-Implement Milestone 151 only.
+Implement Milestone 152 only.
 
 ## Known Risks
 - q4 metadata/packing mismatch.

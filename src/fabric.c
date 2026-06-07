@@ -151,7 +151,7 @@ int att1_fabric_create(att1_fabric *fabric,
     size_t tile = 0u;
 
     if ((fabric == NULL) || !att1_fabric_config_valid(config)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     memset(fabric, 0, sizeof(*fabric));
@@ -165,26 +165,26 @@ int att1_fabric_create(att1_fabric *fabric,
         (fabric->barrier_arrived == NULL)) {
         fabric->queues = queues;
         att1_fabric_destroy(fabric);
-        return ATT1_ERR_NO_MEMORY;
+        return ATT1_ERR_OOM;
     }
 
     if (att1_mul_size(config->tile_count, config->queue_capacity, &slots) != 0) {
         fabric->queues = queues;
         att1_fabric_destroy(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (att1_mul_size(slots, config->max_payload_bytes, &payload_bytes) != 0) {
         fabric->queues = queues;
         att1_fabric_destroy(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     fabric->payload_storage = calloc(payload_bytes, sizeof(unsigned char));
     if (fabric->payload_storage == NULL) {
         fabric->queues = queues;
         att1_fabric_destroy(fabric);
-        return ATT1_ERR_NO_MEMORY;
+        return ATT1_ERR_OOM;
     }
 
     for (tile = 0u; tile < config->tile_count; tile++) {
@@ -193,7 +193,7 @@ int att1_fabric_create(att1_fabric *fabric,
         if (queues[tile].packets == NULL) {
             fabric->queues = queues;
             att1_fabric_destroy(fabric);
-            return ATT1_ERR_NO_MEMORY;
+            return ATT1_ERR_OOM;
         }
     }
 
@@ -233,17 +233,17 @@ int att1_fabric_send(att1_fabric *fabric,
                      uint64_t tag)
 {
     if ((fabric == NULL) || (fabric->queues == NULL)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_valid_tile(fabric, source_tile) ||
         !att1_fabric_valid_tile(fabric, target_tile)) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_payload_valid(fabric, payload, payload_bytes)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_queue_has_room(fabric, target_tile)) {
@@ -273,12 +273,12 @@ int att1_fabric_receive(att1_fabric *fabric,
     unsigned char *slot_payload = NULL;
 
     if ((fabric == NULL) || (fabric->queues == NULL) || (out_packet == NULL)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_valid_tile(fabric, tile_id)) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     queues = att1_fabric_queues(fabric);
@@ -292,7 +292,7 @@ int att1_fabric_receive(att1_fabric *fabric,
     if ((packet->payload_bytes > out_payload_capacity) ||
         ((packet->payload_bytes > 0u) && (out_payload == NULL))) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     slot_payload = att1_fabric_slot_payload(fabric, tile_id, queue->head);
@@ -351,21 +351,21 @@ int att1_fabric_broadcast(att1_fabric *fabric,
     size_t sent = 0u;
 
     if ((fabric == NULL) || (fabric->queues == NULL)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_valid_tile(fabric, source_tile)) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_payload_valid(fabric, payload, payload_bytes)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if ((group_tiles == NULL) && (group_count != 0u)) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (group_tiles != NULL) {
@@ -374,7 +374,7 @@ int att1_fabric_broadcast(att1_fabric *fabric,
 
             if (!att1_fabric_valid_tile(fabric, target)) {
                 att1_fabric_count_invalid(fabric);
-                return ATT1_ERR_INVALID;
+                return ATT1_ERR_INVALID_ARG;
             }
 
             if ((target != source_tile) && !att1_fabric_queue_has_room(fabric, target)) {
@@ -501,12 +501,12 @@ int att1_fabric_barrier_arrive(att1_fabric *fabric,
 
     if ((fabric == NULL) || (fabric->barrier_expected == NULL) ||
         (fabric->barrier_arrived == NULL)) {
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (!att1_fabric_valid_tile(fabric, tile_id)) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (fabric->barrier_active == 0) {
@@ -514,7 +514,7 @@ int att1_fabric_barrier_arrive(att1_fabric *fabric,
                                                participants,
                                                participant_count)) {
             att1_fabric_count_invalid(fabric);
-            return ATT1_ERR_INVALID;
+            return ATT1_ERR_INVALID_ARG;
         }
 
         memset(fabric->barrier_arrived, 0, fabric->config.tile_count);
@@ -524,17 +524,17 @@ int att1_fabric_barrier_arrive(att1_fabric *fabric,
                                                     participants,
                                                     participant_count)) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (fabric->barrier_expected[tile_id] == 0u) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     if (fabric->barrier_arrived[tile_id] != 0u) {
         att1_fabric_count_invalid(fabric);
-        return ATT1_ERR_INVALID;
+        return ATT1_ERR_INVALID_ARG;
     }
 
     fabric->barrier_arrived[tile_id] = 1u;
