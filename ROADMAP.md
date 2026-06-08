@@ -69,3 +69,16 @@
 - Driver command queue model.
 - Hardware validation traces.
 - Simulator-to-hardware compatibility checklist.
+
+## Milestone 153: Winning Strategy Execution
+
+- Define one beachhead workload: long-context, bandwidth-bound decode with high KV pressure.
+- Publish hard success metrics: memory movement, latency stability, and cost-per-token versus strong GPU baselines.
+- Freeze command/control interfaces before hardware commitments: register map, command packets, replay schemas.
+- Productize userspace value first: deterministic planning, replay, and validation workflows with no hardware dependency.
+- Keep hardware progression decision-gated: replay fidelity, deterministic traces, feasible placement scenarios, and fabric-route validation must pass before FPGA.
+- Treat CUDA as benchmark infrastructure and credibility gate, not fallback identity.
+- Position governance artifacts as product value: placement reports, execution plans, schema compatibility, hostile-input validation.
+- Establish 2–3 design partners with production-like traces and explicit pass/fail criteria.
+- Package delivery as phased adoption: software validation platform, emulated control-plane integration, optional hardware acceleration.
+- Enforce kill criteria: if no durable repeatable advantage after emulator-phase evidence, pivot to licensing the planning/control-plane stack.

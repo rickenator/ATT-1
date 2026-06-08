@@ -313,3 +313,75 @@ The frozen register map must carry this field without breaking changes across SK
 - No `.att1` binary format changes.
 - No public model weights or generated public `.att1` artifacts committed to Git.
 - No `__pycache__` or `.pyc` files tracked.
+
+---
+
+## 12. Milestone 153 Winning Strategy (Execution Contract)
+
+### 12.1 Beachhead
+
+- Primary target workload: **long-context decode under high KV-cache pressure**.
+- Acceptance rule: ATT-1 must show a repeatable advantage in memory-movement efficiency and latency stability for this workload class before expanding scope.
+
+### 12.2 Proof-First Scoreboard
+
+- Comparisons must be against strong GPU baselines (FlashAttention-class serving paths where available).
+- Program success is measured with explicit metrics:
+  - memory bytes moved per decoded token,
+  - p50/p95/p99 decode latency stability,
+  - cost-per-token estimate under fixed service assumptions.
+
+### 12.3 Contract Freeze Before Hardware
+
+- Treat these interfaces as frozen control-plane contracts for external evaluators:
+  - M104 register map,
+  - M103 command packet format,
+  - M109/M125/M132 replay/planning schemas.
+- Any breaking change requires version bump and compatibility-note entry.
+
+### 12.4 Product-First Userspace Value
+
+- ATT-1 Phase-3 value starts with deterministic software workflows:
+  - placement and scenario planning,
+  - command/fabric/execution replay,
+  - schema and hostile-input validation.
+- Hardware remains optional until software evidence is strong.
+
+### 12.5 Decision-Gated Hardware Path
+
+- FPGA work remains blocked until all gates are met:
+  - userspace MMIO command-cycle pass (M121),
+  - command-plan replay parity pass (M122),
+  - fabric route replay pass (M123),
+  - deterministic trace/counter reproducibility pass,
+  - feasible placement scenarios for target workloads.
+
+### 12.6 CUDA Positioning
+
+- CUDA validation remains a credibility benchmark path.
+- CPU-only CI green is necessary but insufficient for CUDA-touching milestones.
+- CUDA-signoff wording must remain explicit in milestone/release docs.
+
+### 12.7 Artifact and Governance Differentiator
+
+- Core product trust layer is artifact governance:
+  - placement report quality and versioning,
+  - execution/fabric/command plan compatibility,
+  - hostile-input rejection guarantees,
+  - deterministic replay evidence.
+
+### 12.8 Design Partner Program
+
+- Target 2–3 design partners with real trace data and explicit acceptance criteria.
+- Progress quality criterion: repeated wins on partner-like workloads, not broad synthetic claims.
+
+### 12.9 Phased Commercial Packaging
+
+- Phase A: software validation platform.
+- Phase B: emulated control-plane integration.
+- Phase C: optional hardware acceleration path.
+
+### 12.10 Kill Criteria
+
+- If emulator-phase evidence does not show a durable repeatable advantage in the beachhead workload, stop hardware escalation.
+- Fallback strategy: license ATT-1 planning/control-plane validation stack rather than pursuing board/ASIC NRE.
