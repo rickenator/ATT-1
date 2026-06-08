@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 152: deeper fuzzing and coverage expansion (complete).
+Milestone 153: winning strategy execution contract (complete).
 
 ## Active Task
 
-Prepare Milestone 153.
+Prepare Milestone 154.
 
 ## Hard Rules
 
@@ -187,9 +187,11 @@ Prepare Milestone 153.
 
 - Milestone 152: Deeper fuzzing and coverage expansion — deterministic fuzz coverage expanded and made first-class in regression; `tests/fuzz_model_loader.c` grew from 17 to 22 binary loader smoke cases with additional malformed header/config/descriptor/shard layouts; five checked-in hostile JSON fixtures added (`placement_invalid_tile_id_type.json`, `cmd_plan_negative_scale_bytes.json`, `route_missing_destination_tiles.json`, `exec_empty_output_for_attention.json`, `pipeline_invalid_final_status.json`) bringing the hostile fixture corpus to 32 files; `compiler/check_hostile_inputs.py` now rejects data fabric routes without a non-empty `destination_tiles` list; `compiler/test_hostile_inputs.py` now covers 42 checks; `compiler/report_fuzz_coverage.py` added as a static corpus guard requiring at least 22 loader cases, 32 hostile fixtures, and 11 inline JSON mutations; `make fuzz-coverage` added and `make fuzz-smoke` now runs loader, JSON, and coverage checks for 67 deterministic cases; optional guided-fuzzer harness `tests/fuzz_model_loader_guided.c` added with `make fuzz-libfuzzer` and `make fuzz-afl` opt-in build targets plus `compiler/fixtures/fuzz-seeds/README.md`; `compiler/run_full_regression.py` now includes `make fuzz-smoke` as step 10 and `compiler/test_full_regression.py` updated accordingly; docs updated in `docs/testing.md`, `docs/ATT1_REFERENCE_MANUAL.md`, `docs/EXTERNAL_REVIEW_PACKAGE.md`, `docs/RELEASE_CANDIDATE_M150.md`, `docs/RELEASE_READINESS.md`, and `docs/OPERATION_LOG.md`; `compiler/check_docs.py` milestone consistency advanced to M152/M151; no CUDA, binary-format version, model-converter, or inference behavior changed.
 
+- Milestone 153: Winning strategy implementation — strategy execution formalized across planning and governance docs to convert ATT-1 from broad R&D scope into an evidence-gated beachhead program; `docs/aimu_phase3_go_no_go.md` updated with §12 "Milestone 153 Winning Strategy (Execution Contract)" establishing: (1) long-context/high-KV beachhead workload, (2) proof-first scoreboard with memory-movement/latency/cost-per-token metrics, (3) contract-freeze requirements for register map/command packet/replay schemas, (4) userspace product-first value, (5) explicit FPGA-entry decision gates, (6) CUDA-as-credibility policy, (7) artifact-governance differentiation, (8) 2–3 design-partner requirement, (9) phased commercial packaging A/B/C, and (10) hardware kill-criteria with licensing fallback; `ROADMAP.md` updated with Milestone 153 scope bullets mirroring the same execution contract; `compiler/check_docs.py` milestone consistency advanced to M153/M152 so docs linting enforces the new current-milestone baseline; `docs/OPERATION_LOG.md` current milestone advanced to M153 complete and active task moved to prepare M154; no C runtime, inference behavior, CUDA kernels, `.att1` format, or hardware interface behavior changed.
+
 ## Next Prompt for Codex
 
-Implement Milestone 153 only.
+Implement Milestone 154 only.
 
 ## Known Risks
 - q4 metadata/packing mismatch.
