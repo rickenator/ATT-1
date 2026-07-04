@@ -112,12 +112,20 @@ git push -u origin PHASE_2
   bump rules. Appendix B open questions reviewed and confirmed non-blocking
   for the freeze.
 
-**M158: Command packet and completion schema freeze (v1.0)**
+**M158: Command packet and completion schema freeze (v1.0)** — *complete;
+[aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md) §1.5.*
 
 - Freeze the M103 command packet format
   ([aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md))
   and completion record layout, including error/result codes mapped to
   `att1_status_t`.
+- §1.5 declares the 64-byte command packet layout (§3), completion record
+  layout (§7.4), command type enumeration (§4), and error/result code table
+  (§2.8) frozen at v1.0, with frozen-fields vs. reserved-fields policy and
+  version-bump rules mirroring M157. `att1_aimu_result_to_status()`
+  (`include/att1_aimu_cmdq.h`, `src/aimu_cmdq.c`) implements and freezes the
+  `att1_aimu_result` → `att1_status_t` mapping table, exercised by
+  `tests/test_aimu_cmdq.c`.
 
 **M159: DMA descriptor and replay schema freeze (v1.0)**
 
@@ -368,7 +376,7 @@ work, not a Phase 2 gate.
 - [fpga_feasibility.md](fpga_feasibility.md) — M126 FPGA feasibility and gate criteria
 - [phase3_bom_board_options.md](phase3_bom_board_options.md) — board/BOM groundwork
 - [aimu_register_map.md](aimu_register_map.md) — register map frozen v1.0 at M157 (§1.6)
-- [aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md) — command packet model to be frozen at M158
+- [aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md) — command packet model frozen v1.0 at M158 (§1.5)
 - [schema_compatibility.md](schema_compatibility.md) — compatibility contract extended at M159
 - [aimu_fabric_routing.md](aimu_fabric_routing.md) — fabric semantics to be frozen at M160
 - [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md) — M138 signoff plan executed at M155

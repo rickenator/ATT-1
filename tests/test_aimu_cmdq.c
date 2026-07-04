@@ -480,6 +480,70 @@ static int test_result_names(void)
     return 0;
 }
 
+/* M158: att1_aimu_result -> att1_status_t frozen mapping */
+static int test_result_to_status_mapping(void)
+{
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_OK)      == ATT1_OK,
+            "result_to_status_ok");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_BUSY)    == ATT1_OK,
+            "result_to_status_busy");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_PENDING) == ATT1_OK,
+            "result_to_status_pending");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_INVALID_COMMAND)
+                == ATT1_ERR_INVALID_ARG, "result_to_status_invalid_command");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_INVALID_TENSOR)
+                == ATT1_ERR_NOT_FOUND, "result_to_status_invalid_tensor");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_INVALID_DTYPE)
+                == ATT1_ERR_UNSUPPORTED, "result_to_status_invalid_dtype");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_INVALID_SHAPE)
+                == ATT1_ERR_SHAPE, "result_to_status_invalid_shape");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_INVALID_SESSION)
+                == ATT1_ERR_INVALID_ARG, "result_to_status_invalid_session");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_OUT_OF_MEMORY)
+                == ATT1_ERR_OOM, "result_to_status_oom");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_QUEUE_FULL)
+                == ATT1_ERR_QUEUE_FULL, "result_to_status_queue_full");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_KV_OVERFLOW)
+                == ATT1_ERR_STATE, "result_to_status_kv_overflow");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_FABRIC)
+                == ATT1_ERR_IO, "result_to_status_fabric");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_FABRIC_TIMEOUT)
+                == ATT1_ERR_TIMEOUT, "result_to_status_fabric_timeout");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_BARRIER_TIMEOUT)
+                == ATT1_ERR_TIMEOUT, "result_to_status_barrier_timeout");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_CHECKSUM)
+                == ATT1_ERR_BAD_FORMAT, "result_to_status_checksum");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_DMA_FAULT)
+                == ATT1_ERR_IO, "result_to_status_dma_fault");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_ALIGNMENT)
+                == ATT1_ERR_INVALID_ARG, "result_to_status_alignment");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_TIMEOUT)
+                == ATT1_ERR_TIMEOUT, "result_to_status_timeout");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_FENCE_DEADLOCK)
+                == ATT1_ERR_STATE, "result_to_status_fence_deadlock");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_UNSUPPORTED_OP)
+                == ATT1_ERR_UNSUPPORTED, "result_to_status_unsupported_op");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_UNSUPPORTED_DTYPE)
+                == ATT1_ERR_UNSUPPORTED, "result_to_status_unsupported_dtype");
+
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_INTERNAL)
+                == ATT1_ERR_STATE, "result_to_status_internal");
+    REQUIRE(att1_aimu_result_to_status(ATT1_AIMU_ERR_FATAL)
+                == ATT1_ERR_STATE, "result_to_status_fatal");
+
+    REQUIRE(att1_aimu_result_to_status((att1_aimu_result)0x77)
+                == ATT1_ERR_STATE, "result_to_status_unknown");
+
+    PASS("result_to_status_mapping");
+    return 0;
+}
+
 /* get_counters tracks all submitted / completed / failed */
 static int test_counter_tracking(void)
 {
@@ -632,6 +696,7 @@ int main(void)
     rc |= test_dispatch_all_empty();
     rc |= test_cmd_type_names();
     rc |= test_result_names();
+    rc |= test_result_to_status_mapping();
     rc |= test_counter_tracking();
     rc |= test_queue_full_counter();
     rc |= test_command_id_monotonic();

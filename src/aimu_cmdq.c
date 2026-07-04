@@ -457,3 +457,46 @@ const char *att1_aimu_result_name(att1_aimu_result r)
     default:                                 return "UNKNOWN";
     }
 }
+
+/* -------------------------------------------------------------------------
+ * Result-code / att1_status_t mapping  (M158 §1.5 freeze)
+ * ---------------------------------------------------------------------- */
+
+att1_status_t att1_aimu_result_to_status(att1_aimu_result r)
+{
+    switch (r) {
+    case ATT1_AIMU_OK:
+    case ATT1_AIMU_BUSY:
+    case ATT1_AIMU_PENDING:
+        return ATT1_OK;
+
+    case ATT1_AIMU_ERR_INVALID_COMMAND:     return ATT1_ERR_INVALID_ARG;
+    case ATT1_AIMU_ERR_INVALID_TENSOR:      return ATT1_ERR_NOT_FOUND;
+    case ATT1_AIMU_ERR_INVALID_DTYPE:       return ATT1_ERR_UNSUPPORTED;
+    case ATT1_AIMU_ERR_INVALID_SHAPE:       return ATT1_ERR_SHAPE;
+    case ATT1_AIMU_ERR_INVALID_SESSION:     return ATT1_ERR_INVALID_ARG;
+
+    case ATT1_AIMU_ERR_OUT_OF_MEMORY:       return ATT1_ERR_OOM;
+    case ATT1_AIMU_ERR_QUEUE_FULL:          return ATT1_ERR_QUEUE_FULL;
+    case ATT1_AIMU_ERR_KV_OVERFLOW:         return ATT1_ERR_STATE;
+
+    case ATT1_AIMU_ERR_FABRIC:              return ATT1_ERR_IO;
+    case ATT1_AIMU_ERR_FABRIC_TIMEOUT:      return ATT1_ERR_TIMEOUT;
+    case ATT1_AIMU_ERR_BARRIER_TIMEOUT:     return ATT1_ERR_TIMEOUT;
+
+    case ATT1_AIMU_ERR_CHECKSUM:            return ATT1_ERR_BAD_FORMAT;
+    case ATT1_AIMU_ERR_DMA_FAULT:           return ATT1_ERR_IO;
+    case ATT1_AIMU_ERR_ALIGNMENT:           return ATT1_ERR_INVALID_ARG;
+
+    case ATT1_AIMU_ERR_TIMEOUT:             return ATT1_ERR_TIMEOUT;
+    case ATT1_AIMU_ERR_FENCE_DEADLOCK:      return ATT1_ERR_STATE;
+
+    case ATT1_AIMU_ERR_UNSUPPORTED_OP:      return ATT1_ERR_UNSUPPORTED;
+    case ATT1_AIMU_ERR_UNSUPPORTED_DTYPE:   return ATT1_ERR_UNSUPPORTED;
+
+    case ATT1_AIMU_ERR_INTERNAL:            return ATT1_ERR_STATE;
+    case ATT1_AIMU_ERR_FATAL:               return ATT1_ERR_STATE;
+
+    default:                                return ATT1_ERR_STATE;
+    }
+}
