@@ -98,6 +98,7 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 - Milestone 156: Phase 1 → Phase 2 gap audit (complete) — requirements-traceability table for M93 §8 vs. M103–M155 deliverables; see [docs/PHASE1_TO_PHASE2_GAP_AUDIT.md](docs/PHASE1_TO_PHASE2_GAP_AUDIT.md).
 - Milestone 157: Register map freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §1.6 declares `REGISTER_MAP_VERSION` `0x0001_0000` frozen with an explicit frozen-fields vs. reserved-fields policy and version-bump rules; first of four Stage 1 interface freezes toward Gate 1.
 - Milestone 158: Command packet and completion schema freeze v1.0 (complete) — [docs/aimu_pcie_command_requirements.md](docs/aimu_pcie_command_requirements.md) §1.5 declares the 64-byte command packet layout, completion record, command type enumeration, and error/result code table frozen v1.0; `att1_aimu_result_to_status()` freezes the `att1_status_t` error/result-code mapping; second of four Stage 1 interface freezes toward Gate 1.
+- Milestone 159: DMA descriptor and replay schema freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §15.7 freezes the M107 in-process `att1_aimu_dma_desc`/validation/counter contract, and [docs/schema_compatibility.md](docs/schema_compatibility.md) freezes the M113/M122/M123 replay-report schemas plus their v1 compatibility contract; third of four Stage 1 interface freezes toward Gate 1.
 
 ## Stage 1: Interface Freeze
 

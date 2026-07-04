@@ -1360,6 +1360,79 @@ Use `att1_aimu_device_query_tile()` to bound `byte_length` against the tile's
 DMA simulator does not hold a device reference); the integration is the
 caller's responsibility.
 
+### 15.7 Freeze Policy (Milestone 159)
+
+The **in-process DMA descriptor simulator model is frozen at v1.0** as of
+Milestone 159. This freeze is separate from the M157 wire-format freeze in
+§1.6/§5.1/§5.2: M157 froze the BAR0-visible 64-byte descriptor byte layout,
+while M159 freezes the C-side simulator contract implemented by
+`include/att1_aimu_dma.h`, `src/aimu_dma.c`, and `tests/test_aimu_dma.c`.
+Stage 2+ work (emulated endpoint, conformance tests, and any hardware-facing
+bridge that uses the simulator model as a reference) must treat the following
+as the v1.0 baseline.
+
+**Frozen fields** — changing any of the following after v1.0 is a
+backward-incompatible change and requires a **major** simulator-model version
+bump:
+
+- The exact `att1_aimu_dma_desc` field order, widths, and total size: four
+  `uint64_t` fields (`host_addr`, `device_addr`, `src_device_addr`,
+  `dst_device_addr`), five `uint32_t` fields (`byte_length`,
+  `descriptor_id`, `command_id`, `tensor_id`, `checksum`), three `uint16_t`
+  fields (`dim0`, `dim1`, `flags`), three `uint8_t` fields (`dtype`,
+  `quant_group_size`, `direction`), plus `_pad[3]`; total size remains exactly
+  64 bytes.
+- The `att1_aimu_dma_direction` enumeration values
+  (`HOST_TO_DEVICE=0`, `DEVICE_TO_HOST=1`, `DEVICE_TO_DEVICE=2`).
+- The dtype encodings `ATT1_AIMU_DMA_DTYPE_F32=0`, `Q8=1`, `Q4=2`.
+- The flag-bit assignments in §15.2 and the valid-bit mask
+  `ATT1_AIMU_DMA_FLAG_VALID_MASK = 0x000F`.
+- The validation rules in §15.3 and `src/aimu_dma.c`: `byte_length` must be in
+  `[1, 2^28]`; unknown flag bits are rejected; dtype must be one of F32/Q8/Q4;
+  Q4 requires `quant_group_size` = 32 or 64 and `byte_length % (group_size/2)
+  == 0`; all checked addresses must be 64-byte aligned; `addr + byte_length`
+  must not overflow `uint64_t`; registered host/device regions, when present,
+  must fully contain the transfer range; and D2D source/destination ranges must
+  not overlap.
+- The counter name set in `att1_aimu_dma_counters`: `dma_submitted`,
+  `dma_completed`, `dma_failed`, `bytes_host_to_device`,
+  `bytes_device_to_host`, `bytes_device_to_device`, `alignment_failures`,
+  `range_failures`, and `unsupported_flags`.
+- The submit-side failure-accounting behavior in `att1_aimu_dma_submit()`:
+  every submission increments `dma_submitted`; accepted transfers increment
+  `dma_completed` and exactly one direction byte counter; alignment failures map
+  to `alignment_failures`; range/overflow/D2D-overlap failures map to
+  `range_failures`; and unknown flag bits map to `unsupported_flags`.
+
+**Reserved / additive space** — safe to extend in a future **minor** version
+without breaking v1.0 consumers:
+
+- `_pad[3]` remains reserved and must stay zero in v1.0; a future minor version
+  may allocate it only if the struct version is explicitly bumped and old code
+  can continue to zero/ignore it.
+- The placeholder checksum semantics (`checksum`,
+  `ATT1_AIMU_DMA_FLAG_VALIDATE_CHECKSUM`,
+  `ATT1_AIMU_DMA_FLAG_GENERATE_CHECKSUM`) may gain real verification behavior in
+  a future minor version, provided the existing field locations and flag values
+  do not change.
+- Additional counters may be appended only in a future versioned struct/API
+  revision; existing counter names and meanings may not change in place.
+
+**Version bump rules:**
+
+- **Patch**: documentation clarifications only; no struct-layout, enum,
+  validation, or counter-semantics change.
+- **Minor**: additive only — reserved pad bytes or currently-placeholder
+  semantics gain meaning, with old producers/consumers still able to zero or
+  ignore them safely.
+- **Major**: any change to struct size/order, enum values, flag bits,
+  validation semantics, or frozen counter names/meanings.
+
+Version negotiation for replay tools that emit DMA-derived diagnostics is
+captured in `docs/schema_compatibility.md` §12. The DMA simulator model itself
+has no embedded runtime version field today; its v1.0 identity is the
+Milestone-159 freeze contract defined here and in `include/att1_aimu_dma.h`.
+
 ---
 
 ## 16. M108 In-Process Trace/Counter Snapshot

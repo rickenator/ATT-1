@@ -3,9 +3,11 @@
 _Milestone 134 — schema and version compatibility regression suite._
 
 This document defines the version compatibility rules for all ATT-1
-planning and control schema documents.  These rules are enforced by
-`compiler/check_schema_compat.py` and tested by
-`compiler/test_schema_compat.py`.
+planning and control schema documents.  The pipeline-input schemas below are
+enforced by `compiler/check_schema_compat.py` and tested by
+`compiler/test_schema_compat.py`; the frozen diagnostic replay-report schemas
+added at M159 are documented here and regression-checked by the C/Python smoke
+tests because they are tool outputs rather than compiler-ingested inputs.
 
 ---
 
@@ -16,6 +18,9 @@ planning and control schema documents.  These rules are enforced by
 | Placement report | `report_version` | 1 | M98/M99 |
 | Command plan | `command_plan_version` | 1 | M109 |
 | Fabric route report | `header.route_report_version` | 1 | M115/M116 |
+| Command replay report | `replay_report_version` | 1 | M113/M159 |
+| MMIO command replay report | `mmio_replay_report_version` | 1 | M122/M159 |
+| Fabric replay report | `fabric_replay_report_version` | 1 | M123/M159 |
 | Execution plan | `execution_plan_version` | 1 | M125/M128 |
 | Pipeline report | `pipeline_version` | 132 | M132 |
 
@@ -192,6 +197,34 @@ not change without a version bump in the corresponding schema version field.
 `header.fabric_policy`, `header.status`,
 `routes[].route_id`, `routes[].route_type`, `routes[].payload_bytes`
 
+**Command replay report (v1)**
+`replay_report_version`, `plan_path`, `model_id`, `session_id`, `tile_count`,
+`command_count`, `commands_replayed`, `completions_seen`, `failed_commands`,
+`unsupported_commands`, `dma_validations`, `doorbell_count`, `fence_final`,
+`trace_event_count`, `commands_by_type`, `commands_by_tile`, `status`, `notes`
+
+**MMIO command replay report (v1)**
+`mmio_replay_report_version`, `emulator`, `milestone`, `plan_path`,
+`bar0_file`, `model_id`, `session_id`, `tile_count`, `command_count`,
+`commands_replayed`, `completions_seen`, `failed_commands`,
+`unsupported_commands`, `dma_validations`, `doorbell_count`,
+`mmio_doorbell_count`, `fence_final`, `trace_event_count`, `device_id`,
+`register_map_version`, `mmio_tile_count`, `commands_by_type`,
+`commands_by_tile`, `status`, `notes`
+
+**Fabric replay report (v1)**
+`fabric_replay_report_version`, `route_report_path`, `route_count`,
+`routes_replayed`, `routes_failed`, `tile_count`, `aggregate_packets_sent`,
+`aggregate_packets_received`, `aggregate_payload_bytes_sent`,
+`aggregate_payload_bytes_received`, `reductions_started`,
+`reductions_completed`, `barriers_started`, `barriers_completed`,
+`trace_events`, `required_fabric_gib_sec`, `fabric_status`, `status`, `notes`,
+`tiles[].tile_id`, `tiles[].packets_sent`, `tiles[].packets_received`,
+`tiles[].payload_bytes_sent`, `tiles[].payload_bytes_received`,
+`tiles[].reductions_started`, `tiles[].reductions_completed`,
+`tiles[].barriers_started`, `tiles[].barriers_completed`,
+`tiles[].trace_events`, `tiles[].route_failures`
+
 **Execution plan (v1)**
 `execution_plan_version`, `tile_count`, `command_count`, `status`,
 `commands[].plan_command_id`, `commands[].command_type`,
@@ -307,3 +340,57 @@ suite reports a regression (`FAIL`).
   the error(s) described by its name.
 - Valid golden fixtures live in `compiler/fixtures/` and must continue to
   return exit 0 from `check_hostile_inputs.py`.
+
+---
+
+## 12. Compatibility Contract (Milestone 159)
+
+Milestone 159 freezes the M107 in-process DMA descriptor model and the
+M113/M122/M123 replay-report schemas at **v1.0**.
+
+### 12.1 What consumers must accept
+
+- Consumers of replay reports must accept version `1` for
+  `replay_report_version`, `mmio_replay_report_version`, and
+  `fabric_replay_report_version`.
+- Consumers must continue to accept unknown optional fields in these reports.
+  Additive metadata is forward-compatible and must not cause rejection when the
+  version field remains `1`.
+- Hardware implementations are **not required** to ingest these diagnostic JSON
+  reports directly; however, any bridge, conformance harness, or log-ingestion
+  path that does consume them must apply the same compatibility rules.
+- DMA-descriptor producers and consumers inside the software simulator stack
+  must accept the exact v1.0 `att1_aimu_dma_desc` layout, enum values, flag-bit
+  assignments, validation rules, and counter-name set frozen in
+  `docs/aimu_register_map.md` §15.7 and `include/att1_aimu_dma.h`.
+
+### 12.2 What consumers may reject
+
+- Replay reports may be rejected if the version field is missing, is not a JSON
+  integer, or names a future/unsupported version.
+- Replay reports may also be rejected when a required stable key is missing or
+  has the wrong JSON type for the declared version.
+- DMA descriptors may be rejected when they violate any frozen M107 validation
+  rule: invalid direction/dtype, `byte_length` out of range, unsupported flag
+  bits, invalid Q4 group size or payload multiple, misalignment, region miss,
+  overflow, or D2D overlap.
+- Because the DMA simulator model has no embedded per-descriptor version field
+  in v1.0, consumers may reject any out-of-band attempt to reinterpret the
+  struct with a different size, field order, or enum/flag numbering while still
+  claiming Milestone-159 compatibility.
+
+### 12.3 Version negotiation
+
+- The three replay-report schemas negotiate by explicit version field: producer
+  writes version `1`; consumer checks that the field exists, is an integer, and
+  is within the supported set before trusting any other stable key names.
+- Future additive replay-report extensions should keep the version at `1` when
+  old consumers can safely ignore the new fields; any rename/removal or type
+  change to a frozen stable key requires a version bump.
+- The DMA descriptor simulator model negotiates by frozen-interface contract
+  rather than an inline version field. In practice, software/hardware stacks use
+  the Stage-1 freeze set together: register map v1.0 (M157), command/completion
+  schema v1.0 (M158), DMA simulator model v1.0 and replay schemas v1.0 (M159),
+  and fabric/barrier semantics v1.0 (M160). A future incompatible DMA-model
+  revision therefore requires a new documented versioned contract and matching
+  conformance coverage before it can be claimed as supported.

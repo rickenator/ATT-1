@@ -74,6 +74,7 @@ from simulate_fabric_bandwidth import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 REPLAY_VERSION: int = 1
+FABRIC_REPLAY_REPORT_VERSION: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +362,7 @@ def _print_text_report(result: ReplayResult) -> None:
 
 def _build_json_report(result: ReplayResult) -> dict:
     return {
+        "fabric_replay_report_version": FABRIC_REPLAY_REPORT_VERSION,
         "replay_version": REPLAY_VERSION,
         "route_report_path": result.route_report_path,
         "route_count": result.route_count,

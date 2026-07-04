@@ -37,6 +37,7 @@
 #define HOST_BASE_ADDR    UINT64_C(0x0001000000000000)
 #define DEV_BASE_ADDR     UINT64_C(0x0002000000000000)
 #define ADDR_STRIDE       UINT64_C(0x0000000000010000) /* 64 KiB per slot  */
+#define REPLAY_REPORT_VERSION 1
 
 /* =========================================================================
  * Parsed plan types
@@ -576,6 +577,7 @@ static void emit_json_report(const plan_t       *plan,
     int i;
 
     fprintf(fp, "{\n");
+    fprintf(fp, "  \"replay_report_version\": %d,\n", REPLAY_REPORT_VERSION);
     fprintf(fp, "  \"plan_path\": \"%s\",\n",          plan_path);
     fprintf(fp, "  \"model_id\": \"%s\",\n",           plan->header.model_id);
     fprintf(fp, "  \"session_id\": \"%s\",\n",         plan->header.session_id);

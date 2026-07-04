@@ -3899,14 +3899,15 @@ static int check_placement_scenarios_smoke(void)
  *   3. Command count in plan matches expected 14 for the valid fixture.
  *   4. Deterministic: two replay runs produce identical stdout.
  *   5. LOAD/VALIDATE/BARRIER/QUERY/TRACE command types replayed (text output).
- *   6. --report-json produces JSON with required top-level keys.
- *   7. Invalid tile_id in plan → exit non-zero (strict).
- *   8. Non-strict mode + EXEC_MATMUL expected_unsupported → exit 0.
- *   9. Strict mode + EXEC_MATMUL expected_unsupported → exit 1.
- *  10. Malformed JSON plan → exit 2.
- *  11. Missing required plan field → exit 2 (via Python wrapper).
- *  12. Python wrapper: valid plan → exit 0 (delegates to binary).
- *  13. No CUDA dependency: replay binary does not require CUDA=1.
+ *   6. --report-json includes replay_report_version = 1.
+ *   7. --report-json produces JSON with required top-level keys.
+ *   8. Invalid tile_id in plan → exit non-zero (strict).
+ *   9. Non-strict mode + EXEC_MATMUL expected_unsupported → exit 0.
+ *  10. Strict mode + EXEC_MATMUL expected_unsupported → exit 1.
+ *  11. Malformed JSON plan → exit 2.
+ *  12. Missing required plan field → exit 2 (via Python wrapper).
+ *  13. Python wrapper: valid plan → exit 0 (delegates to binary).
+ *  14. No CUDA dependency: replay binary does not require CUDA=1.
  */
 static int check_aimu_replay_smoke(void)
 {
@@ -3989,11 +3990,18 @@ static int check_aimu_replay_smoke(void)
     }
     puts("PASS: aimu_replay: text report contains replay counters");
 
-    /* 5. --report-json produces JSON with required top-level keys. */
+    /* 5. --report-json includes replay_report_version = 1. */
     if (read_file("build/m113_replay.json", output, sizeof(output)) != 0) {
         fputs("aimu_replay: cannot re-read JSON report\n", stderr);
         return -1;
     }
+    if (strstr(output, "\"replay_report_version\": 1") == NULL) {
+        fputs("aimu_replay: JSON report missing replay_report_version=1\n", stderr);
+        return -1;
+    }
+    puts("PASS: aimu_replay: JSON report includes replay_report_version=1");
+
+    /* 6. --report-json produces JSON with required top-level keys. */
     if ((strstr(output, "\"plan_path\"")        == NULL) ||
         (strstr(output, "\"model_id\"")         == NULL) ||
         (strstr(output, "\"commands_replayed\"") == NULL) ||
@@ -4115,10 +4123,11 @@ static int check_aimu_replay_smoke(void)
  *   5. Zero payload data route fails (exit non-zero).
  *   6. Reduction route missing behavior fails (exit non-zero).
  *   7. Reduction fixture: barriers_completed and reductions_completed > 0.
- *   8. Strict mode fails on route_status=fail (uses zero_payload → validator
+ *   8. --report-json includes fabric_replay_report_version = 1.
+ *   9. Strict mode fails on route_status=fail (uses zero_payload → validator
  *      rejects before replay, so strict on missing_reduction fixture).
- *   9. Malformed report fails clearly (exit 2).
- *  10. No tracked Python cache artifacts in git index.
+ *  10. Malformed report fails clearly (exit 2).
+ *  11. No tracked Python cache artifacts in git index.
  */
 static int check_fabric_route_replay_smoke(void)
 {
@@ -4252,6 +4261,13 @@ static int check_fabric_route_replay_smoke(void)
         return -1;
     }
     puts("PASS: fabric_route_replay: --report-json contains all required keys");
+
+    if (strstr(output, "\"fabric_replay_report_version\": 1") == NULL) {
+        fputs("fabric_route_replay: JSON report missing fabric_replay_report_version=1\n",
+              stderr);
+        return -1;
+    }
+    puts("PASS: fabric_route_replay: --report-json includes fabric_replay_report_version=1");
 
     /* 8. Strict mode fails on missing_reduction (M116 validation fails in strict). */
     if (run_command(
