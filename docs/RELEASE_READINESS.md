@@ -276,7 +276,7 @@ Run through this list before sending the repository to any external party.
 
 ## 11. Recommended Next Milestones
 
-Milestones M140–M155 are complete. See `docs/OPERATION_LOG.md` for their full entries.
+Milestones M140–M156 are complete. See `docs/OPERATION_LOG.md` for their full entries.
 
 | Milestone | Working title | Scope |
 |-----------|---------------|-------|
@@ -286,5 +286,5 @@ Milestones M140–M155 are complete. See `docs/OPERATION_LOG.md` for their full 
 | M153 | Winning strategy implementation | Evidence-gated beachhead strategy and hardware progression contract — complete |
 | M154 | Phase 2 kickoff and baseline freeze | Phase 2 plan, baseline, Definition of Done, and Stage 0 roadmap — complete |
 | M155 | CUDA signoff closure | RTX 3090 CUDA signoff complete; see `docs/CUDA_SIGNOFF_M155.md` |
-| M156 | Phase 1 to Phase 2 gap audit | **current next step**: requirements-traceability table for M93 §8 vs. M103-M155 deliverables |
-| M157 | Register map freeze v1.0 | Freeze BAR0 layout, doorbell, status, capability, and counter registers |
+| M156 | Phase 1 to Phase 2 gap audit | Complete; see `docs/PHASE1_TO_PHASE2_GAP_AUDIT.md` |
+| M157 | Register map freeze v1.0 | **current next step**: Freeze BAR0 layout, doorbell, status, capability, and counter registers |

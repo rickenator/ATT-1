@@ -64,6 +64,7 @@ in `docs/` unless noted otherwise.
 |----------|-------------|
 | [aimu_architecture.md](aimu_architecture.md) | AIMU tile architecture: command queue, MMIO register map, DMA model, execution phases |
 | [PHASE2_PLAN.md](PHASE2_PLAN.md) | Phase 2 roadmap (M154–M184): stages, gates, Definition of Done, frozen entry baseline, risks |
+| [PHASE1_TO_PHASE2_GAP_AUDIT.md](PHASE1_TO_PHASE2_GAP_AUDIT.md) | Phase 1 → Phase 2 gap audit (M156): requirements-traceability table for M93 §8 vs. M103–M155 deliverables |
 | [aimu_register_map.md](aimu_register_map.md) | AIMU MMIO register map: BAR0 layout, control/status registers, DMA descriptors |
 | → [AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) | See Reference Manuals section: AIMU command packet reference, EXEC/LOAD/KV/FABRIC/TRACE semantics, MMIO interaction, replay tools |
 | [aimu_pcie_prototype_review.md](aimu_pcie_prototype_review.md) | AIMU PCIe prototype milestone history and review: M1–M139 entries |

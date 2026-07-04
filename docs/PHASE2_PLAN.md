@@ -46,7 +46,7 @@ Recorded at the Phase 2 kickoff commit:
 |---|---|
 | `make clean && make && make test` | 782 PASS, 0 FAIL (all C suites) |
 | `make regression` | ALL STEPS PASSED (10 steps, incl. golden baselines, schema, hostile-input, pipeline smoke, docs lint, fuzz smoke/coverage) |
-| CUDA status | Implemented; RTX 3090 signoff complete at M155 |
+| CUDA status | Implemented; manual RTX 3090 signoff closed at M155 (M138 plan) |
 | Schema versions | Placement report, command plan, fabric route, execution plan, and pipeline schemas as validated by M134/M135 tooling |
 
 Git bookkeeping for the phase boundary (maintainer step, requires push
@@ -75,7 +75,7 @@ git push -u origin PHASE_2
   (post-milestone checklist unchanged).
 - Declare Phase 2 exit criteria up front (§9, "Phase 2 Definition of Done").
 
-**M155: CUDA signoff closure (carry-over debt)**
+**M155: CUDA signoff closure (carry-over debt)** — *complete.*
 
 - Executed the M138 plan on the RTX 3090 host:
   `make clean && make CUDA=1 && make test CUDA=1` plus milestone-specific
@@ -85,7 +85,8 @@ git push -u origin PHASE_2
   tolerances (f32 exact, q8 ≤ 0.15, q4 ≤ 0.35) are the Phase 2 hardware
   acceptance tolerances (M93 §8.13).
 
-**M156: Phase 1 → Phase 2 gap audit**
+**M156: Phase 1 → Phase 2 gap audit** — *complete;
+[PHASE1_TO_PHASE2_GAP_AUDIT.md](PHASE1_TO_PHASE2_GAP_AUDIT.md).*
 
 - Systematic diff of M93 §8 requirements against what M103–M153 actually
   delivered; produce a requirements-traceability table
