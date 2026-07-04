@@ -96,6 +96,7 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 - Milestone 154: Phase 2 kickoff and baseline freeze — PHASE_1 tag, PHASE_2 branch, frozen baseline record, `docs/PHASE2_PLAN.md`, Phase 2 Definition of Done declared.
 - Milestone 155: CUDA signoff closure (complete) — M138 plan executed on RTX 3090; CUDA tolerances (f32 exact, q8 ≤ 0.15, q4 ≤ 0.35) are now the Phase 2 hardware acceptance tolerances.
 - Milestone 156: Phase 1 → Phase 2 gap audit (complete) — requirements-traceability table for M93 §8 vs. M103–M155 deliverables; see [docs/PHASE1_TO_PHASE2_GAP_AUDIT.md](docs/PHASE1_TO_PHASE2_GAP_AUDIT.md).
+- Milestone 157: Register map freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §1.6 declares `REGISTER_MAP_VERSION` `0x0001_0000` frozen with an explicit frozen-fields vs. reserved-fields policy and version-bump rules; first of four Stage 1 interface freezes toward Gate 1.
 
 ## Stage 1: Interface Freeze
 
