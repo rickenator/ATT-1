@@ -79,7 +79,7 @@ in `docs/` unless noted otherwise.
 
 | Document | Description |
 |----------|-------------|
-| [aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md) | PCIe command plane requirements: host↔AIMU command protocol, queue design |
+| [aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md) | PCIe command plane requirements: host↔AIMU command protocol, queue design; **frozen v1.0 at M158** (§1.5) |
 
 ---
 

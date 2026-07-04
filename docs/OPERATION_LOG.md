@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 157: Register map freeze (v1.0) (complete).
+Milestone 158: Command packet and completion schema freeze (v1.0) (complete).
 
 ## Active Task
 
-Prepare Milestone 158.
+Prepare Milestone 159.
 
 ## Hard Rules
 
@@ -195,9 +195,11 @@ Prepare Milestone 158.
 
 - Milestone 157: Register map freeze (v1.0) — `docs/aimu_register_map.md` (M104) frozen: header updated with an explicit "Freeze status: FROZEN v1.0 (Milestone 157)" banner declaring `REGISTER_MAP_VERSION` = `0x0001_0000`; new §1.6 "Freeze Policy (Milestone 157)" added defining (a) frozen fields — offset/width/access-type of every named register in §2–§9, bit-field layouts, BAR0 region boundaries (§1.5/Appendix A), the error code table (§9.1–§9.2), the DMA descriptor layout (§5.1–§5.2), and the byte-order/alignment/64-bit-pair conventions (§1.1); (b) reserved fields that remain open for additive change — reserved bits within frozen registers, reserved offset ranges in Appendix A, tile windows beyond 16 tiles, and the ten Appendix B open engineering questions (reviewed and confirmed non-blocking for the freeze — each is a driver/firmware policy choice, an already-defaulted behavioral choice, or a scope decision deferred to a later milestone); (c) patch/minor/major version-bump rules tied to `REGISTER_MAP_VERSION` and `FEATURE_FLAGS_LOW/HIGH` negotiation (§1.4); "Future Milestone Split" (§13) table updated with an M157 row marked Complete; confirms the existing `ATT1_AIMU_REGISTER_MAP_VERSION` constant (`include/att1_aimu_device.h`, already `0x0001_0000` since M106/M111) as the contractual v1.0 baseline — no C code, register offsets, or field values changed; `docs/PHASE2_PLAN.md` M157 entry marked complete and linked to §1.6; `ROADMAP.md` Milestone 157 line added; `docs/INDEX.md` register map row annotated "frozen v1.0 at M157"; `compiler/check_docs.py` milestone consistency advanced to M157/M156; `docs/OPERATION_LOG.md` current milestone advanced to M157 complete and active task moved to prepare M158; make test: 782 PASS 0 FAIL maintained; make regression: ALL STEPS PASSED (10 steps) maintained; no C runtime, inference behavior, CUDA kernels, `.att1` format, or hardware interface behavior changed — documentation/interface-freeze milestone only.
 
+- Milestone 158: Command packet and completion schema freeze (v1.0) — `docs/aimu_pcie_command_requirements.md` (M103) frozen: header updated with an explicit "Freeze status: FROZEN v1.0 (Milestone 158)" banner; new §1.5 "Freeze Policy (Milestone 158)" added defining (a) frozen fields — the 64-byte command packet layout (§3.1), the command type enumeration (§4), the 16-byte completion record layout (§7.4), the error/result code table (§2.8), the CRC32/ISO-HDLC checksum algorithm and placement (§3.2), the fence/barrier model (§7.2–§7.3), and a new explicit `att1_aimu_result` → `att1_status_t` mapping table; (b) reserved fields that remain open for additive change — reserved error codes `0x0C`–`0xFE`, unused `command_type` values, per-command `op_param_0`/`op_param_1` sub-field extensions, reserved `trace_flags` bits, and the M160-deferred barrier wire representation; (c) patch/minor/major version-bump rules mirroring M157 §1.6; new `att1_aimu_result_to_status()` function added to `include/att1_aimu_cmdq.h`/`src/aimu_cmdq.c` implementing and freezing the result-code → `att1_status_t` mapping (`ATT1_AIMU_OK/BUSY/PENDING`→`ATT1_OK`, `ATT1_AIMU_ERR_INVALID_COMMAND/INVALID_SESSION/ALIGNMENT`→`ATT1_ERR_INVALID_ARG`, `ATT1_AIMU_ERR_INVALID_TENSOR`→`ATT1_ERR_NOT_FOUND`, `ATT1_AIMU_ERR_INVALID_DTYPE/UNSUPPORTED_OP/UNSUPPORTED_DTYPE`→`ATT1_ERR_UNSUPPORTED`, `ATT1_AIMU_ERR_INVALID_SHAPE`→`ATT1_ERR_SHAPE`, `ATT1_AIMU_ERR_OUT_OF_MEMORY`→`ATT1_ERR_OOM`, `ATT1_AIMU_ERR_QUEUE_FULL`→`ATT1_ERR_QUEUE_FULL`, `ATT1_AIMU_ERR_KV_OVERFLOW/FENCE_DEADLOCK/INTERNAL/FATAL`→`ATT1_ERR_STATE`, `ATT1_AIMU_ERR_FABRIC/DMA_FAULT`→`ATT1_ERR_IO`, `ATT1_AIMU_ERR_FABRIC_TIMEOUT/BARRIER_TIMEOUT/TIMEOUT`→`ATT1_ERR_TIMEOUT`, `ATT1_AIMU_ERR_CHECKSUM`→`ATT1_ERR_BAD_FORMAT`, unrecognised→`ATT1_ERR_STATE`); new `test_result_to_status_mapping` unit test added to `tests/test_aimu_cmdq.c` exercising every enumerated result code (23 unit tests total in that suite, up from 22); `docs/PHASE2_PLAN.md` M158 entry marked complete and linked to §1.5; `ROADMAP.md` Milestone 158 line added and Stage 1 line updated; `docs/INDEX.md` command requirements row annotated "frozen v1.0 at M158"; `compiler/check_docs.py` milestone consistency advanced to M158/M157; `docs/OPERATION_LOG.md` current milestone advanced to M158 complete and active task moved to prepare M159; make test: 783 PASS 0 FAIL (one new unit test added); make regression: ALL STEPS PASSED (10 steps) maintained; no other C runtime, inference behavior, CUDA kernels, `.att1` format, or hardware interface behavior changed beyond the new mapping helper and its test.
+
 ## Next Prompt for Codex
 
-Implement Milestone 158 only.
+Implement Milestone 159 only.
 
 ## Known Risks
 - q4 metadata/packing mismatch.

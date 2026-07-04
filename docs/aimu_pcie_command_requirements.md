@@ -7,12 +7,26 @@ backends, shard metadata, and placement scenario tools as reference material.
 This is a specification document only.  No C runtime, binary format, or
 inference behavior is changed.
 
+**Freeze status: FROZEN v1.0 (Milestone 158).**  The command packet layout
+(§3), completion record layout (§7.4), command type enumeration (§4), and
+error/result code table (§2.8) — together with their mapping onto
+`att1_status_t` — are frozen as of Milestone 158.  See §1.5 for the
+frozen-fields vs. reserved-fields policy, the version-bump rules, and the
+result-code mapping table.
+
 Relationship to M104:
 - M103 (this document) defines the **command packet format and protocol**.
 - M104 (`docs/aimu_register_map.md`) defines the **MMIO register map** that
   a host driver uses to configure command queues, discover tiles, and read
   counters.  The §2 "Host/AIMU Control Plane" fields described below correspond
   directly to the M104 global device registers (§2) and per-tile windows (§3).
+- M105 (`include/att1_aimu_cmdq.h`, `src/aimu_cmdq.c`) implements an
+  in-process command-queue simulator using a C-native (not wire-byte-identical)
+  layout of the packet fields described in §3, plus the completion record
+  described in §7.4.
+- M158 (§1.5) freezes this specification's command/completion schema at v1.0
+  and adds the `att1_aimu_result` → `att1_status_t` mapping
+  (`att1_aimu_result_to_status()`, `include/att1_aimu_cmdq.h`).
 
 ---
 
@@ -103,6 +117,104 @@ on-chip AIMU fabric while retaining the same:
 The host control plane (§2) transitions from a PCIe BAR-mapped register
 interface to a high-speed chip-to-chip link, but the logical command/response
 protocol remains identical.
+
+### 1.5 Freeze Policy (Milestone 158)
+
+This command/completion schema is declared **frozen at v1.0** as of
+Milestone 158. Freezing means the wire-level command packet contract in §3
+and §4, the completion record contract in §7.4, and the error/result code
+model in §2.8 are now the interface that Stage 2+ work (the emulated PCIe
+endpoint, `backend_pcie.c`, and any eventual FPGA/ASIC prototype) must
+implement and that the M161 conformance suite validates against. This
+mirrors the M157 (register map), M159 (DMA/replay schema), and M160
+(fabric/barrier semantics) freezes that complete Phase 2 Stage 1 at Gate 1.
+
+**Frozen fields** — covered by this freeze; changing any of the following
+after v1.0 requires a command-schema **major** version bump and is a
+backward-incompatible change:
+
+- The 64-byte command packet layout (§3.1): field offsets, widths, and
+  ordering (`command_id` through `status`).
+- The command type enumeration and byte values in §4 (`LOAD_TENSOR_TILE`
+  `0x01` through `QUERY_COUNTERS` `0x51`).
+- The 16-byte completion record layout in §7.4 (`command_id`, `tile_id`,
+  `session_id`, `latency_us`, `result_code`, `trace_write_ptr`).
+- The error/result code table in §2.8 (`ERR_NONE` `0x00` through
+  `ERR_FATAL` `0xFF`) and the fatal/recoverable/trace-available error-flag
+  bits.
+- The checksum algorithm (CRC32/ISO-HDLC over bytes 0–55, §3.2) and its
+  placement at bytes 56–59.
+- The fence/barrier model in §7.2–§7.3: fence ID 0 meaning "no dependency",
+  intra-tile in-order execution, and `TILE_BARRIER` all-or-nothing
+  semantics (the detailed barrier wire representation is finalized at
+  M160).
+- The `att1_aimu_result` → `att1_status_t` mapping implemented by
+  `att1_aimu_result_to_status()` (`include/att1_aimu_cmdq.h`,
+  `src/aimu_cmdq.c`):
+
+  | `att1_aimu_result` | `att1_status_t` |
+  |---|---|
+  | `ATT1_AIMU_OK` / `ATT1_AIMU_BUSY` / `ATT1_AIMU_PENDING` | `ATT1_OK` |
+  | `ATT1_AIMU_ERR_INVALID_COMMAND` | `ATT1_ERR_INVALID_ARG` |
+  | `ATT1_AIMU_ERR_INVALID_TENSOR` | `ATT1_ERR_NOT_FOUND` |
+  | `ATT1_AIMU_ERR_INVALID_DTYPE` | `ATT1_ERR_UNSUPPORTED` |
+  | `ATT1_AIMU_ERR_INVALID_SHAPE` | `ATT1_ERR_SHAPE` |
+  | `ATT1_AIMU_ERR_INVALID_SESSION` | `ATT1_ERR_INVALID_ARG` |
+  | `ATT1_AIMU_ERR_OUT_OF_MEMORY` | `ATT1_ERR_OOM` |
+  | `ATT1_AIMU_ERR_QUEUE_FULL` | `ATT1_ERR_QUEUE_FULL` |
+  | `ATT1_AIMU_ERR_KV_OVERFLOW` | `ATT1_ERR_STATE` |
+  | `ATT1_AIMU_ERR_FABRIC` | `ATT1_ERR_IO` |
+  | `ATT1_AIMU_ERR_FABRIC_TIMEOUT` | `ATT1_ERR_TIMEOUT` |
+  | `ATT1_AIMU_ERR_BARRIER_TIMEOUT` | `ATT1_ERR_TIMEOUT` |
+  | `ATT1_AIMU_ERR_CHECKSUM` | `ATT1_ERR_BAD_FORMAT` |
+  | `ATT1_AIMU_ERR_DMA_FAULT` | `ATT1_ERR_IO` |
+  | `ATT1_AIMU_ERR_ALIGNMENT` | `ATT1_ERR_INVALID_ARG` |
+  | `ATT1_AIMU_ERR_TIMEOUT` | `ATT1_ERR_TIMEOUT` |
+  | `ATT1_AIMU_ERR_FENCE_DEADLOCK` | `ATT1_ERR_STATE` |
+  | `ATT1_AIMU_ERR_UNSUPPORTED_OP` | `ATT1_ERR_UNSUPPORTED` |
+  | `ATT1_AIMU_ERR_UNSUPPORTED_DTYPE` | `ATT1_ERR_UNSUPPORTED` |
+  | `ATT1_AIMU_ERR_INTERNAL` | `ATT1_ERR_STATE` |
+  | `ATT1_AIMU_ERR_FATAL` | `ATT1_ERR_STATE` |
+  | any unrecognised value | `ATT1_ERR_STATE` |
+
+  This mapping lets host-side code written against the generic
+  `att1_status_t` API (used throughout the rest of the C11 simulator) treat
+  AIMU command failures uniformly, while `att1_aimu_result_name()` /
+  `att1_aimu_completion.result_code` retain the full-fidelity hardware error
+  for diagnostics and the M161 conformance suite.
+
+**Reserved fields — not frozen, safe to extend:**
+
+- The reserved offset ranges and code points already called out as
+  "reserved" in §2.8 (error codes `0x0C`–`0xFE`) and §4 (unused
+  `command_type` values outside the ranges listed) — new commands and error
+  codes may be added here in a future minor version.
+- The `op_param_0` / `op_param_1` interpretation for a given command type
+  (§4) may gain additional encoded sub-fields in a future minor version, as
+  long as existing bit patterns already in use keep their meaning.
+- `trace_flags` reserved bits (§3.1) beyond `bit0`/`bit1`.
+- The precise barrier wire representation deferred to M160 (§1.4 open
+  question M93 §8.15-4: PCIe atomic CAS vs. dedicated register) — this does
+  not change the packet layout frozen here, only the semantics of an
+  already-reserved encoding choice.
+
+**Version bump rules** (mirrors M157 §1.6):
+
+- **Patch**: documentation clarification only; no field, code, or mapping
+  change.
+- **Minor**: additive only — new command types, new reserved error codes,
+  new `op_param_*` sub-fields within existing commands. Existing host
+  drivers built against v1.0 continue to work unmodified.
+- **Major**: any change to a frozen field's offset, width, meaning, or
+  removal; any change to an already-assigned command type or error code
+  value; or any change to the `att1_aimu_result` → `att1_status_t` mapping
+  table above.
+
+Implementation status: `att1_aimu_result_to_status()`
+(`include/att1_aimu_cmdq.h`, `src/aimu_cmdq.c`) implements the mapping table
+above and is exercised by `tests/test_aimu_cmdq.c`
+(`test_result_to_status_mapping`); this freeze formalizes that mapping as
+the contractual v1.0 baseline.
 
 ---
 

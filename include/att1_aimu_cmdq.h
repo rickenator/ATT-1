@@ -371,6 +371,48 @@ const char *att1_aimu_cmd_type_name(att1_aimu_cmd_type t);
  */
 const char *att1_aimu_result_name(att1_aimu_result r);
 
+/* -------------------------------------------------------------------------
+ * Result-code / att1_status_t mapping  (M158 §1.5 freeze)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * att1_aimu_result_to_status
+ *
+ * Map an on-wire AIMU completion result code (att1_aimu_result, M103 §2.8 /
+ * M105) to the generic host-side status enum (att1_status_t,
+ * include/att1_status.h) that the rest of the ATT-1 C11 API returns.  This
+ * mapping is frozen as part of the M158 command/completion schema freeze
+ * (docs/aimu_pcie_command_requirements.md §1.5): the result code -> status
+ * assignment below must not change without a command-schema major version
+ * bump.
+ *
+ * ATT1_AIMU_OK/BUSY/PENDING          -> ATT1_OK (not host-fatal conditions;
+ *                                        callers distinguish BUSY/PENDING via
+ *                                        the raw result code if needed)
+ * ATT1_AIMU_ERR_INVALID_COMMAND      -> ATT1_ERR_INVALID_ARG
+ * ATT1_AIMU_ERR_INVALID_TENSOR       -> ATT1_ERR_NOT_FOUND
+ * ATT1_AIMU_ERR_INVALID_DTYPE        -> ATT1_ERR_UNSUPPORTED
+ * ATT1_AIMU_ERR_INVALID_SHAPE        -> ATT1_ERR_SHAPE
+ * ATT1_AIMU_ERR_INVALID_SESSION      -> ATT1_ERR_INVALID_ARG
+ * ATT1_AIMU_ERR_OUT_OF_MEMORY        -> ATT1_ERR_OOM
+ * ATT1_AIMU_ERR_QUEUE_FULL           -> ATT1_ERR_QUEUE_FULL
+ * ATT1_AIMU_ERR_KV_OVERFLOW          -> ATT1_ERR_STATE
+ * ATT1_AIMU_ERR_FABRIC               -> ATT1_ERR_IO
+ * ATT1_AIMU_ERR_FABRIC_TIMEOUT       -> ATT1_ERR_TIMEOUT
+ * ATT1_AIMU_ERR_BARRIER_TIMEOUT      -> ATT1_ERR_TIMEOUT
+ * ATT1_AIMU_ERR_CHECKSUM             -> ATT1_ERR_BAD_FORMAT
+ * ATT1_AIMU_ERR_DMA_FAULT            -> ATT1_ERR_IO
+ * ATT1_AIMU_ERR_ALIGNMENT            -> ATT1_ERR_INVALID_ARG
+ * ATT1_AIMU_ERR_TIMEOUT              -> ATT1_ERR_TIMEOUT
+ * ATT1_AIMU_ERR_FENCE_DEADLOCK       -> ATT1_ERR_STATE
+ * ATT1_AIMU_ERR_UNSUPPORTED_OP       -> ATT1_ERR_UNSUPPORTED
+ * ATT1_AIMU_ERR_UNSUPPORTED_DTYPE    -> ATT1_ERR_UNSUPPORTED
+ * ATT1_AIMU_ERR_INTERNAL             -> ATT1_ERR_STATE
+ * ATT1_AIMU_ERR_FATAL                -> ATT1_ERR_STATE
+ * any unrecognised value             -> ATT1_ERR_STATE
+ */
+att1_status_t att1_aimu_result_to_status(att1_aimu_result r);
+
 #ifdef __cplusplus
 }
 #endif
