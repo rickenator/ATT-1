@@ -4017,7 +4017,7 @@ static int check_aimu_replay_smoke(void)
     }
     puts("PASS: aimu_replay: --report-json contains all required keys");
 
-    /* 6. Non-strict mode: EXEC_MATMUL with expected_status=UNSUPPORTED_OP → exit 0. */
+    /* 7. Non-strict mode: EXEC_MATMUL with expected_status=UNSUPPORTED_OP → exit 0. */
     if (run_command(
             "build/att1-aimu-replay"
             " --plan compiler/fixtures/plan_exec_matmul_unsupported.json"
@@ -4027,7 +4027,7 @@ static int check_aimu_replay_smoke(void)
     }
     puts("PASS: aimu_replay: non-strict mode accepts EXEC_MATMUL expected-unsupported");
 
-    /* 7. Strict mode: EXEC_MATMUL with expected_status=UNSUPPORTED_OP → exit 1. */
+    /* 8. Strict mode: EXEC_MATMUL with expected_status=UNSUPPORTED_OP → exit 1. */
     if (run_command(
             "build/att1-aimu-replay"
             " --plan compiler/fixtures/plan_exec_matmul_unsupported.json"
@@ -4038,7 +4038,7 @@ static int check_aimu_replay_smoke(void)
     }
     puts("PASS: aimu_replay: strict mode rejects EXEC_MATMUL expected-unsupported");
 
-    /* 8. Malformed JSON plan → exit 2. */
+    /* 9. Malformed JSON plan → exit 2. */
     if (run_command(
             "echo 'not_valid_json' > build/m113_bad.json && "
             "build/att1-aimu-replay --plan build/m113_bad.json"
@@ -4048,7 +4048,7 @@ static int check_aimu_replay_smoke(void)
     }
     puts("PASS: aimu_replay: malformed JSON plan exits non-zero");
 
-    /* 9. Python wrapper: valid plan → exit 0 (skip if Python unavailable). */
+    /* 10. Python wrapper: valid plan → exit 0 (skip if Python unavailable). */
     if (run_command("python3 --version > /dev/null 2>&1") == 0) {
         if (run_command(
                 "python3 compiler/replay_aimu_command_plan.py"
@@ -4068,7 +4068,7 @@ static int check_aimu_replay_smoke(void)
         }
         puts("PASS: aimu_replay: Python wrapper delegates to binary and exits 0");
 
-        /* 10. Python wrapper: malformed JSON → exit 2. */
+        /* 11. Python wrapper: malformed JSON → exit 2. */
         if (run_command(
                 "python3 compiler/replay_aimu_command_plan.py"
                 " --plan build/m113_bad.json"
@@ -4078,7 +4078,7 @@ static int check_aimu_replay_smoke(void)
         }
         puts("PASS: aimu_replay: Python wrapper exits non-zero for malformed JSON");
 
-        /* 11. Python wrapper: missing required field → exit 2. */
+        /* 12. Python wrapper: missing required field → exit 2. */
         if (run_command(
                 "python3 -c \""
                 "import json; "
@@ -4097,7 +4097,7 @@ static int check_aimu_replay_smoke(void)
         puts("SKIP: Python 3 unavailable -- Python wrapper tests skipped");
     }
 
-    /* 12. No CUDA dependency: binary exits 0 without CUDA=1. */
+    /* 13. No CUDA dependency: binary exits 0 without CUDA=1. */
     if (run_command(
             "build/att1-aimu-replay"
             " --plan build/m109_valid_plan.json"
@@ -4262,6 +4262,7 @@ static int check_fabric_route_replay_smoke(void)
     }
     puts("PASS: fabric_route_replay: --report-json contains all required keys");
 
+    /* 8. --report-json includes fabric_replay_report_version = 1. */
     if (strstr(output, "\"fabric_replay_report_version\": 1") == NULL) {
         fputs("fabric_route_replay: JSON report missing fabric_replay_report_version=1\n",
               stderr);
@@ -4269,7 +4270,7 @@ static int check_fabric_route_replay_smoke(void)
     }
     puts("PASS: fabric_route_replay: --report-json includes fabric_replay_report_version=1");
 
-    /* 8. Strict mode fails on missing_reduction (M116 validation fails in strict). */
+    /* 9. Strict mode fails on missing_reduction (M116 validation fails in strict). */
     if (run_command(
             "python3 compiler/replay_fabric_routes.py"
             " --route-report compiler/fixtures/fabric_route_missing_reduction.json"
@@ -4281,7 +4282,7 @@ static int check_fabric_route_replay_smoke(void)
     }
     puts("PASS: fabric_route_replay: strict mode exits non-zero for validation error");
 
-    /* 9. Malformed JSON exits with non-zero (parse error). */
+    /* 10. Malformed JSON exits with non-zero (parse error). */
     if (run_command(
             "echo 'not_valid_json' | python3"
             " compiler/replay_fabric_routes.py"
@@ -4292,7 +4293,7 @@ static int check_fabric_route_replay_smoke(void)
     }
     puts("PASS: fabric_route_replay: malformed JSON exits non-zero");
 
-    /* 10. No tracked Python cache artifacts. */
+    /* 11. No tracked Python cache artifacts. */
     if (run_command(
             "git ls-files | grep -E '(__pycache__|\\.pyc$|\\.pyo$)'"
             " > build/m123_pycache.txt 2>&1") == 0) {
