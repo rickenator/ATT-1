@@ -46,7 +46,7 @@ Recorded at the Phase 2 kickoff commit:
 |---|---|
 | `make clean && make && make test` | 782 PASS, 0 FAIL (all C suites) |
 | `make regression` | ALL STEPS PASSED (10 steps, incl. golden baselines, schema, hostile-input, pipeline smoke, docs lint, fuzz smoke/coverage) |
-| CUDA status | Implemented; manual RTX 3090 signoff pending (M138 plan; closes at M155) |
+| CUDA status | Implemented; RTX 3090 signoff complete at M155 |
 | Schema versions | Placement report, command plan, fabric route, execution plan, and pipeline schemas as validated by M134/M135 tooling |
 
 Git bookkeeping for the phase boundary (maintainer step, requires push
@@ -77,13 +77,13 @@ git push -u origin PHASE_2
 
 **M155: CUDA signoff closure (carry-over debt)**
 
-- Execute the M138 plan on the RTX 3090 host:
+- Executed the M138 plan on the RTX 3090 host:
   `make clean && make CUDA=1 && make test CUDA=1` plus milestone-specific
-  smokes per [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md).
-- CUDA becomes the frozen benchmark/credibility baseline per M153 — its
+  smokes per [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md). See
+  [CUDA_SIGNOFF_M155.md](CUDA_SIGNOFF_M155.md).
+- CUDA is the frozen benchmark/credibility baseline per M153 — its
   tolerances (f32 exact, q8 ≤ 0.15, q4 ≤ 0.35) are the Phase 2 hardware
-  acceptance tolerances (M93 §8.13). This must close before hardware
-  comparisons mean anything.
+  acceptance tolerances (M93 §8.13).
 
 **M156: Phase 1 → Phase 2 gap audit**
 

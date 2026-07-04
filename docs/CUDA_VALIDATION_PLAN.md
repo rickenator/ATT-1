@@ -1,8 +1,11 @@
-# ATT-1 CUDA Validation Plan (M138)
+# ATT-1 CUDA Validation Plan (M138, Closed at M155)
 
 This document defines the CUDA validation policy, required manual signoff
 steps, paths to test, expected skip behavior, self-hosted runner plan, and
 signoff report template for ATT-1 CUDA paths.
+
+M155 closed the first full CUDA signoff on the RTX 3090 host. See
+[CUDA_SIGNOFF_M155.md](CUDA_SIGNOFF_M155.md) for the dated report.
 
 ---
 

@@ -96,6 +96,7 @@ _REQUIRED_DOCS: list[str] = [
     "docs/AIMU_INTRINSICS_OPERATIONS_REFERENCE.md",
     "docs/RELEASE_READINESS.md",
     "docs/RELEASE_CANDIDATE_M150.md",
+    "docs/CUDA_SIGNOFF_M155.md",
     "docs/EXTERNAL_REVIEW_PACKAGE.md",
     "docs/testing.md",
     "docs/CUDA_VALIDATION_PLAN.md",
@@ -365,8 +366,8 @@ def check_stale_claims(repo: Path, report: CheckReport) -> None:
 def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     """
     Validate key milestone/status invariants:
-      - OPERATION_LOG must contain a Milestone 154 entry.
-      - OPERATION_LOG must show M153 as complete.
+      - OPERATION_LOG must contain a Milestone 155 entry.
+      - OPERATION_LOG must show M154 as complete.
       - CPU CI must be described as CPU-only somewhere in testing docs.
       - CUDA signoff described as manual RTX 3090.
     """
@@ -376,20 +377,20 @@ def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     if op_log.exists():
         text = op_log.read_text(encoding="utf-8", errors="replace")
 
-        # M154 should appear (at minimum in "Next Prompt for Codex" or as an entry)
-        if not re.search(r"Milestone\s+154|M154", text):
+        # M155 should appear (at minimum in "Next Prompt for Codex" or as an entry)
+        if not re.search(r"Milestone\s+155|M155", text):
             report.add_error(
                 "milestone-consistency",
                 "docs/OPERATION_LOG.md",
-                "OPERATION_LOG does not mention Milestone 154 (M154 not started or missing)",
+                "OPERATION_LOG does not mention Milestone 155 (M155 not started or missing)",
             )
 
-        # M153 should be listed as complete (have a "Milestone 153:" entry)
-        if not re.search(r"^- Milestone 153:", text, re.MULTILINE):
+        # M154 should be listed as complete (have a "Milestone 154:" entry)
+        if not re.search(r"^- Milestone 154:", text, re.MULTILINE):
             report.add_error(
                 "milestone-consistency",
                 "docs/OPERATION_LOG.md",
-                "OPERATION_LOG has no '- Milestone 153:' entry (M153 not yet recorded as complete)",
+                "OPERATION_LOG has no '- Milestone 154:' entry (M154 not yet recorded as complete)",
             )
 
     # CPU CI described as CPU-only in testing.md or RELEASE_READINESS

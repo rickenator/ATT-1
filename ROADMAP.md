@@ -94,8 +94,8 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 ## Stage 0: Entry, Baseline, and Debt Closure
 
 - Milestone 154: Phase 2 kickoff and baseline freeze — PHASE_1 tag, PHASE_2 branch, frozen baseline record, `docs/PHASE2_PLAN.md`, Phase 2 Definition of Done declared.
-- Milestone 155: CUDA signoff closure — execute M138 plan on RTX 3090; CUDA tolerances become Phase 2 hardware acceptance tolerances.
-- Milestone 156: Phase 1 → Phase 2 gap audit — requirements-traceability table for M93 §8 vs. M103–M153 deliverables.
+- Milestone 155: CUDA signoff closure — complete; M138 plan passed on RTX 3090; CUDA tolerances are now Phase 2 hardware acceptance tolerances.
+- Milestone 156: Phase 1 → Phase 2 gap audit — current next step; requirements-traceability table for M93 §8 vs. M103–M155 deliverables.
 
 ## Stage 1: Interface Freeze
 

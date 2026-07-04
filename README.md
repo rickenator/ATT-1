@@ -66,7 +66,7 @@ future PCIe/AIMU prototype without prematurely committing to silicon details.
 | CPU f32 inference (single-tile, cluster) | Complete |
 | CPU q8 quantized inference | Complete |
 | CPU q4 quantized inference | Complete |
-| CUDA f32/q8/q4 inference | Implemented; manual CUDA signoff pending |
+| CUDA f32/q8/q4 inference | Implemented; CUDA validation complete on RTX 3090 (M155) |
 | AIMU command queue / MMIO simulation | Complete |
 | AIMU DMA / host / device simulation | Complete |
 | Fabric routing simulation | Complete |
@@ -74,7 +74,7 @@ future PCIe/AIMU prototype without prematurely committing to silicon details.
 | Tensor placement reports and scenarios | Complete |
 | Schema-validated planning outputs | Complete (M134/M135) |
 | CPU-only GitHub Actions CI | Complete (M137) |
-| CUDA signoff (manual, CUDA-capable host) | Plan in place (M138); signoff pending |
+| CUDA signoff (manual, CUDA-capable host) | Complete on RTX 3090 (M155) |
 
 ## Quick Build and Test
 

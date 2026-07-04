@@ -68,6 +68,7 @@ in `docs/` unless noted otherwise.
 | → [AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) | See Reference Manuals section: AIMU command packet reference, EXEC/LOAD/KV/FABRIC/TRACE semantics, MMIO interaction, replay tools |
 | [aimu_pcie_prototype_review.md](aimu_pcie_prototype_review.md) | AIMU PCIe prototype milestone history and review: M1–M139 entries |
 | [aimu_phase3_go_no_go.md](aimu_phase3_go_no_go.md) | Phase 3 go/no-go criteria: readiness gates for hardware prototype direction |
+| [comps.md](comps.md) | Architectural comparisons to NVIDIA (Blackwell/Rubin), Apple M4 Neural Engine, and production GPU/TPU/ANE systems (M154 context) |
 | [fpga_feasibility.md](fpga_feasibility.md) | FPGA feasibility notes: scope, non-goal status, reference only |
 | [phase3_bom_board_options.md](phase3_bom_board_options.md) | Phase 3 BOM and board options: reference exploration for future hardware |
 
@@ -111,6 +112,7 @@ in `docs/` unless noted otherwise.
 |----------|-------------|
 | [testing.md](testing.md) | Testing guide: `make test`, `make regression`, CI, CUDA signoff, comparison table |
 | [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md) | CUDA validation policy, manual signoff commands, paths table, self-hosted runner plan |
+| [CUDA_SIGNOFF_M155.md](CUDA_SIGNOFF_M155.md) | M155 CUDA signoff report: RTX 3090 host, CUDA commands, backend matrix, regression summary |
 
 ---
 

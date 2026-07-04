@@ -812,4 +812,5 @@ the script with the checked-in real_tiny fixtures (no `--include-cuda`) and
 confirms `result: pass`, CPU rows present, CUDA rows `status=pending`, notes
 present, and JSON keys correct.
 
-CUDA host verification: pending RTX 3090 signoff.
+CUDA host verification: complete on RTX 3090 at M155; see
+`docs/CUDA_SIGNOFF_M155.md`.

@@ -23,6 +23,7 @@ With --cuda the first three steps become:
   Step 1  make clean
   Step 2  make CUDA=1
   Step 3  make test CUDA=1
+  Step 10 make fuzz-smoke CUDA=1
 
 Exit codes:
   0 — all steps pass
@@ -211,8 +212,10 @@ def _step_docs_check() -> list[str]:
     return [_PY, _CHECK_DOCS]
 
 
-def _step_fuzz_smoke() -> list[str]:
+def _step_fuzz_smoke(cuda: bool) -> list[str]:
     """M152 deterministic fuzz smoke plus corpus coverage guard."""
+    if cuda:
+        return ["make", "fuzz-smoke", "CUDA=1"]
     return ["make", "fuzz-smoke"]
 
 
@@ -504,7 +507,7 @@ def main() -> int:
     # Step 10: deterministic fuzz smoke and coverage guard (M152)
     # ------------------------------------------------------------------ #
     print("[run ] fuzz smoke and coverage guard (M152)")
-    step = _run_quiet("fuzz smoke/coverage (M152)", _step_fuzz_smoke())
+    step = _run_quiet("fuzz smoke/coverage (M152)", _step_fuzz_smoke(cuda))
     report.steps.append(step)
     if step.status != "pass":
         report.record_failure()

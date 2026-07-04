@@ -97,7 +97,7 @@ Current status column to use in milestone entries:
 | Phrase | Meaning |
 |--------|---------|
 | `CPU validation complete; CUDA signoff pending` | CPU CI passed; no GPU validation yet |
-| `CUDA validation complete on CUDA-capable host` | Manual signoff completed (see signoff report) |
+| `CUDA validation complete on RTX 3090` | Manual signoff completed at M155; see `docs/CUDA_SIGNOFF_M155.md` |
 
 ---
 
@@ -112,7 +112,7 @@ Current status column to use in milestone entries:
   or CUDA-facing API is **not complete** until the manual signoff is done.
 - No silent CPU fallback when `CUDA=1` is specified.
 
-Quick command for manual CUDA signoff:
+Manual CUDA signoff command used at M155:
 
 ```sh
 make clean && make CUDA=1 && make test CUDA=1
@@ -184,9 +184,9 @@ in default mode and are rejected in `--strict` mode.
 | CPU f32 single-tile inference | Implemented |
 | CPU q8 quantized inference | Implemented |
 | CPU q4 quantized inference | Implemented |
-| CUDA f32 single-tile inference | Implemented (manual signoff pending) |
-| CUDA q8 inference | Implemented (manual signoff pending) |
-| CUDA q4 inference | Implemented (manual signoff pending) |
+| CUDA f32 single-tile inference | Implemented; RTX 3090 signoff complete at M155 |
+| CUDA q8 inference | Implemented; RTX 3090 signoff complete at M155 |
+| CUDA q4 inference | Implemented; RTX 3090 signoff complete at M155 |
 | Single-tile inference pipeline | Implemented |
 | Multi-tile cluster inference | Implemented (simulated fabric) |
 | Pre-tokenized input (`--input-token-ids`) | Implemented |
@@ -276,15 +276,15 @@ Run through this list before sending the repository to any external party.
 
 ## 11. Recommended Next Milestones
 
-Milestones M140–M152 are complete. See `docs/OPERATION_LOG.md` for their full entries.
+Milestones M140–M155 are complete. See `docs/OPERATION_LOG.md` for their full entries.
 
 | Milestone | Working title | Scope |
 |-----------|---------------|-------|
 | M150 | Release candidate checkpoint | Release candidate summary doc, validation baselines, review decision — complete |
 | M151 | API opacity and refactor plan | Migrate KV cache/MMU lifecycle APIs to `att1_status_t`; opacify `att1_kv_mmu`; remove status aliases — complete |
-| M152 | Deeper fuzzing and coverage expansion | libFuzzer / AFL++ integration; coverage measurement; expanded deterministic hostile/fuzz corpus — **current milestone** |
-| M153 | Release package dry-run | `git archive` tarball verification; reviewer quick-start validation on clean VM |
-| M154 | External review response log | Structured log for tracking outside reviewer questions, findings, and responses |
-| M155 | Public small-model demo policy | Define opt-in public SmolLM2-135M demo with external weight download |
-| M156 | Self-hosted CUDA runner decision | Decide whether to activate `cuda-self-hosted.example.yml` or formally defer |
-| M157 | Tensor-level execution simulator next slice | Advance AIMU EXEC simulation from control-flow-only to partial tensor-math validation |
+| M152 | Deeper fuzzing and coverage expansion | libFuzzer / AFL++ integration; coverage measurement; expanded deterministic hostile/fuzz corpus — complete |
+| M153 | Winning strategy implementation | Evidence-gated beachhead strategy and hardware progression contract — complete |
+| M154 | Phase 2 kickoff and baseline freeze | Phase 2 plan, baseline, Definition of Done, and Stage 0 roadmap — complete |
+| M155 | CUDA signoff closure | RTX 3090 CUDA signoff complete; see `docs/CUDA_SIGNOFF_M155.md` |
+| M156 | Phase 1 to Phase 2 gap audit | **current next step**: requirements-traceability table for M93 §8 vs. M103-M155 deliverables |
+| M157 | Register map freeze v1.0 | Freeze BAR0 layout, doorbell, status, capability, and counter registers |
