@@ -100,11 +100,17 @@ git push -u origin PHASE_2
 
 ## 4. Stage 1 — Interface Freeze (the M153 precondition for hardware)
 
-**M157: Register map freeze (v1.0)**
+**M157: Register map freeze (v1.0)** — *complete;
+[aimu_register_map.md](aimu_register_map.md) §1.6.*
 
 - Freeze [aimu_register_map.md](aimu_register_map.md) (M104): BAR0 layout,
   doorbell, status, capability, counter registers. Add explicit versioning
   and a frozen-fields vs. reserved-fields policy.
+- `REGISTER_MAP_VERSION` = `0x0001_0000` (v1.0) declared frozen; §1.6 defines
+  which fields are frozen (all named registers in §2–§9), which remain open
+  for additive change (reserved bits/regions), and patch/minor/major version
+  bump rules. Appendix B open questions reviewed and confirmed non-blocking
+  for the freeze.
 
 **M158: Command packet and completion schema freeze (v1.0)**
 
@@ -361,7 +367,7 @@ work, not a Phase 2 gate.
 - [aimu_phase3_go_no_go.md](aimu_phase3_go_no_go.md) — M120 go/no-go review; §12 M153 winning-strategy execution contract
 - [fpga_feasibility.md](fpga_feasibility.md) — M126 FPGA feasibility and gate criteria
 - [phase3_bom_board_options.md](phase3_bom_board_options.md) — board/BOM groundwork
-- [aimu_register_map.md](aimu_register_map.md) — register map to be frozen at M157
+- [aimu_register_map.md](aimu_register_map.md) — register map frozen v1.0 at M157 (§1.6)
 - [aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md) — command packet model to be frozen at M158
 - [schema_compatibility.md](schema_compatibility.md) — compatibility contract extended at M159
 - [aimu_fabric_routing.md](aimu_fabric_routing.md) — fabric semantics to be frozen at M160

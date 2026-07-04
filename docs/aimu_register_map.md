@@ -7,12 +7,21 @@ would use to discover, configure, command, monitor, and reset an AIMU device.
 This is a specification document only.  No C runtime, PCIe driver, MMIO
 simulator, or binary format is implemented by this milestone.
 
+**Freeze status: FROZEN v1.0 (Milestone 157).**  `REGISTER_MAP_VERSION`
+(§2.3) is `0x0001_0000` (major 1, minor 0).  See §1.6 for the frozen-fields
+vs. reserved-fields policy and the change-control rules that govern any
+future register map revision.
+
 Relationship to prior milestones:
 - M93 §8 (`docs/aimu_architecture.md`): prototype requirements overview
 - M103 (`docs/aimu_pcie_command_requirements.md`): command packet format,
   command types, data movement model, memory model, execution model, counters
 - M104 (this document): MMIO register layout that hosts access to drive the
   M103 command protocol
+- M111 (§17): in-process MMIO/register-file simulator that implements this
+  map in software
+- M157 (§1.6): register map v1.0 freeze — this document's §2–§9 register
+  definitions are now a frozen interface contract for Stage 2+ hardware work
 
 ---
 
@@ -90,6 +99,76 @@ tile 1 at `0x8800`, tile 2 at `0x9000`, and so on.  The maximum addressable
 tile count is 16 per BAR0 window, giving a maximum per-tile window start of
 `0xF800`.  Platforms requiring more than 16 tiles per device use multiple PCIe
 functions or a BAR extension mechanism (deferred to M110).
+
+### 1.6 Freeze Policy (Milestone 157)
+
+This register map is declared **frozen at v1.0** as of Milestone 157.
+`REGISTER_MAP_VERSION` (§2.3) reports `0x0001_0000` (major=1, minor=0,
+per §2.3's bit layout). Freezing means the register-level contract in §2–§9
+below is now the interface that Stage 2+ work (the emulated PCIe endpoint,
+`backend_pcie.c`, and any eventual FPGA/ASIC prototype) must implement and
+that the M161 conformance suite validates against. This mirrors the M158
+(command/completion schema), M159 (DMA/replay schema), and M160
+(fabric/barrier semantics) freezes that complete Phase 2 Stage 1 at Gate 1.
+
+**Frozen fields** — covered by this freeze; changing any of the following
+after v1.0 requires a register-map **major** version bump and is a
+backward-incompatible change:
+
+- The offset, bit width, and access type (`RO`/`RW`/`RW1C`/`WO`) of every
+  named register defined in §2 (Global Device Registers), §3 (Per-Tile
+  Register Windows), §4 (Command Queue Registers), §5 (DMA/Buffer
+  Descriptor Registers), §6 (Fabric/Interconnect Registers), §7 (Counter
+  Registers), and §8 (Trace/Debug Registers).
+- The bit-field layout within each frozen register (e.g. `DEVICE_ID.vendor_id`
+  at bits 31:16).
+- The region boundaries in the BAR0 layout (§1.5) and Appendix A summary.
+- The error code table (§9.1) and severity model (§9.2) values already
+  assigned.
+- The DMA descriptor byte layout (§5.1) and flag bits (§5.2).
+- Byte order (little-endian), alignment rules, and the 64-bit `_LOW`/`_HIGH`
+  pair convention (§1.1).
+
+**Reserved fields — not frozen, safe to extend:**
+
+- Reserved bits within a frozen register (must read/write as `0` today; a
+  future **minor** version may assign them new semantics without breaking
+  existing software, since old software already treats them as `0`).
+- Reserved offset ranges shown in Appendix A (e.g. `0x0040–0x0FFF`,
+  `0x2018–0x2FFF`, `0x40B8–0x4FFF`) — new registers may be added here in a
+  future minor version.
+- Tile windows beyond the current 16-tile limit (§1.5), gated on resolving
+  Appendix B Q1 (multi-function/BAR-extension decision).
+- The open engineering questions in Appendix B: these do not block the v1.0
+  freeze because none of them requires changing an already-assigned offset,
+  width, or access type. Each is either a driver/firmware policy choice
+  (MSI-X allocation, routing-table ownership), an software behavioral choice
+  within the frozen registers (counter saturate-vs-wrap, trace drop-vs-
+  overwrite — both already have a frozen default in §7/§8 that hardware
+  must implement), or a scope decision deferred to a later milestone
+  (multi-function BAR extension, per-tile `Q4_GROUP_SIZE`, per-tile memory
+  base). Resolving them may add new **reserved-region** registers or new
+  values within existing frozen fields, but must not move or resize any
+  register frozen by this section.
+
+**Version bump rules:**
+
+- **Patch** (`0x0001_00xx`): documentation clarification only; no register
+  or field semantics change. No driver change required.
+- **Minor** (`0x0001_xx00`): additive only — new registers in reserved
+  space, new semantics for reserved bits, new values for already-reserved
+  enumerations. Existing drivers built against v1.0 continue to work
+  unmodified (§1.4).
+- **Major** (`0xNNNN_0000`, N≠1): any change to a frozen field's offset,
+  width, access type, or removal of a frozen register. Drivers must check
+  `REGISTER_MAP_VERSION` (§2.3) and either negotiate via
+  `FEATURE_FLAGS_LOW/HIGH` (§2.4) or refuse the device, per §1.4.
+
+Implementation status: `ATT1_AIMU_REGISTER_MAP_VERSION` in
+`include/att1_aimu_device.h` is already defined as `0x0001_0000` ("v1.0")
+and is exposed read-only via `ATT1_MMIO_REGISTER_MAP_VERSION` (`src/aimu_mmio.c`)
+and `att1_aimu_device_probe()` (`src/aimu_host.c`); this freeze formalizes
+that existing value as the contractual v1.0 baseline rather than changing it.
 
 ---
 
@@ -1069,6 +1148,7 @@ of `docs/aimu_pcie_command_requirements.md`).
 | M108 | Command trace/counter integration | **Complete.** Implemented as an in-process C11 unified snapshot layer (`include/att1_aimu_trace.h`, `src/aimu_trace.c`). See §16 for the full snapshot-to-register mapping. |
 | M109 | Placement-report-to-command-plan mapper | Python tool that reads an M100 placement report and produces an ordered list of `LOAD_TENSOR_TILE` + `EXEC_*` commands with register field values filled in; validates command plan against placement report tensor/tile assignments |
 | M110 | Minimal PCIe/AIMU prototype design review | Engineering review: reconcile M104–M109 artifacts, finalize BAR0 offset assignments, resolve open questions from §14, produce hardware bringup checklist |
+| M157 | Register map freeze (v1.0) | **Complete.** See §1.6 for the frozen-fields vs. reserved-fields policy and version-bump rules. `REGISTER_MAP_VERSION` = `0x0001_0000` is now a frozen interface contract for Stage 2+ (Phase 2) work. |
 
 ---
 
