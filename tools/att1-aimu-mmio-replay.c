@@ -64,6 +64,7 @@
 
 /* Mock DMA byte count used when the plan provides no payload size. */
 #define MOCK_DMA_BYTES    UINT32_C(64)
+#define MMIO_REPLAY_REPORT_VERSION 1
 
 /* =========================================================================
  * Plan types  (identical layout to att1-aimu-replay.c)
@@ -526,6 +527,8 @@ static void emit_json_report(const plan_t            *plan,
                               FILE                     *fp)
 {
     fprintf(fp, "{\n");
+    fprintf(fp, "  \"mmio_replay_report_version\": %d,\n",
+            MMIO_REPLAY_REPORT_VERSION);
     fprintf(fp, "  \"emulator\": \"att1-aimu-mmio-replay\",\n");
     fprintf(fp, "  \"milestone\": \"M122\",\n");
     fprintf(fp, "  \"plan_path\": \"%s\",\n",              plan_path);

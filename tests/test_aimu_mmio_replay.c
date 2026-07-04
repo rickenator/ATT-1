@@ -2,8 +2,9 @@
  * test_aimu_mmio_replay.c  —  Tests for M122 command-plan replay via M121 MMIO emulator
  *
  * These tests exercise the replay flow driven by att1_aimu_userspace from the
- * perspective of a C test binary — they drive the M121 emulator API directly
- * (without invoking the att1-aimu-mmio-replay CLI binary).
+ * perspective of a C test binary — they primarily drive the M121 emulator API
+ * directly, with one CLI smoke subtest covering the frozen JSON report version
+ * field emitted by att1-aimu-mmio-replay.
  *
  * Covers:
  *  1.  test_smoke                     — full flow with small fixture plan, pass
@@ -15,7 +16,8 @@
  *  7.  test_register_map_version_ok   — REGISTER_MAP_VERSION reads correctly
  *  8.  test_device_id_matches         — BAR0 DEVICE_ID == default
  *  9.  test_mmio_tile_count_register  — TILE_COUNT register reflects config
- * 10.  test_no_cuda_dep               — compile-time guard pass
+ * 10.  test_report_json_version_field — CLI JSON report includes version field
+ * 11.  test_no_cuda_dep               — compile-time guard pass
  *
  * Temporary BAR0 files are created under /tmp/ and unlinked after each test.
  * Tile memory capacity is register metadata only — no large buffers allocated.
@@ -30,6 +32,7 @@
 #include "att1_status.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -56,6 +59,38 @@ static int g_fail = 0;
 /* =========================================================================
  * Helpers
  * ====================================================================== */
+
+static int run_command(const char *command)
+{
+    const int rc = system(command);
+
+    return rc == 0 ? 0 : -1;
+}
+
+static int read_file(const char *path, char *buffer, size_t capacity)
+{
+    FILE *fp = NULL;
+    size_t nread = 0u;
+
+    if ((path == NULL) || (buffer == NULL) || (capacity == 0u)) {
+        return -1;
+    }
+
+    fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return -1;
+    }
+
+    nread = fread(buffer, 1u, capacity - 1u, fp);
+    if (ferror(fp) != 0) {
+        fclose(fp);
+        return -1;
+    }
+
+    buffer[nread] = '\0';
+    fclose(fp);
+    return 0;
+}
 
 /** Open a 2-tile emulator with small settings. */
 static att1_aimu_userspace *make_emu2(const char *bar0_path)
@@ -411,7 +446,30 @@ static void test_mmio_tile_count_register(void)
 }
 
 /* =========================================================================
- * Test 10: no hidden CUDA dependency (compile-time guard)
+ * Test 10: CLI JSON report includes frozen version field
+ * ====================================================================== */
+
+static void test_report_json_version_field(void)
+{
+    char output[8192];
+
+    EXPECT(run_command(
+               "build/att1-aimu-mmio-replay"
+               " --plan compiler/fixtures/plan_mmio_smoke.json"
+               " --report-json build/m122_mmio_replay_report.json"
+               " > build/m122_mmio_replay_cli.txt 2>&1") == 0,
+           "report_json_version: cli exits 0");
+
+    if (read_file("build/m122_mmio_replay_report.json", output, sizeof(output)) != 0) {
+        EXPECT(0, "report_json_version: read json report");
+        return;
+    }
+    EXPECT(strstr(output, "\"mmio_replay_report_version\": 1") != NULL,
+           "report_json_version: mmio_replay_report_version == 1");
+}
+
+/* =========================================================================
+ * Test 11: no hidden CUDA dependency (compile-time guard)
  * ====================================================================== */
 
 static void test_no_cuda_dep(void)
@@ -444,6 +502,7 @@ int main(void)
     test_register_map_version_ok();
     test_device_id_matches();
     test_mmio_tile_count_register();
+    test_report_json_version_field();
     test_no_cuda_dep();
 
     printf("\naimu_mmio_replay: %d PASS  %d FAIL\n", g_pass, g_fail);

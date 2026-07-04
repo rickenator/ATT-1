@@ -127,7 +127,9 @@ git push -u origin PHASE_2
   `att1_aimu_result` → `att1_status_t` mapping table, exercised by
   `tests/test_aimu_cmdq.c`.
 
-**M159: DMA descriptor and replay schema freeze (v1.0)**
+**M159: DMA descriptor and replay schema freeze (v1.0)** — *complete;
+[aimu_register_map.md](aimu_register_map.md) §15.7 and
+[schema_compatibility.md](schema_compatibility.md) §§1, 9, 12.*
 
 - Freeze the M107 DMA descriptor model and the M113/M122/M123 command-plan
   and fabric-route replay schemas. Extend

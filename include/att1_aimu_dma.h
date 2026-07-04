@@ -19,6 +19,14 @@
  *                            checks performed here.
  *   M107  att1_aimu_dma   — THIS MODULE.  Validates descriptors and tracks
  *                            transfer counters; does not copy real memory.
+ *
+ * Freeze status: FROZEN v1.0 (Milestone 159).
+ * The in-process DMA contract is now frozen for: the 64-byte
+ * att1_aimu_dma_desc layout, att1_aimu_dma_direction values, dtype constants,
+ * ATT1_AIMU_DMA_FLAG_* bits plus ATT1_AIMU_DMA_FLAG_VALID_MASK, the
+ * validation rules documented below, and the att1_aimu_dma_counters field
+ * names.  See docs/aimu_register_map.md §15.7 and
+ * docs/schema_compatibility.md §12.
  */
 
 #ifndef ATT1_AIMU_DMA_H
