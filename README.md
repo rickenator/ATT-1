@@ -130,6 +130,7 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 | Category | Key document |
 |----------|-------------|
 | Architecture overview | [DESIGN.md](DESIGN.md) |
+| Phase 2 roadmap | [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md) |
 | Build, test, and CI | [docs/testing.md](docs/testing.md) |
 | Model format | [docs/model_format.md](docs/model_format.md) |
 | Quantization | [docs/quantization.md](docs/quantization.md) |

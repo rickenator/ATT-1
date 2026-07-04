@@ -6,11 +6,11 @@ Build ATT-1: a C11 programmable tensor-tile simulator for clustered LLM inferenc
 
 ## Current Milestone
 
-Milestone 153: winning strategy execution contract (complete).
+Milestone 154: Phase 2 kickoff and baseline freeze (complete).
 
 ## Active Task
 
-Prepare Milestone 154.
+Prepare Milestone 155.
 
 ## Hard Rules
 
@@ -189,9 +189,11 @@ Prepare Milestone 154.
 
 - Milestone 153: Winning strategy implementation — strategy execution formalized across planning and governance docs to convert ATT-1 from broad R&D scope into an evidence-gated beachhead program; `docs/aimu_phase3_go_no_go.md` updated with §12 "Milestone 153 Winning Strategy (Execution Contract)" establishing: (1) long-context/high-KV beachhead workload, (2) proof-first scoreboard with memory-movement/latency/cost-per-token metrics, (3) contract-freeze requirements for register map/command packet/replay schemas, (4) userspace product-first value, (5) explicit FPGA-entry decision gates, (6) CUDA-as-credibility policy, (7) artifact-governance differentiation, (8) 2–3 design-partner requirement, (9) phased commercial packaging A/B/C, and (10) hardware kill-criteria with licensing fallback; `ROADMAP.md` updated with Milestone 153 scope bullets mirroring the same execution contract; `compiler/check_docs.py` milestone consistency advanced to M153/M152 so docs linting enforces the new current-milestone baseline; `docs/OPERATION_LOG.md` current milestone advanced to M153 complete and active task moved to prepare M154; no C runtime, inference behavior, CUDA kernels, `.att1` format, or hardware interface behavior changed.
 
+- Milestone 154: Phase 2 kickoff and baseline freeze — Phase 2 opened; documentation/governance milestone only; `docs/PHASE2_PLAN.md` added: full Phase 2 roadmap (M154–M184) in 6 stages with 2 explicit gates: Stage 0 entry/baseline/debt closure (M154 kickoff, M155 CUDA signoff closure on RTX 3090 per M138 plan, M156 Phase 1→Phase 2 gap audit with requirements-traceability table vs. M93 §8); Stage 1 interface freeze (M157 register map v1.0, M158 command packet/completion schema v1.0, M159 DMA descriptor + replay schema v1.0 with schema_compatibility.md compatibility contract, M160 fabric packet/barrier semantics v1.0 resolving M93 §8.15-4, M161 substrate-independent conformance suite; Gate 1: all four freezes ratified + conformance green on in-process sim); Stage 2 out-of-process emulated PCIe endpoint per M93 Option A / M120 Option B (M162 att1-aimu-endpoint process skeleton, M163 backend_pcie.c host backend via att1_backend_ops, M164 one-time shard transfer/tensor residency, M165 device-local KV-MMU in endpoint, M166 single-tile emulated decode e2e, M167 two-tile cluster decode with pcie comparison-report column, M168 fault injection/hostile-endpoint testing mapping to att1_status_t, M169 replay fidelity gate with byte-level trace/counter equivalence; Gate 2); Stage 3 performance calibration and real-model scale (M170 transport characterization calibrating M118 simulator, M171 SmolLM2-135M-class real model through emulated two-tile path, M172 beachhead workload + baseline metrics vs. CUDA, M173 placement/capacity validation at 256MB/512MB/1GB budgets resolving §8.15-2, M174 f32-vs-bf16 activation precision study resolving §8.15-3); Stage 4 FPGA go/no-go and gated physical prototype (M175 gate review outputting GO/HOLD/PIVOT per M126 §10 + M153 kill criteria; M176–M181 contingent control-plane-first FPGA prototype: board/BOM, PCIe enumeration + BAR0 MMIO via VFIO/XDMA with no kernel driver, doorbell/completion, DMA validation + shard transfer, counter/trace registers readable by unmodified test infrastructure, fabric route replay ack; matmul unit choice §8.15-1 deferred); Stage 5 productization/partner validation (M182 packaged validation platform, M183 2–3 design-partner trace program, M184 Phase 2 close-out review and Phase 3 go/no-go); Phase 2 Definition of Done declared as M93 §8.2 restated plus governance (8 criteria incl. tile isolation, transport activation routing, device-local KV, two-tile decode within f32-exact/q8≤0.15/q4≤0.35 tolerances, counter fidelity with unmodified tests, f32+q8 e2e, four freezes honored, explicit FPGA gate decision); non-goals unchanged from M93 §8.14 + repo policy; key risks recorded (premature freeze, CUDA signoff slippage, FPGA fork, transport emulation fidelity, partner-trace dependency); frozen entry baseline recorded (make test: 782 PASS 0 FAIL; make regression: ALL STEPS PASSED, 10 steps; CUDA implemented with RTX 3090 signoff pending to close at M155); PHASE_1 tag and PHASE_2 branch commands documented as maintainer step; `ROADMAP.md` Phase 2 Roadmap section added mirroring M154–M184 stages and gates; `docs/INDEX.md` Phase 2 plan row added; `compiler/check_docs.py` milestone consistency advanced to M154/M153; `docs/OPERATION_LOG.md` current milestone advanced to M154 complete and active task moved to prepare M155; no C runtime, inference behavior, CUDA kernels, `.att1` format, or hardware interface behavior changed.
+
 ## Next Prompt for Codex
 
-Implement Milestone 154 only.
+Implement Milestone 155 only.
 
 ## Known Risks
 - q4 metadata/packing mismatch.
