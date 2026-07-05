@@ -146,17 +146,25 @@ git push -u origin PHASE_2
 - Resolve open question M93 §8.15-4 (barrier: PCIe atomic CAS vs. dedicated
   register) at the spec level.
 
-**M161: Conformance test suite for frozen interfaces**
+**M161: Conformance test suite for frozen interfaces** — *complete;
+[`include/att1_aimu_conformance.h`](../include/att1_aimu_conformance.h),
+[`src/aimu_conformance.c`](../src/aimu_conformance.c),
+[`tests/test_aimu_conformance.c`](../tests/test_aimu_conformance.c),
+[`compiler/check_aimu_conformance.py`](../compiler/check_aimu_conformance.py),
+[`compiler/test_aimu_conformance.py`](../compiler/test_aimu_conformance.py).*
 
-- A substrate-independent conformance harness (C + Python) that any
-  endpoint — in-process sim, socket emulator, FPGA — must pass: register
-  semantics, command lifecycle, DMA validation, fabric/barrier/counter
-  behavior, hostile-input rejection. This is the durable product artifact
-  per M153 (validation workflows with no hardware dependency).
+- Added a substrate-independent conformance endpoint vtable + in-process
+  simulator adapter so the same C harness can validate register semantics,
+  command lifecycle, DMA validation, fabric/barrier behavior, counter
+  snapshots, and hostile-input rejection against future socket-emulator or
+  FPGA backends without test changes.
+- Added a Python-side static checker/regression test that cross-check the
+  frozen v1.0 docs against the shipped C headers for register-map constants,
+  command packet/result-code constants, DMA descriptor schema constants, and
+  fabric counter names.
 
-> **Gate 1:** no work beyond M161 proceeds until all four freezes are
-> ratified and the conformance suite passes against the existing in-process
-> simulator.
+> **Gate 1:** satisfied — all four freezes are ratified and the conformance
+> suite passes against the existing in-process simulator.
 
 ---
 
