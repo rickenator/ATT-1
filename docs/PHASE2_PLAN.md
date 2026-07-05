@@ -227,11 +227,37 @@ device.
   backend-swap contract, not compute correctness — that lands at M166 once
   the endpoint actually executes `EXEC_*` commands.
 
-**M164: One-time shard transfer and tensor residency**
+**M164: One-time shard transfer and tensor residency** — *complete;
+[`src/backend_pcie.c`](../src/backend_pcie.c),
+[`include/att1_backend.h`](../include/att1_backend.h),
+[`tests/test_backend_pcie.c`](../tests/test_backend_pcie.c).*
 
-- Model load path: `.att1` shard transferred to endpoint-owned memory once;
-  enforcement that weights are never re-read by the host during inference
-  (M93 §8.12). Residency assertions and counters.
+- `att1_backend_pcie_load_tensor()` implements the M93 §8.12 model-load
+  data-movement contract ("Tensor shard (model weights): host → device,
+  once, at model load"): it transfers a tensor's bytes from a host address
+  to a device address via one or more frozen v1.0 (M159)
+  `att1_aimu_dma_desc` submissions issued through the backend's
+  `att1_aimu_conformance_endpoint`, chunking any transfer larger than
+  `ATT1_AIMU_DMA_MAX_TRANSFER_BYTES` into multiple sequential descriptors
+  (the last one flagged `ATT1_AIMU_DMA_FLAG_LAST_DESCRIPTOR`).
+- Once a `tensor_id` has been successfully transferred it is recorded as
+  resident for the lifetime of the backend in a fixed-capacity
+  resident-tensor table (4096 entries). A second call for the same
+  `tensor_id` is rejected with `ATT1_ERR_STATE` and does **not** resubmit
+  any DMA transfer — this is the enforcement mechanism for "weights are
+  never re-read by the host during inference": callers (the model loader,
+  in a later milestone) are expected to call this once per tensor at load
+  time and never again.
+- New `att1_backend_pcie_residency_counters` (tensors resident, transfers
+  submitted, descriptors submitted, bytes transferred, duplicate-transfer
+  rejections) are exposed via `att1_backend_pcie_get_residency_counters()`;
+  `att1_backend_pcie_tensor_is_resident()` lets callers query residency
+  directly.
+- This milestone reuses the already-frozen (M159) DMA descriptor
+  validate/submit contract unchanged; it does not add real device-side
+  memory backing or change `EXEC_*` command execution (still deferred to
+  M166) — it proves the one-time-transfer/residency policy layer that the
+  model loader will use once `backend_pcie` is wired into inference.
 
 **M165: Device-local KV-MMU in the endpoint**
 
