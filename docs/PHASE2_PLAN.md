@@ -426,12 +426,41 @@ device.
   `src/aimu_conformance.c`'s exec hook, `src/aimu_cmdq.c`, or any
   previously-frozen register/DMA/KV/fabric semantics.
 
-**M169: Replay fidelity gate**
+**M169: Replay fidelity gate** — *complete;
+[`tools/att1-aimu-replay-fidelity.c`](../tools/att1-aimu-replay-fidelity.c),
+[`tests/test_aimu_replay_fidelity.c`](../tests/test_aimu_replay_fidelity.c).*
 
-- Replay a full planning-pipeline command plan and fabric routes (M119/M132
-  artifacts) against the emulated endpoint; byte-level trace/counter
-  equivalence with the in-process simulator. This is an explicit M153
-  decision-gate criterion ("replay fidelity, deterministic traces").
+- Added `att1-aimu-replay-fidelity`, a new C11 replay-fidelity gate tool that
+  parses M109/M129 command-plan JSON plus optional M115 fabric-route-report
+  JSON, creates one M161 in-process endpoint and one separately spawned M162
+  `att1-aimu-endpoint` daemon sized from the plan header's `tile_count`, then
+  replays the same logical sequence against both: `LOAD_TENSOR_TILE` and
+  `EXEC_*` commands go through `cmd_submit`/`cmd_dispatch_all`/
+  `cmd_poll_completion` with fixed-seed synthetic payload bytes, while
+  counter/trace/KV/fabric operations are driven through the matching
+  `att1_aimu_conformance_*` APIs. For every replay it compares command
+  completions, received payload bytes, `att1_aimu_cmdq_counters`,
+  `att1_aimu_dma_counters`, `att1_fabric_counters`, `att1_kv_mmu_counters`,
+  and the final `att1_aimu_trace_snapshot` byte-for-byte between the in-process
+  and socket-backed endpoints; any mismatch is a fidelity failure. Parse errors
+  exit 2, matching `att1-aimu-replay`'s convention.
+- Added `tests/test_aimu_replay_fidelity.c`, which writes an embedded tiny
+  command-plan JSON plus route-report JSON, invokes the new tool as a
+  subprocess, and proves the required `LOAD_TENSOR_TILE`/`VALIDATE_TENSOR`/
+  `TILE_BARRIER`/`QUERY_COUNTERS`/`TRACE_SNAPSHOT` +
+  `ACTIVATION_SEND`/`TILE_BARRIER` route path passes; a second subprocess case
+  replays an `EXEC_ATTENTION` plan expecting
+  `ATT1_AIMU_ERR_UNSUPPORTED_OP`, confirming the gate checks behavior parity,
+  not only successful commands.
+- `Makefile` now builds `att1-aimu-replay-fidelity` and runs the new
+  `aimu_replay_fidelity` suite. `make clean && make && make test`: all suites
+  PASS 0 FAIL in this CPU-only environment (new `aimu_replay_fidelity` suite:
+  2 PASS 0 FAIL); `make regression`: ALL STEPS PASSED; `python3
+  compiler/check_docs.py`: PASS with 0 errors. No changes to the M158 frozen
+  command packet layout, `src/aimu_conformance.c`'s exec hook,
+  `src/aimu_cmdq.c`, any CUDA path, or previously-frozen
+  register/DMA/KV/fabric semantics — M169 adds only replay-fidelity
+  tooling/tests and the milestone-log/docs updates.
 
 > **Gate 2:** emulated endpoint passes conformance suite, replay fidelity,
 > tolerance targets, and fault injection.
