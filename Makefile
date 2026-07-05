@@ -35,7 +35,7 @@ TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
      q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4 cluster_infer_q4 q4_bench cuda_matmul_q4 cuda_infer_q4 cuda_cluster_infer_q4 \
      aimu_cmdq aimu_device aimu_dma aimu_trace aimu_mmio aimu_host aimu_userspace aimu_mmio_replay aimu_mem \
      aimu_exec aimu_conformance \
-     aimu_mmio_regression aimu_endpoint backend_pcie
+     aimu_mmio_regression aimu_endpoint backend_pcie aimu_cluster_decode
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -83,7 +83,8 @@ $(SRC_DIR)/aimu_mmio.c \
 	$(SRC_DIR)/aimu_exec.c \
 	$(SRC_DIR)/aimu_conformance.c \
 	$(SRC_DIR)/aimu_endpoint_protocol.c \
-	$(SRC_DIR)/aimu_endpoint_client.c
+	$(SRC_DIR)/aimu_endpoint_client.c \
+	$(SRC_DIR)/aimu_cluster_bridge.c
 
 COMMON_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(COMMON_SRCS))
 SIM_OBJS := $(BUILD_DIR)/$(SRC_DIR)/main.o $(COMMON_OBJS)
