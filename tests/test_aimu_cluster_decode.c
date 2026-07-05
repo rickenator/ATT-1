@@ -338,6 +338,11 @@ static int m167_run_protocol(const m167_fixture *fx,
         }
     }
     if (pcie1 != NULL) {
+        /* &normed_tile1[M167_HALF_DIM] is in-bounds: normed_tile1 has
+         * M167_MODEL_DIM (4) elements, M167_HALF_DIM is 2, and matmul_f32
+         * only reads `inner` (== M167_HALF_DIM == 2) elements starting at
+         * that offset (indices 2 and 3), i.e. the second half of the
+         * contraction dimension. */
         REQUIRE(pcie1->ops->matmul_f32(pcie1, partial_logits_1, &normed_tile1[M167_HALF_DIM],
                                        w_half1, 1u, M167_VOCAB, M167_HALF_DIM) == 0,
                 "protocol: tile1 partial logits");
@@ -501,11 +506,16 @@ static int test_two_tile_decode_socket(void)
     }
 
     if (rc == 0) {
+        /* m167_run_protocol() performs exactly one barrier rendezvous: each
+         * endpoint receives one real-tile arrival (tile 0) and one
+         * bridge-completed proxy-tile arrival (tile 1), so each endpoint's
+         * barrier_arrivals is exactly 2 and the two-endpoint total is
+         * exactly 4. */
         REQUIRE(att1_aimu_conformance_fabric_get_counters(ep0, &fc0) == ATT1_OK &&
                 att1_aimu_conformance_fabric_get_counters(ep1, &fc1) == ATT1_OK &&
                 (fc0.packets_sent + fc0.packets_received) > 0u &&
                 (fc1.packets_sent + fc1.packets_received) > 0u &&
-                (fc0.barrier_arrivals + fc1.barrier_arrivals) >= 4u,
+                (fc0.barrier_arrivals + fc1.barrier_arrivals) == 4u,
                 "two_tile_socket: daemon fabric counters reflect real socket traffic");
     }
 

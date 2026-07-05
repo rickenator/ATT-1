@@ -129,14 +129,15 @@ att1_status_t att1_aimu_cluster_bridge_send(att1_aimu_cluster_bridge *bridge,
     return att1_aimu_cluster_bridge_pump(bridge);
 }
 
+static const uint32_t g_bridge_barrier_participants[2] = {
+    ATT1_CLUSTER_BRIDGE_LOCAL_TILE,
+    ATT1_CLUSTER_BRIDGE_PROXY_TILE
+};
+
 att1_status_t att1_aimu_cluster_bridge_barrier(att1_aimu_cluster_bridge *bridge,
                                                int is_a,
                                                int *out_complete)
 {
-    static const uint32_t participants[2] = {
-        ATT1_CLUSTER_BRIDGE_LOCAL_TILE,
-        ATT1_CLUSTER_BRIDGE_PROXY_TILE
-    };
     att1_aimu_conformance_endpoint *self_ep = NULL;
     int local_complete = 0;
     att1_status_t status;
@@ -152,7 +153,7 @@ att1_status_t att1_aimu_cluster_bridge_barrier(att1_aimu_cluster_bridge *bridge,
 
     status = att1_aimu_conformance_fabric_barrier_arrive(self_ep,
                                                          ATT1_CLUSTER_BRIDGE_LOCAL_TILE,
-                                                         participants, 2u,
+                                                         g_bridge_barrier_participants, 2u,
                                                          &local_complete);
     if (status != ATT1_OK) {
         return status;
@@ -173,7 +174,7 @@ att1_status_t att1_aimu_cluster_bridge_barrier(att1_aimu_cluster_bridge *bridge,
      * arriving on its proxy slot on the peer's behalf. */
     status = att1_aimu_conformance_fabric_barrier_arrive(bridge->tile_a,
                                                          ATT1_CLUSTER_BRIDGE_PROXY_TILE,
-                                                         participants, 2u,
+                                                         g_bridge_barrier_participants, 2u,
                                                          &local_complete);
     if (status != ATT1_OK) {
         return status;
@@ -181,7 +182,7 @@ att1_status_t att1_aimu_cluster_bridge_barrier(att1_aimu_cluster_bridge *bridge,
 
     status = att1_aimu_conformance_fabric_barrier_arrive(bridge->tile_b,
                                                          ATT1_CLUSTER_BRIDGE_PROXY_TILE,
-                                                         participants, 2u,
+                                                         g_bridge_barrier_participants, 2u,
                                                          &local_complete);
     if (status != ATT1_OK) {
         return status;
