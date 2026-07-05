@@ -314,6 +314,8 @@ static void usage(FILE *fp)
         "  --tiles N              simulated tile count (default 4)\n"
         "  --tile-memory-mib N    per-tile memory MiB, metadata only (default 1024)\n"
         "  --kv-memory-mib N      per-tile KV memory MiB, metadata only (default 256)\n"
+        "  --cmd-ring-depth N     command ring depth, power of two (default 64)\n"
+        "  --comp-ring-depth N    completion ring depth, power of two (default 64)\n"
         "  --once                 exit after first client disconnects\n"
         "  --verbose              print each accepted request\n"
         "  --help                 show this message\n"
@@ -560,6 +562,10 @@ int main(int argc, char **argv)
             config.tile_memory_bytes = (uint64_t)strtoull(argv[++i], NULL, 10) << 20;
         } else if (strcmp(argv[i], "--kv-memory-mib") == 0 && i + 1 < argc) {
             config.tile_kv_bytes = (uint64_t)strtoull(argv[++i], NULL, 10) << 20;
+        } else if (strcmp(argv[i], "--cmd-ring-depth") == 0 && i + 1 < argc) {
+            config.cmd_ring_depth = (size_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--comp-ring-depth") == 0 && i + 1 < argc) {
+            config.comp_ring_depth = (size_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--once") == 0) {
             run_once = 1;
         } else if (strcmp(argv[i], "--verbose") == 0) {

@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -19,7 +20,16 @@ static att1_status_t endpoint_write_all(int fd, const void *buf, size_t len)
     size_t remaining = len;
 
     while (remaining > 0u) {
-        ssize_t n = write(fd, p, remaining);
+        /*
+         * send(..., MSG_NOSIGNAL) instead of write(): if the peer has
+         * already closed the connection (e.g. an endpoint daemon crash
+         * mid-decode, M168), a plain write() to that socket raises SIGPIPE,
+         * whose default disposition kills this process outright -- not a
+         * clean att1_status_t error. MSG_NOSIGNAL suppresses that signal so
+         * the call instead fails with errno == EPIPE, which is handled
+         * below like any other write error.
+         */
+        ssize_t n = send(fd, p, remaining, MSG_NOSIGNAL);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
