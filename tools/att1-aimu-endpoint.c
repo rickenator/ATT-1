@@ -18,10 +18,10 @@
  *
  * Options:
  *   --socket PATH          Unix domain socket path to listen on (required).
- *   --tiles N               Simulated tile count (default 4).
- *   --tile-memory-mib N      Per-tile memory in MiB (default 1024).
- *   --kv-memory-mib N        Per-tile KV memory in MiB (default 256).
- *   --once                  Exit after the first client disconnects
+ *   --tiles N               simulated tile count (default 4).
+ *   --tile-memory-mib N      per-tile memory in MiB (default 1024).
+ *   --kv-memory-mib N        per-tile KV memory in MiB (default 256).
+ *   --once                  exit after the first client disconnects
  *                            (deterministic for tests/tools).
  *   --verbose               Print each accepted request.
  *   --help                  Show this message.

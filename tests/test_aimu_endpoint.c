@@ -127,8 +127,8 @@ static int test_endpoint_dma_and_fabric(void)
     att1_aimu_dma_counters dma_counters;
     att1_fabric_packet packet;
     att1_fabric_counters fabric_counters;
-    unsigned char payload[3] = {1u, 2u, 3u};
-    unsigned char out[8] = {0u};
+    unsigned char payload[3] = {1, 2, 3};
+    unsigned char out[8] = {0};
     size_t out_bytes = 0u;
     int status = 0;
 
