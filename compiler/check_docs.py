@@ -367,8 +367,8 @@ def check_stale_claims(repo: Path, report: CheckReport) -> None:
 def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     """
     Validate key milestone/status invariants:
-      - OPERATION_LOG must contain a Milestone 168 entry.
-      - OPERATION_LOG must show M167 as complete.
+      - OPERATION_LOG must contain a Milestone 169 entry.
+      - OPERATION_LOG must show M168 as complete.
       - CPU CI must be described as CPU-only somewhere in testing docs.
       - CUDA signoff described as manual RTX 3090.
     """
@@ -378,20 +378,20 @@ def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     if op_log.exists():
         text = op_log.read_text(encoding="utf-8", errors="replace")
 
-        # M168 should appear (at minimum in "Next Prompt for Codex" or as an entry)
-        if not re.search(r"Milestone\s+168|M168", text):
+        # M169 should appear (at minimum in "Next Prompt for Codex" or as an entry)
+        if not re.search(r"Milestone\s+169|M169", text):
             report.add_error(
                 "milestone-consistency",
                 "docs/OPERATION_LOG.md",
-                "OPERATION_LOG does not mention Milestone 168 (M168 not started or missing)",
+                "OPERATION_LOG does not mention Milestone 169 (M169 not started or missing)",
             )
 
-        # M167 should be listed as complete (have a "Milestone 167:" entry)
-        if not re.search(r"^- Milestone 167:", text, re.MULTILINE):
+        # M168 should be listed as complete (have a "Milestone 168:" entry)
+        if not re.search(r"^- Milestone 168:", text, re.MULTILINE):
             report.add_error(
                 "milestone-consistency",
                 "docs/OPERATION_LOG.md",
-                "OPERATION_LOG has no '- Milestone 167:' entry (M167 not yet recorded as complete)",
+                "OPERATION_LOG has no '- Milestone 168:' entry (M168 not yet recorded as complete)",
             )
 
     # CPU CI described as CPU-only in testing.md or RELEASE_READINESS
