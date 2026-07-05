@@ -128,6 +128,14 @@ skeleton that serves the M161 conformance ops over a Unix domain socket
 client, and `tests/test_aimu_endpoint.c` validates identical
 register/command/DMA/fabric semantics and counters over the transport.
 
+`src/backend_pcie.c` (M163) is an `att1_backend_ops` implementation
+(`att1_backend_pcie_create()`) that dispatches every operation through a
+caller-owned `att1_aimu_conformance_endpoint` (in-process or M162
+socket-backed) instead of CPU/CUDA calls, validating the backend-swap
+pattern proven by CUDA; `tests/test_backend_pcie.c` exercises the
+submit/dispatch/poll transport round trip. Compute execution over the
+transport is not yet implemented (deferred to M166).
+
 ---
 
 ## Reference Manuals
