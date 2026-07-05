@@ -13,6 +13,7 @@ typedef struct att1_aimu_conformance_inproc {
     att1_aimu_trace *trace;
     att1_aimu_mmio *mmio;
     att1_fabric fabric;
+    att1_kv_mmu *kv_mmu;
 } att1_aimu_conformance_inproc;
 
 #define ATT1_AIMU_CONF_DEFAULT_TILE_COUNT            4u
@@ -25,6 +26,13 @@ typedef struct att1_aimu_conformance_inproc {
 #define ATT1_AIMU_CONF_DEFAULT_DMA_HOST_SIZE         UINT64_C(0x0000000010000000)
 #define ATT1_AIMU_CONF_DEFAULT_DMA_DEVICE_BASE       UINT64_C(0x0000000080000000)
 #define ATT1_AIMU_CONF_DEFAULT_DMA_DEVICE_SIZE       UINT64_C(0x0000000040000000)
+#define ATT1_AIMU_CONF_DEFAULT_KV_MAX_SESSIONS       16u
+#define ATT1_AIMU_CONF_DEFAULT_KV_MAX_PAGES          256u
+#define ATT1_AIMU_CONF_DEFAULT_KV_NUM_LAYERS         4u
+#define ATT1_AIMU_CONF_DEFAULT_KV_NUM_HEADS          4u
+#define ATT1_AIMU_CONF_DEFAULT_KV_HEAD_DIM           16u
+#define ATT1_AIMU_CONF_DEFAULT_KV_PAGE_TOKENS        16u
+#define ATT1_AIMU_CONF_DEFAULT_KV_MAX_POSITIONS      256u
 
 static att1_status_t endpoint_invalid(void)
 {
@@ -54,6 +62,13 @@ void att1_aimu_conformance_default_config(att1_aimu_conformance_config *out)
     out->dma_host_size = ATT1_AIMU_CONF_DEFAULT_DMA_HOST_SIZE;
     out->dma_device_base = ATT1_AIMU_CONF_DEFAULT_DMA_DEVICE_BASE;
     out->dma_device_size = ATT1_AIMU_CONF_DEFAULT_DMA_DEVICE_SIZE;
+    out->kv_max_sessions = ATT1_AIMU_CONF_DEFAULT_KV_MAX_SESSIONS;
+    out->kv_max_pages = ATT1_AIMU_CONF_DEFAULT_KV_MAX_PAGES;
+    out->kv_num_layers = ATT1_AIMU_CONF_DEFAULT_KV_NUM_LAYERS;
+    out->kv_num_heads = ATT1_AIMU_CONF_DEFAULT_KV_NUM_HEADS;
+    out->kv_head_dim = ATT1_AIMU_CONF_DEFAULT_KV_HEAD_DIM;
+    out->kv_page_tokens = ATT1_AIMU_CONF_DEFAULT_KV_PAGE_TOKENS;
+    out->kv_max_positions = ATT1_AIMU_CONF_DEFAULT_KV_MAX_POSITIONS;
 }
 
 static void conformance_fill_config(att1_aimu_conformance_config *cfg,
@@ -97,6 +112,27 @@ static void conformance_fill_config(att1_aimu_conformance_config *cfg,
     if (in->dma_device_size != 0u) {
         cfg->dma_device_size = in->dma_device_size;
     }
+    if (in->kv_max_sessions != 0u) {
+        cfg->kv_max_sessions = in->kv_max_sessions;
+    }
+    if (in->kv_max_pages != 0u) {
+        cfg->kv_max_pages = in->kv_max_pages;
+    }
+    if (in->kv_num_layers != 0u) {
+        cfg->kv_num_layers = in->kv_num_layers;
+    }
+    if (in->kv_num_heads != 0u) {
+        cfg->kv_num_heads = in->kv_num_heads;
+    }
+    if (in->kv_head_dim != 0u) {
+        cfg->kv_head_dim = in->kv_head_dim;
+    }
+    if (in->kv_page_tokens != 0u) {
+        cfg->kv_page_tokens = in->kv_page_tokens;
+    }
+    if (in->kv_max_positions != 0u) {
+        cfg->kv_max_positions = in->kv_max_positions;
+    }
 }
 
 static void inproc_destroy(void *ctx)
@@ -112,6 +148,7 @@ static void inproc_destroy(void *ctx)
     att1_aimu_dma_destroy(ep->dma);
     att1_aimu_cmdq_destroy(ep->cmdq);
     att1_aimu_device_destroy(ep->device);
+    att1_kv_mmu_destroy(ep->kv_mmu);
     free(ep);
 }
 
@@ -347,6 +384,104 @@ static att1_status_t inproc_trace_get_snapshot(void *ctx, att1_aimu_trace_snapsh
     return att1_aimu_trace_get_snapshot(ep->trace, out);
 }
 
+static att1_status_t inproc_kv_create_session(void *ctx, uint64_t session_id)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(ctx);
+    if (ep == NULL) {
+        return endpoint_invalid();
+    }
+    return att1_kv_mmu_create_session(ep->kv_mmu, session_id);
+}
+
+static att1_status_t inproc_kv_destroy_session(void *ctx, uint64_t session_id)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(ctx);
+    if (ep == NULL) {
+        return endpoint_invalid();
+    }
+    return att1_kv_mmu_destroy_session(ep->kv_mmu, session_id);
+}
+
+static att1_status_t inproc_kv_append(void *ctx,
+                                      uint64_t session_id,
+                                      size_t layer_id,
+                                      size_t position,
+                                      const float *key,
+                                      size_t key_count,
+                                      const float *value,
+                                      size_t value_count)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(ctx);
+    (void)key_count;
+    (void)value_count;
+    if (ep == NULL) {
+        return endpoint_invalid();
+    }
+    return att1_kv_mmu_append(ep->kv_mmu, session_id, layer_id, position, key, value);
+}
+
+static att1_status_t inproc_kv_read(void *ctx,
+                                    uint64_t session_id,
+                                    size_t layer_id,
+                                    size_t head_id,
+                                    size_t position,
+                                    float *out_key,
+                                    size_t key_count,
+                                    float *out_value,
+                                    size_t value_count)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(ctx);
+    (void)key_count;
+    (void)value_count;
+    if (ep == NULL) {
+        return endpoint_invalid();
+    }
+    return att1_kv_mmu_read(ep->kv_mmu,
+                            session_id,
+                            layer_id,
+                            head_id,
+                            position,
+                            out_key,
+                            out_value);
+}
+
+static att1_status_t inproc_kv_copy_range(void *ctx,
+                                          uint64_t session_id,
+                                          size_t layer_id,
+                                          size_t head_id,
+                                          size_t start_position,
+                                          size_t position_count,
+                                          float *out_keys,
+                                          size_t keys_count,
+                                          float *out_values,
+                                          size_t values_count)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(ctx);
+    (void)keys_count;
+    (void)values_count;
+    if (ep == NULL) {
+        return endpoint_invalid();
+    }
+    return att1_kv_mmu_copy_range(ep->kv_mmu,
+                                 session_id,
+                                 layer_id,
+                                 head_id,
+                                 start_position,
+                                 position_count,
+                                 out_keys,
+                                 out_values);
+}
+
+static att1_status_t inproc_kv_get_counters(void *ctx, att1_kv_mmu_counters *out)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(ctx);
+    if (ep == NULL || out == NULL) {
+        return endpoint_invalid();
+    }
+    att1_kv_mmu_get_counters(ep->kv_mmu, out);
+    return ATT1_OK;
+}
+
 static const att1_aimu_conformance_ops g_inproc_ops = {
     "aimu-inproc-sim",
     inproc_destroy,
@@ -369,7 +504,13 @@ static const att1_aimu_conformance_ops g_inproc_ops = {
     inproc_fabric_receive,
     inproc_fabric_barrier_arrive,
     inproc_fabric_get_counters,
-    inproc_trace_get_snapshot
+    inproc_trace_get_snapshot,
+    inproc_kv_create_session,
+    inproc_kv_destroy_session,
+    inproc_kv_append,
+    inproc_kv_read,
+    inproc_kv_copy_range,
+    inproc_kv_get_counters
 };
 
 att1_status_t att1_aimu_conformance_inproc_create(
@@ -382,6 +523,7 @@ att1_status_t att1_aimu_conformance_inproc_create(
     att1_aimu_device_config dev_cfg;
     att1_aimu_cmdq_config cmdq_cfg;
     att1_fabric_bus_config fabric_cfg;
+    att1_kv_mmu_config kv_cfg;
     att1_status_t status;
 
     if (out_endpoint == NULL) {
@@ -489,6 +631,21 @@ att1_status_t att1_aimu_conformance_inproc_create(
     fabric_cfg.queue_capacity = cfg.fabric_queue_capacity;
     fabric_cfg.max_payload_bytes = cfg.fabric_max_payload_bytes;
     status = att1_fabric_create(&ctx->fabric, &fabric_cfg);
+    if (status != ATT1_OK) {
+        inproc_destroy(ctx);
+        free(endpoint);
+        return status;
+    }
+
+    memset(&kv_cfg, 0, sizeof(kv_cfg));
+    kv_cfg.max_sessions = cfg.kv_max_sessions;
+    kv_cfg.max_pages = cfg.kv_max_pages;
+    kv_cfg.num_layers = cfg.kv_num_layers;
+    kv_cfg.num_heads = cfg.kv_num_heads;
+    kv_cfg.head_dim = cfg.kv_head_dim;
+    kv_cfg.page_tokens = cfg.kv_page_tokens;
+    kv_cfg.max_positions = cfg.kv_max_positions;
+    status = att1_kv_mmu_create(&kv_cfg, &ctx->kv_mmu);
     if (status != ATT1_OK) {
         inproc_destroy(ctx);
         free(endpoint);
@@ -712,6 +869,93 @@ att1_status_t att1_aimu_conformance_trace_get_snapshot(att1_aimu_conformance_end
 {
     ATT1_CONF_VALIDATE_OP(endpoint, trace_get_snapshot);
     return endpoint->ops->trace_get_snapshot(endpoint->ctx, out);
+}
+
+att1_status_t att1_aimu_conformance_kv_create_session(att1_aimu_conformance_endpoint *endpoint,
+                                                      uint64_t session_id)
+{
+    ATT1_CONF_VALIDATE_OP(endpoint, kv_create_session);
+    return endpoint->ops->kv_create_session(endpoint->ctx, session_id);
+}
+
+att1_status_t att1_aimu_conformance_kv_destroy_session(att1_aimu_conformance_endpoint *endpoint,
+                                                       uint64_t session_id)
+{
+    ATT1_CONF_VALIDATE_OP(endpoint, kv_destroy_session);
+    return endpoint->ops->kv_destroy_session(endpoint->ctx, session_id);
+}
+
+att1_status_t att1_aimu_conformance_kv_append(att1_aimu_conformance_endpoint *endpoint,
+                                              uint64_t session_id,
+                                              size_t layer_id,
+                                              size_t position,
+                                              const float *key,
+                                              size_t key_count,
+                                              const float *value,
+                                              size_t value_count)
+{
+    ATT1_CONF_VALIDATE_OP(endpoint, kv_append);
+    return endpoint->ops->kv_append(endpoint->ctx,
+                                    session_id,
+                                    layer_id,
+                                    position,
+                                    key,
+                                    key_count,
+                                    value,
+                                    value_count);
+}
+
+att1_status_t att1_aimu_conformance_kv_read(att1_aimu_conformance_endpoint *endpoint,
+                                            uint64_t session_id,
+                                            size_t layer_id,
+                                            size_t head_id,
+                                            size_t position,
+                                            float *out_key,
+                                            size_t key_count,
+                                            float *out_value,
+                                            size_t value_count)
+{
+    ATT1_CONF_VALIDATE_OP(endpoint, kv_read);
+    return endpoint->ops->kv_read(endpoint->ctx,
+                                  session_id,
+                                  layer_id,
+                                  head_id,
+                                  position,
+                                  out_key,
+                                  key_count,
+                                  out_value,
+                                  value_count);
+}
+
+att1_status_t att1_aimu_conformance_kv_copy_range(att1_aimu_conformance_endpoint *endpoint,
+                                                  uint64_t session_id,
+                                                  size_t layer_id,
+                                                  size_t head_id,
+                                                  size_t start_position,
+                                                  size_t position_count,
+                                                  float *out_keys,
+                                                  size_t keys_count,
+                                                  float *out_values,
+                                                  size_t values_count)
+{
+    ATT1_CONF_VALIDATE_OP(endpoint, kv_copy_range);
+    return endpoint->ops->kv_copy_range(endpoint->ctx,
+                                        session_id,
+                                        layer_id,
+                                        head_id,
+                                        start_position,
+                                        position_count,
+                                        out_keys,
+                                        keys_count,
+                                        out_values,
+                                        values_count);
+}
+
+att1_status_t att1_aimu_conformance_kv_get_counters(att1_aimu_conformance_endpoint *endpoint,
+                                                    att1_kv_mmu_counters *out)
+{
+    ATT1_CONF_VALIDATE_OP(endpoint, kv_get_counters);
+    return endpoint->ops->kv_get_counters(endpoint->ctx, out);
 }
 
 #undef ATT1_CONF_VALIDATE_OP

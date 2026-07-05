@@ -7,6 +7,8 @@
  *   - docs/aimu_register_map.md §15.7 / docs/schema_compatibility.md §12
  *     (DMA descriptor freeze)
  *   - docs/aimu_fabric_routing.md §16 (fabric/barrier/counter freeze)
+ *   - docs/aimu_architecture.md §8.9 (KV-MMU / session memory requirements,
+ *     M165: device-local KV-MMU in the endpoint)
  *
  * The suite talks only to att1_aimu_conformance_endpoint and therefore can be
  * reused unchanged against future socket-emulator or FPGA backends.
@@ -425,6 +427,149 @@ static int test_fabric_broadcast_and_barrier_semantics(void)
     return 0;
 }
 
+static int test_kv_mmu_session_lifecycle_and_semantics(void)
+{
+    att1_aimu_conformance_endpoint *endpoint = NULL;
+    att1_aimu_conformance_config cfg;
+    const uint64_t session_id = 42u;
+    const size_t layer_id = 1u;
+    const size_t num_heads = 4u;
+    const size_t head_dim = 16u;
+    const size_t per_position = num_heads * head_dim;
+    float key_pos0[64];
+    float value_pos0[64];
+    float key_pos1[64];
+    float value_pos1[64];
+    float out_key[16];
+    float out_value[16];
+    float range_keys[32];
+    float range_values[32];
+    att1_kv_mmu_counters counters;
+    size_t i;
+
+    att1_aimu_conformance_default_config(&cfg);
+
+    for (i = 0u; i < per_position; ++i) {
+        key_pos0[i] = (float)(100u + i);
+        value_pos0[i] = (float)(200u + i);
+        key_pos1[i] = (float)(300u + i);
+        value_pos1[i] = (float)(400u + i);
+    }
+
+    REQUIRE(make_endpoint(&cfg, &endpoint), "kv_mmu: endpoint create");
+
+    REQUIRE(att1_aimu_conformance_kv_read(endpoint,
+                                          session_id,
+                                          layer_id,
+                                          0u,
+                                          0u,
+                                          out_key,
+                                          head_dim,
+                                          out_value,
+                                          head_dim) != ATT1_OK,
+            "kv_mmu: read before session created is rejected");
+
+    REQUIRE(att1_aimu_conformance_kv_create_session(endpoint, session_id) == ATT1_OK,
+            "kv_mmu: create session");
+    REQUIRE(att1_aimu_conformance_kv_create_session(endpoint, session_id) != ATT1_OK,
+            "kv_mmu: duplicate session id rejected");
+
+    REQUIRE(att1_aimu_conformance_kv_append(endpoint,
+                                            session_id,
+                                            layer_id,
+                                            1u,
+                                            key_pos1,
+                                            per_position,
+                                            value_pos1,
+                                            per_position) != ATT1_OK,
+            "kv_mmu: out-of-order append (position 1 before 0) rejected");
+
+    REQUIRE(att1_aimu_conformance_kv_append(endpoint,
+                                            session_id,
+                                            layer_id,
+                                            0u,
+                                            key_pos0,
+                                            per_position,
+                                            value_pos0,
+                                            per_position) == ATT1_OK,
+            "kv_mmu: append position 0");
+    REQUIRE(att1_aimu_conformance_kv_append(endpoint,
+                                            session_id,
+                                            layer_id,
+                                            0u,
+                                            key_pos0,
+                                            per_position,
+                                            value_pos0,
+                                            per_position) != ATT1_OK,
+            "kv_mmu: duplicate append at same position rejected");
+    REQUIRE(att1_aimu_conformance_kv_append(endpoint,
+                                            session_id,
+                                            layer_id,
+                                            1u,
+                                            key_pos1,
+                                            per_position,
+                                            value_pos1,
+                                            per_position) == ATT1_OK,
+            "kv_mmu: append position 1");
+
+    memset(out_key, 0, sizeof(out_key));
+    memset(out_value, 0, sizeof(out_value));
+    REQUIRE(att1_aimu_conformance_kv_read(endpoint,
+                                          session_id,
+                                          layer_id,
+                                          2u,
+                                          0u,
+                                          out_key,
+                                          head_dim,
+                                          out_value,
+                                          head_dim) == ATT1_OK &&
+            out_key[0] == key_pos0[(2u * head_dim)] &&
+            out_value[0] == value_pos0[(2u * head_dim)],
+            "kv_mmu: read returns head-2 data written at append time");
+
+    memset(range_keys, 0, sizeof(range_keys));
+    memset(range_values, 0, sizeof(range_values));
+    REQUIRE(att1_aimu_conformance_kv_copy_range(endpoint,
+                                                session_id,
+                                                layer_id,
+                                                1u,
+                                                0u,
+                                                2u,
+                                                range_keys,
+                                                2u * head_dim,
+                                                range_values,
+                                                2u * head_dim) == ATT1_OK &&
+            range_keys[0] == key_pos0[head_dim] &&
+            range_keys[head_dim] == key_pos1[head_dim] &&
+            range_values[0] == value_pos0[head_dim] &&
+            range_values[head_dim] == value_pos1[head_dim],
+            "kv_mmu: copy_range preserves token order across two positions");
+
+    REQUIRE(att1_aimu_conformance_kv_get_counters(endpoint, &counters) == ATT1_OK &&
+            counters.append_ops == 2u &&
+            counters.read_ops == 3u &&
+            counters.range_copy_ops == 1u &&
+            counters.errors == 4u,
+            "kv_mmu: counters reflect append/read/range-copy/error activity");
+
+    REQUIRE(att1_aimu_conformance_kv_destroy_session(endpoint, session_id) == ATT1_OK,
+            "kv_mmu: destroy session");
+    REQUIRE(att1_aimu_conformance_kv_read(endpoint,
+                                          session_id,
+                                          layer_id,
+                                          0u,
+                                          0u,
+                                          out_key,
+                                          head_dim,
+                                          out_value,
+                                          head_dim) != ATT1_OK,
+            "kv_mmu: read after session destroyed is rejected");
+
+    att1_aimu_conformance_endpoint_destroy(endpoint);
+    PASS("kv_mmu_session_lifecycle_and_semantics");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -435,6 +580,7 @@ int main(void)
     failed |= test_dma_validation_and_counters();
     failed |= test_fabric_send_receive_and_counters();
     failed |= test_fabric_broadcast_and_barrier_semantics();
+    failed |= test_kv_mmu_session_lifecycle_and_semantics();
 
     if (failed != 0) {
         return 1;

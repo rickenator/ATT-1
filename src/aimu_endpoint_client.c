@@ -397,6 +397,188 @@ static att1_status_t client_trace_get_snapshot(void *ctx, att1_aimu_trace_snapsh
     return st;
 }
 
+static att1_status_t client_kv_create_session(void *ctx, uint64_t session_id)
+{
+    endpoint_client_ctx *cc = (endpoint_client_ctx *)ctx;
+    att1_aimu_endpoint_request req;
+    att1_aimu_endpoint_response resp;
+    memset(&req, 0, sizeof(req));
+    req.op = ATT1_AIMU_ENDPOINT_OP_KV_CREATE_SESSION;
+    req.kv_session_id = session_id;
+    return endpoint_roundtrip(cc, &req, &resp);
+}
+
+static att1_status_t client_kv_destroy_session(void *ctx, uint64_t session_id)
+{
+    endpoint_client_ctx *cc = (endpoint_client_ctx *)ctx;
+    att1_aimu_endpoint_request req;
+    att1_aimu_endpoint_response resp;
+    memset(&req, 0, sizeof(req));
+    req.op = ATT1_AIMU_ENDPOINT_OP_KV_DESTROY_SESSION;
+    req.kv_session_id = session_id;
+    return endpoint_roundtrip(cc, &req, &resp);
+}
+
+static att1_status_t client_kv_stream_bytes_fit(size_t bytes)
+{
+    if (bytes > (ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    return ATT1_OK;
+}
+
+static att1_status_t client_kv_append(void *ctx,
+                                      uint64_t session_id,
+                                      size_t layer_id,
+                                      size_t position,
+                                      const float *key,
+                                      size_t key_count,
+                                      const float *value,
+                                      size_t value_count)
+{
+    endpoint_client_ctx *cc = (endpoint_client_ctx *)ctx;
+    att1_aimu_endpoint_request req;
+    att1_aimu_endpoint_response resp;
+    size_t key_bytes = key_count * sizeof(float);
+    size_t value_bytes = value_count * sizeof(float);
+    const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
+
+    if (client_kv_stream_bytes_fit(key_bytes) != ATT1_OK ||
+        client_kv_stream_bytes_fit(value_bytes) != ATT1_OK) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    memset(&req, 0, sizeof(req));
+    req.op = ATT1_AIMU_ENDPOINT_OP_KV_APPEND;
+    req.kv_session_id = session_id;
+    req.kv_layer_id = (uint32_t)layer_id;
+    req.kv_position = (uint32_t)position;
+    req.kv_key_bytes = (uint32_t)key_bytes;
+    req.kv_value_bytes = (uint32_t)value_bytes;
+    if (key != NULL && key_bytes > 0u) {
+        memcpy(req.payload, key, key_bytes);
+    }
+    if (value != NULL && value_bytes > 0u) {
+        memcpy(req.payload + half_payload, value, value_bytes);
+    }
+    return endpoint_roundtrip(cc, &req, &resp);
+}
+
+static att1_status_t client_kv_read(void *ctx,
+                                    uint64_t session_id,
+                                    size_t layer_id,
+                                    size_t head_id,
+                                    size_t position,
+                                    float *out_key,
+                                    size_t key_count,
+                                    float *out_value,
+                                    size_t value_count)
+{
+    endpoint_client_ctx *cc = (endpoint_client_ctx *)ctx;
+    att1_aimu_endpoint_request req;
+    att1_aimu_endpoint_response resp;
+    att1_status_t st;
+    const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
+
+    if (client_kv_stream_bytes_fit(key_count * sizeof(float)) != ATT1_OK ||
+        client_kv_stream_bytes_fit(value_count * sizeof(float)) != ATT1_OK) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    memset(&req, 0, sizeof(req));
+    req.op = ATT1_AIMU_ENDPOINT_OP_KV_READ;
+    req.kv_session_id = session_id;
+    req.kv_layer_id = (uint32_t)layer_id;
+    req.kv_head_id = (uint32_t)head_id;
+    req.kv_position = (uint32_t)position;
+    req.kv_key_bytes = (uint32_t)(key_count * sizeof(float));
+    req.kv_value_bytes = (uint32_t)(value_count * sizeof(float));
+    st = endpoint_roundtrip(cc, &req, &resp);
+    if (st == ATT1_OK) {
+        size_t out_key_bytes = resp.kv_key_bytes;
+        size_t out_value_bytes = resp.kv_value_bytes;
+        if (out_key_bytes > (key_count * sizeof(float))) {
+            out_key_bytes = key_count * sizeof(float);
+        }
+        if (out_value_bytes > (value_count * sizeof(float))) {
+            out_value_bytes = value_count * sizeof(float);
+        }
+        if (out_key != NULL && out_key_bytes > 0u) {
+            memcpy(out_key, resp.payload, out_key_bytes);
+        }
+        if (out_value != NULL && out_value_bytes > 0u) {
+            memcpy(out_value, resp.payload + half_payload, out_value_bytes);
+        }
+    }
+    return st;
+}
+
+static att1_status_t client_kv_copy_range(void *ctx,
+                                          uint64_t session_id,
+                                          size_t layer_id,
+                                          size_t head_id,
+                                          size_t start_position,
+                                          size_t position_count,
+                                          float *out_keys,
+                                          size_t keys_count,
+                                          float *out_values,
+                                          size_t values_count)
+{
+    endpoint_client_ctx *cc = (endpoint_client_ctx *)ctx;
+    att1_aimu_endpoint_request req;
+    att1_aimu_endpoint_response resp;
+    att1_status_t st;
+    const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
+
+    if (client_kv_stream_bytes_fit(keys_count * sizeof(float)) != ATT1_OK ||
+        client_kv_stream_bytes_fit(values_count * sizeof(float)) != ATT1_OK) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+
+    memset(&req, 0, sizeof(req));
+    req.op = ATT1_AIMU_ENDPOINT_OP_KV_COPY_RANGE;
+    req.kv_session_id = session_id;
+    req.kv_layer_id = (uint32_t)layer_id;
+    req.kv_head_id = (uint32_t)head_id;
+    req.kv_start_position = (uint32_t)start_position;
+    req.kv_position_count = (uint32_t)position_count;
+    req.kv_key_bytes = (uint32_t)(keys_count * sizeof(float));
+    req.kv_value_bytes = (uint32_t)(values_count * sizeof(float));
+    st = endpoint_roundtrip(cc, &req, &resp);
+    if (st == ATT1_OK) {
+        size_t out_key_bytes = resp.kv_key_bytes;
+        size_t out_value_bytes = resp.kv_value_bytes;
+        if (out_key_bytes > (keys_count * sizeof(float))) {
+            out_key_bytes = keys_count * sizeof(float);
+        }
+        if (out_value_bytes > (values_count * sizeof(float))) {
+            out_value_bytes = values_count * sizeof(float);
+        }
+        if (out_keys != NULL && out_key_bytes > 0u) {
+            memcpy(out_keys, resp.payload, out_key_bytes);
+        }
+        if (out_values != NULL && out_value_bytes > 0u) {
+            memcpy(out_values, resp.payload + half_payload, out_value_bytes);
+        }
+    }
+    return st;
+}
+
+static att1_status_t client_kv_get_counters(void *ctx, att1_kv_mmu_counters *out)
+{
+    endpoint_client_ctx *cc = (endpoint_client_ctx *)ctx;
+    att1_aimu_endpoint_request req;
+    att1_aimu_endpoint_response resp;
+    att1_status_t st;
+    memset(&req, 0, sizeof(req));
+    req.op = ATT1_AIMU_ENDPOINT_OP_KV_GET_COUNTERS;
+    st = endpoint_roundtrip(cc, &req, &resp);
+    if (st == ATT1_OK && out != NULL) {
+        *out = resp.kv_counters;
+    }
+    return st;
+}
+
 static const att1_aimu_conformance_ops g_endpoint_client_ops = {
     .name = "att1-aimu-endpoint-socket-client",
     .destroy = client_destroy,
@@ -420,6 +602,12 @@ static const att1_aimu_conformance_ops g_endpoint_client_ops = {
     .fabric_barrier_arrive = client_fabric_barrier_arrive,
     .fabric_get_counters = client_fabric_get_counters,
     .trace_get_snapshot = client_trace_get_snapshot,
+    .kv_create_session = client_kv_create_session,
+    .kv_destroy_session = client_kv_destroy_session,
+    .kv_append = client_kv_append,
+    .kv_read = client_kv_read,
+    .kv_copy_range = client_kv_copy_range,
+    .kv_get_counters = client_kv_get_counters,
 };
 
 att1_status_t att1_aimu_conformance_socket_connect(

@@ -259,11 +259,36 @@ device.
   M166) — it proves the one-time-transfer/residency policy layer that the
   model loader will use once `backend_pcie` is wired into inference.
 
-**M165: Device-local KV-MMU in the endpoint**
+**M165: Device-local KV-MMU in the endpoint** — *complete;
+[`include/att1_aimu_conformance.h`](../include/att1_aimu_conformance.h),
+[`src/aimu_conformance.c`](../src/aimu_conformance.c),
+[`include/att1_aimu_endpoint_protocol.h`](../include/att1_aimu_endpoint_protocol.h),
+[`src/aimu_endpoint_protocol.c`](../src/aimu_endpoint_protocol.c),
+[`src/aimu_endpoint_client.c`](../src/aimu_endpoint_client.c),
+[`tools/att1-aimu-endpoint.c`](../tools/att1-aimu-endpoint.c),
+[`tests/test_aimu_conformance.c`](../tests/test_aimu_conformance.c),
+[`tests/test_aimu_endpoint.c`](../tests/test_aimu_endpoint.c).*
 
 - KV sessions live in the endpoint process (M93 §8.9): append ordering,
   duplicate rejection, range-copy, eviction, per-session lifecycle, full
   counter set. Host never touches KV data between tokens.
+- `att1_aimu_conformance_endpoint` (M161) gains
+  `kv_create_session`/`kv_destroy_session`/`kv_append`/`kv_read`/
+  `kv_copy_range`/`kv_get_counters`, each forwarding to an internal
+  `att1_kv_mmu` (M151) instance owned by the endpoint — the already-frozen
+  append-ordering/duplicate-rejection/range-copy/eviction/counter semantics
+  are reused unchanged rather than reimplemented at the transport layer.
+  `att1_aimu_conformance_config` gains a `kv_*` sub-config (sessions, pages,
+  layers, heads, head_dim, page_tokens, max_positions) with defaults.
+- The M162 socket-backed daemon (`att1-aimu-endpoint`) and client gain the
+  same six ops end to end, so KV sessions behave identically whether the
+  endpoint is in-process or out-of-process: `kv_append`/`kv_read`/
+  `kv_copy_range` carry explicit float-element counts so the wire protocol
+  can size key/value transfers without guessing the KV-MMU's configured
+  shape (the request/response payload buffer grew from 4096 to 16384 bytes
+  to give range-copies room).
+- No changes to `src/kv_mmu.c` itself (M151 simulator reused unchanged) or
+  to `EXEC_*` command execution (still deferred to M166).
 
 **M166: Single-tile emulated decode, end to end**
 
