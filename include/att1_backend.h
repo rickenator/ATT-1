@@ -175,11 +175,11 @@ att1_status_t att1_backend_pcie_load_tensor(att1_backend *backend,
 int att1_backend_pcie_tensor_is_resident(att1_backend *backend, uint32_t tensor_id);
 
 typedef struct att1_backend_pcie_residency_counters {
-    uint64_t tensors_resident;               /**< distinct tensors currently resident   */
-    uint64_t transfers_submitted;             /**< successful att1_backend_pcie_load_tensor calls */
-    uint64_t descriptors_submitted;           /**< individual DMA descriptors issued     */
-    uint64_t bytes_transferred;               /**< total payload bytes transferred H2D   */
-    uint64_t duplicate_transfer_rejections;   /**< re-load attempts rejected              */
+    uint64_t tensors_resident;             /**< distinct tensors currently resident  */
+    uint64_t transfers_submitted;          /**< successful load_tensor() calls       */
+    uint64_t descriptors_submitted;        /**< individual DMA descriptors issued    */
+    uint64_t bytes_transferred;            /**< total payload bytes transferred H2D  */
+    uint64_t duplicate_transfer_rejections; /**< re-load attempts rejected           */
 } att1_backend_pcie_residency_counters;
 
 /*
