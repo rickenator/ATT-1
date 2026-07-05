@@ -320,11 +320,54 @@ device.
   and `VALIDATE_TENSOR` remain unsupported at the cmdq level; two-tile
   cluster decode over the M162 socket transport is deferred to M167.
 
-**M167: Two-tile emulated cluster decode**
+**M167: Two-tile emulated cluster decode** — *complete;
+[`include/att1_aimu_cluster_bridge.h`](../include/att1_aimu_cluster_bridge.h),
+[`src/aimu_cluster_bridge.c`](../src/aimu_cluster_bridge.c),
+[`tests/test_aimu_cluster_decode.c`](../tests/test_aimu_cluster_decode.c).*
 
-- Two endpoint processes, activation routing across the transport, barrier
-  and partial-logit reduction (M93 §8.2-4). Backend comparison report gains
-  a `pcie` column (M92 extension per M93 §8.4).
+- `att1_aimu_cluster_bridge` is a thin host-side relay, built entirely out
+  of the already-frozen `att1_aimu_conformance_fabric_send/receive/
+  barrier_arrive` calls (M160/M161), that bridges activation/logits
+  packets and barrier arrivals between two independent
+  `att1_aimu_conformance_endpoint` instances — transport-agnostic, so it
+  works unchanged whether both endpoints are in-process (M161) or two
+  separate `att1-aimu-endpoint` daemon *processes* connected over Unix
+  domain sockets (M162). Each bridged endpoint's fabric is configured with
+  `tile_count=2` (local compute tile 0, a bridge-owned "proxy" tile 1); the
+  bridge relays proxy-slot packets to the peer's real tile 0 and cascades a
+  two-participant `{0,1}` barrier completion on both endpoints only once
+  both real tiles have locally arrived.
+- `test_two_tile_decode_inprocess` really executes a tiny two-layer
+  transformer split one layer per tile across two in-process
+  `att1_backend_pcie` (M163/M166) instances: tile 0's layer-0 activation is
+  routed to tile 1 over the bridge (M93 §8.2-2), tile 1 runs layer 1 and
+  the final RMSNorm and routes the normed hidden state back to tile 0,
+  both tiles rendezvous at the bridge barrier (M93 §8.2-4), then each
+  computes a row-parallel *partial* logit vector from its own half of the
+  output projection's contraction (`d_model`) dimension and combines them
+  via one more bridge-routed send — matching a direct cpu-f32 reference
+  exactly.
+- `test_two_tile_decode_socket` drives the identical protocol over two
+  real `att1-aimu-endpoint` daemon *processes*, proving the fabric/barrier
+  protocol genuinely crosses OS process boundaries (M93 §8.8) and
+  asserting the daemons' own fabric counters (queried back over the
+  sockets) reflect real traffic. This variant intentionally reuses the
+  cpu-f32 reference values as each tile's "local computation" rather than
+  exercising `EXEC_*` math on the socket-backed endpoints: M166's exec
+  hook resolves tensor operands via raw host pointers, which are only
+  valid within the process that issued them, so forwarding those pointer
+  values verbatim to a daemon's different address space and dereferencing
+  them there is undefined behavior. Giving the socket-backed endpoint real
+  device-local tensor memory (so tensor payloads are transferred and
+  dereferenced only within the daemon's own address space) remains a
+  documented gap for a future milestone — M167 is scoped to the
+  fabric/barrier/reduction protocol (M93 §8.2-2/8.2-4), not cross-process
+  compute.
+- The backend comparison report's `pcie` column (M92 extension per
+  M93 §8.4) remains deferred: it requires wiring a two-process cluster
+  decode path into `att1-bench`/`compiler/backend_comparison_report.py`,
+  which depends on the device-local tensor memory gap above being closed
+  first.
 
 **M168: Fault injection and hostile-endpoint testing**
 

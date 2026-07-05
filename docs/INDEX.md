@@ -179,6 +179,25 @@ type). `tests/test_backend_pcie.c` proves per-op correctness plus a
 three-step, multi-position transformer-block decode matching cpu-f32
 exactly and cpu-q8/cpu-q4 within tolerance.
 
+`include/att1_aimu_cluster_bridge.h` / `src/aimu_cluster_bridge.c` (M167)
+add `att1_aimu_cluster_bridge`, a transport-agnostic host-side relay built
+entirely out of the already-frozen `att1_aimu_conformance_fabric_send/
+receive/barrier_arrive` calls, bridging activation/logits packets and
+barrier arrivals between two independent `att1_aimu_conformance_endpoint`
+instances (in-process or two separate `att1-aimu-endpoint` daemon
+processes over sockets). Each bridged endpoint's fabric is configured with
+`tile_count=2` (local compute tile 0, a bridge-owned "proxy" tile 1); the
+bridge relays proxy-slot packets to the peer's real tile 0 and cascades a
+two-participant `{0,1}` barrier completion on both endpoints only once
+both real tiles have locally arrived. `tests/test_aimu_cluster_decode.c`
+proves a real two-layer, two-tile transformer decode (activation routing,
+barrier rendezvous, row-parallel partial-logit reduction) in-process
+against a cpu-f32 reference, plus the identical fabric/barrier protocol
+over two real daemon processes connected via sockets; real `EXEC_*`
+tensor-math execution across the socket transport remains a documented
+gap (the M166 exec hook resolves tensor operands via raw host pointers
+that are only valid within the process that issued them).
+
 ---
 
 ## Reference Manuals
