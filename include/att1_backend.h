@@ -129,4 +129,68 @@ att1_status_t att1_backend_pcie_create(att1_aimu_conformance_endpoint *endpoint,
                                        uint32_t tile_id,
                                        att1_backend **out_backend);
 
+/*
+ * M164: One-time shard transfer and tensor residency
+ *
+ * `att1_backend_pcie_load_tensor()` implements the M93 §8.12 model-load
+ * data-movement contract ("Tensor shard (model weights): host -> device,
+ * once, at model load"): it transfers `byte_length` bytes for a given
+ * `tensor_id` from `host_addr` to `device_addr` (addresses in the DMA
+ * simulator's configured host/device address spaces — see
+ * att1_aimu_conformance_config's dma_host_.../dma_device_... fields, not raw
+ * host pointers) via one or more frozen v1.0 (M159) att1_aimu_dma_desc
+ * transfers issued through the backend's att1_aimu_conformance_endpoint.
+ * Transfers larger than ATT1_AIMU_DMA_MAX_TRANSFER_BYTES are split into
+ * multiple sequential descriptors, the last one flagged
+ * ATT1_AIMU_DMA_FLAG_LAST_DESCRIPTOR.
+ *
+ * Once a tensor_id has been successfully loaded it is marked resident for
+ * the lifetime of the backend. A second call for the same tensor_id is
+ * rejected with ATT1_ERR_STATE and does not resubmit any DMA transfer —
+ * this is the enforcement mechanism for "weights are never re-read by the
+ * host during inference" (M93 §8.12): callers (e.g. the model loader) are
+ * expected to call this once per tensor at load time and never again.
+ *
+ * Returns ATT1_ERR_INVALID_ARG for a NULL backend/non-pcie backend or a
+ * zero byte_length. Returns ATT1_ERR_STATE if tensor_id is already
+ * resident, or if the backend's resident-tensor table is full. Returns
+ * whatever att1_status_t the underlying DMA submission failed with
+ * otherwise.
+ */
+att1_status_t att1_backend_pcie_load_tensor(att1_backend *backend,
+                                            uint32_t tensor_id,
+                                            uint64_t host_addr,
+                                            uint64_t device_addr,
+                                            uint64_t byte_length,
+                                            uint8_t dtype,
+                                            uint8_t quant_group_size);
+
+/*
+ * att1_backend_pcie_tensor_is_resident
+ *
+ * Returns 1 if tensor_id has already been successfully transferred via
+ * att1_backend_pcie_load_tensor() on this backend, 0 otherwise (including
+ * when backend is NULL or not a pcie backend).
+ */
+int att1_backend_pcie_tensor_is_resident(att1_backend *backend, uint32_t tensor_id);
+
+typedef struct att1_backend_pcie_residency_counters {
+    uint64_t tensors_resident;             /**< distinct tensors currently resident  */
+    uint64_t transfers_submitted;          /**< successful load_tensor() calls       */
+    uint64_t descriptors_submitted;        /**< individual DMA descriptors issued    */
+    uint64_t bytes_transferred;            /**< total payload bytes transferred H2D  */
+    uint64_t duplicate_transfer_rejections; /**< re-load attempts rejected           */
+} att1_backend_pcie_residency_counters;
+
+/*
+ * att1_backend_pcie_get_residency_counters
+ *
+ * Copies the backend's M164 residency counters into *out.
+ *
+ * Returns ATT1_ERR_INVALID_ARG if backend is NULL/not-pcie or out is NULL.
+ */
+att1_status_t att1_backend_pcie_get_residency_counters(
+        att1_backend *backend,
+        att1_backend_pcie_residency_counters *out);
+
 #endif

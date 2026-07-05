@@ -136,6 +136,16 @@ pattern proven by CUDA; `tests/test_backend_pcie.c` exercises the
 submit/dispatch/poll transport round trip. Compute execution over the
 transport is not yet implemented (deferred to M166).
 
+`att1_backend_pcie_load_tensor()` (M164, same file) implements the M93
+§8.12 one-time shard-transfer contract: it moves a tensor's bytes
+host→device via one or more frozen v1.0 (M159) DMA descriptors, marks the
+`tensor_id` resident, and rejects a second load for the same `tensor_id`
+with `ATT1_ERR_STATE` without resubmitting any transfer, enforcing that
+weights are never re-read by the host once resident;
+`att1_backend_pcie_residency_counters` / `att1_backend_pcie_get_residency_counters()`
+expose transfer/rejection accounting and `att1_backend_pcie_tensor_is_resident()`
+lets callers query residency directly.
+
 ---
 
 ## Reference Manuals

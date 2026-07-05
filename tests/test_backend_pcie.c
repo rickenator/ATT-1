@@ -12,6 +12,7 @@
  */
 
 #include "att1_aimu_conformance.h"
+#include "att1_aimu_dma.h"
 #include "att1_backend.h"
 
 #include <stdio.h>
@@ -112,6 +113,89 @@ static int test_exec_ops_transport_roundtrip(void)
     return 0;
 }
 
+/*
+ * M164: att1_backend_pcie_load_tensor() one-time shard transfer / tensor
+ * residency tests.
+ */
+static int test_load_tensor_residency(void)
+{
+    att1_aimu_conformance_config cfg;
+    att1_aimu_conformance_endpoint *endpoint = NULL;
+    att1_backend *backend = NULL;
+    att1_backend_pcie_residency_counters counters;
+    att1_aimu_dma_counters dma_counters;
+
+    att1_aimu_conformance_default_config(&cfg);
+    REQUIRE(att1_aimu_conformance_inproc_create(&cfg, &endpoint) == ATT1_OK,
+            "load_tensor: endpoint create");
+    REQUIRE(att1_backend_pcie_create(endpoint, 0u, &backend) == ATT1_OK,
+            "load_tensor: backend create");
+
+    REQUIRE(att1_backend_pcie_tensor_is_resident(backend, 7u) == 0,
+            "load_tensor: tensor not resident before load");
+
+    REQUIRE(att1_backend_pcie_load_tensor(backend, 7u,
+                                          cfg.dma_host_base,
+                                          cfg.dma_device_base,
+                                          4096u,
+                                          ATT1_AIMU_DMA_DTYPE_F32,
+                                          0u) == ATT1_OK,
+            "load_tensor: first load succeeds");
+
+    REQUIRE(att1_backend_pcie_tensor_is_resident(backend, 7u) == 1,
+            "load_tensor: tensor resident after load");
+
+    /* Enforcement: reloading the same tensor_id is rejected and must not
+     * resubmit any DMA transfer (M93 §8.12 "never re-read"). */
+    REQUIRE(att1_backend_pcie_load_tensor(backend, 7u,
+                                          cfg.dma_host_base,
+                                          cfg.dma_device_base,
+                                          4096u,
+                                          ATT1_AIMU_DMA_DTYPE_F32,
+                                          0u) == ATT1_ERR_STATE,
+            "load_tensor: duplicate load rejected");
+
+    /* A different tensor_id transfers independently. */
+    REQUIRE(att1_backend_pcie_load_tensor(backend, 8u,
+                                          cfg.dma_host_base + 4096u,
+                                          cfg.dma_device_base + 4096u,
+                                          1024u,
+                                          ATT1_AIMU_DMA_DTYPE_F32,
+                                          0u) == ATT1_OK,
+            "load_tensor: second distinct tensor succeeds");
+
+    REQUIRE(att1_backend_pcie_get_residency_counters(backend, &counters) == ATT1_OK &&
+            counters.tensors_resident == 2u &&
+            counters.transfers_submitted == 2u &&
+            counters.descriptors_submitted == 2u &&
+            counters.bytes_transferred == (4096u + 1024u) &&
+            counters.duplicate_transfer_rejections == 1u,
+            "load_tensor: residency counters reflect two loads and one rejection");
+
+    REQUIRE(att1_aimu_conformance_dma_get_counters(endpoint, &dma_counters) == ATT1_OK &&
+            dma_counters.dma_submitted == 2u &&
+            dma_counters.dma_completed == 2u &&
+            dma_counters.bytes_host_to_device == (4096u + 1024u),
+            "load_tensor: underlying DMA counters confirm only two transfers occurred");
+
+    /* Invalid args. */
+    REQUIRE(att1_backend_pcie_load_tensor(NULL, 1u, 0u, 0u, 16u, 0u, 0u) == ATT1_ERR_INVALID_ARG,
+            "load_tensor: NULL backend rejected");
+    REQUIRE(att1_backend_pcie_load_tensor(backend, 9u, cfg.dma_host_base,
+                                          cfg.dma_device_base, 0u, 0u, 0u) ==
+                    ATT1_ERR_INVALID_ARG,
+            "load_tensor: zero byte_length rejected");
+    REQUIRE(att1_backend_pcie_tensor_is_resident(NULL, 7u) == 0,
+            "load_tensor: is_resident(NULL) is false");
+    REQUIRE(att1_backend_pcie_get_residency_counters(backend, NULL) == ATT1_ERR_INVALID_ARG,
+            "load_tensor: get_residency_counters NULL out rejected");
+
+    att1_backend_destroy(backend);
+    att1_aimu_conformance_endpoint_destroy(endpoint);
+    PASS("load_tensor_residency");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -119,6 +203,7 @@ int main(void)
     failed |= test_create_invalid_args();
     failed |= test_alloc_free_sync();
     failed |= test_exec_ops_transport_roundtrip();
+    failed |= test_load_tensor_residency();
 
     if (failed) {
         printf("backend_pcie: SOME TESTS FAILED\n");
