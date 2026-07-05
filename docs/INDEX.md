@@ -115,6 +115,12 @@ in `docs/` unless noted otherwise.
 | [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md) | CUDA validation policy, manual signoff commands, paths table, self-hosted runner plan |
 | [CUDA_SIGNOFF_M155.md](CUDA_SIGNOFF_M155.md) | M155 CUDA signoff report: RTX 3090 host, CUDA commands, backend matrix, regression summary |
 
+`tests/test_aimu_conformance.c` (M161) is a substrate-independent conformance
+suite for the frozen register/command/DMA/fabric interfaces, run through the
+abstract endpoint in `include/att1_aimu_conformance.h` /
+`src/aimu_conformance.c`; `compiler/check_aimu_conformance.py` cross-checks
+the frozen docs against the shipped C headers.
+
 ---
 
 ## Reference Manuals

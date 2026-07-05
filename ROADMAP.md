@@ -100,6 +100,7 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 - Milestone 158: Command packet and completion schema freeze v1.0 (complete) — [docs/aimu_pcie_command_requirements.md](docs/aimu_pcie_command_requirements.md) §1.5 declares the 64-byte command packet layout, completion record, command type enumeration, and error/result code table frozen v1.0; `att1_aimu_result_to_status()` freezes the `att1_status_t` error/result-code mapping; second of four Stage 1 interface freezes toward Gate 1.
 - Milestone 159: DMA descriptor and replay schema freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §15.7 freezes the M107 in-process `att1_aimu_dma_desc`/validation/counter contract, and [docs/schema_compatibility.md](docs/schema_compatibility.md) freezes the M113/M122/M123 replay-report schemas plus their v1 compatibility contract; third of four Stage 1 interface freezes toward Gate 1.
 - Milestone 160: Fabric packet and barrier semantics freeze v1.0 (complete) — [docs/aimu_fabric_routing.md](docs/aimu_fabric_routing.md) §16 freezes the route-descriptor metadata, route-type codes, shipped `att1_packet_type` / `att1_fabric_counters` contract, queue-full behavior, and single-generation barrier semantics, and resolves M93 §8.15-4 in favor of a dedicated barrier register/state-machine path; fourth of four Stage 1 interface freezes toward Gate 1.
+- Milestone 161: Conformance test suite for frozen interfaces (complete) — [include/att1_aimu_conformance.h](include/att1_aimu_conformance.h) / [src/aimu_conformance.c](src/aimu_conformance.c) add a substrate-independent AIMU endpoint vtable and in-process simulator adapter; [tests/test_aimu_conformance.c](tests/test_aimu_conformance.c) exercises register semantics, command lifecycle, DMA validation, and fabric/barrier/counter behavior through the abstract endpoint only; [compiler/check_aimu_conformance.py](compiler/check_aimu_conformance.py) cross-checks the frozen docs against the shipped C headers; Gate 1 satisfied.
 
 ## Stage 1: Interface Freeze
 
@@ -107,9 +108,9 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 - Milestone 158: Command packet and completion schema freeze (v1.0) — including `att1_status_t` error/result-code mapping.
 - Milestone 159: DMA descriptor and replay schema freeze (v1.0) — compatibility contract in `docs/schema_compatibility.md`.
 - Milestone 160: Fabric packet and barrier semantics freeze (v1.0) — packet types, queue-full behavior, barrier semantics, counter name set; resolve barrier mechanism question (M93 §8.15-4).
-- Milestone 161: Conformance test suite for frozen interfaces — substrate-independent harness (in-process sim, emulator, FPGA).
+- Milestone 161: Conformance test suite for frozen interfaces (complete) — substrate-independent harness (in-process sim, emulator, FPGA).
 
-Gate 1: all four freezes ratified; conformance suite green on the in-process simulator.
+Gate 1: satisfied — all four freezes ratified; conformance suite green on the in-process simulator.
 
 ## Stage 2: Out-of-Process Emulated PCIe Endpoint
 
