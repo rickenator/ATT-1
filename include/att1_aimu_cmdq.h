@@ -208,6 +208,31 @@ typedef struct att1_aimu_cmdq_config {
 } att1_aimu_cmdq_config;
 
 /* -------------------------------------------------------------------------
+ * Optional real-execution hook  (M166)
+ *
+ * By default (hook unset) att1_aimu_cmdq_dispatch_one() preserves its
+ * original M105 behavior exactly: every LOAD_TENSOR_TILE, VALIDATE_TENSOR,
+ * EXEC_*, KV_*, FABRIC_* command completes with ATT1_AIMU_ERR_UNSUPPORTED_OP
+ * without touching any buffer, and unsupported_commands is incremented.
+ * This keeps every existing raw att1_aimu_cmdq test byte-for-byte
+ * unaffected.
+ *
+ * A higher layer that owns real tensor memory (att1_aimu_conformance's
+ * in-process endpoint, M166) may install a hook via
+ * att1_aimu_cmdq_set_exec_hook() to actually execute those command types
+ * against real host buffers. The hook receives the raw command descriptor
+ * (already popped from the ring) and returns the att1_aimu_result to use
+ * as the completion's result_code; att1_aimu_cmdq_dispatch_one() still owns
+ * writing the completion record and updating the generic counters. If the
+ * hook returns ATT1_AIMU_ERR_UNSUPPORTED_OP, unsupported_commands is still
+ * incremented, so a hook may selectively implement only a subset of command
+ * types and fall back to "unsupported" for the rest.
+ * ---------------------------------------------------------------------- */
+
+typedef att1_aimu_result (*att1_aimu_cmdq_exec_hook_fn)(void          *hook_ctx,
+                                                         att1_aimu_cmd *cmd);
+
+/* -------------------------------------------------------------------------
  * Simulator object
  * ---------------------------------------------------------------------- */
 
@@ -229,7 +254,21 @@ typedef struct att1_aimu_cmdq {
 
     /* Next command_id the host will assign */
     uint32_t                next_command_id;
+
+    /* Optional M166 real-execution hook; NULL preserves original behavior. */
+    att1_aimu_cmdq_exec_hook_fn exec_hook;
+    void                       *exec_hook_ctx;
 } att1_aimu_cmdq;
+
+/*
+ * att1_aimu_cmdq_set_exec_hook
+ *
+ * Install (or clear, with fn == NULL) the optional real-execution hook.
+ * Safe to call with q == NULL (no-op).
+ */
+void att1_aimu_cmdq_set_exec_hook(att1_aimu_cmdq             *q,
+                                   att1_aimu_cmdq_exec_hook_fn fn,
+                                   void                       *hook_ctx);
 
 /* -------------------------------------------------------------------------
  * Lifecycle
@@ -291,7 +330,11 @@ att1_status_t att1_aimu_cmdq_submit(att1_aimu_cmdq *q,
  *   ATT1_AIMU_CMD_TILE_BARRIER    → OK
  *   All EXEC_*, KV_*, FABRIC_*, LOAD_*, VALIDATE_*
  *                                 → ATT1_AIMU_ERR_UNSUPPORTED_OP
- *                                   (still produces a completion)
+ *                                   (still produces a completion), unless
+ *                                   an exec hook is installed (M166; see
+ *                                   att1_aimu_cmdq_set_exec_hook()), in
+ *                                   which case the hook's return value is
+ *                                   used instead.
  *
  * Returns ATT1_ERR_QUEUE_EMPTY if no commands are pending.
  * Returns ATT1_ERR_QUEUE_FULL  if the completion ring is full.

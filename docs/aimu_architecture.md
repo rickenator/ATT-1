@@ -591,15 +591,9 @@ The following are explicitly outside the Phase 2 prototype scope:
    activation packets to reduce fabric bandwidth?  Effect on q8/q4 tolerance
    must be measured before committing.
 
-4. **Barrier implementation.** ~~The `att1_fabric_t` barrier is a single-
+4. **Barrier implementation.** The `att1_fabric_t` barrier is a single-
    generation all-or-nothing primitive.  Can this be implemented with a
-   PCIe atomic compare-and-swap, or is a dedicated barrier register
-   required?~~ **Resolved at M160**
-   ([aimu_fabric_routing.md](aimu_fabric_routing.md) §1.3): barrier arrival
-   and completion are signaled through the existing `TILE_BARRIER` command
-   and its completion record, not a raw PCIe atomic CAS or a new dedicated
-   register; `FABRIC_ERROR_STATUS.BARRIER_TIMEOUT` reports failure to
-   complete in time.
+   PCIe atomic compare-and-swap, or is a dedicated barrier register required?
 
 5. **DMA vs MMIO command queue.** Should the host enqueue decode commands via
    MMIO writes to a BAR-mapped command FIFO, or via DMA descriptors?  MMIO is

@@ -4,12 +4,14 @@ This document specifies the fabric routing requirements for ATT-1 AIMU tile
 interconnect during multi-tile inference.  It covers what data moves across
 the fabric, how routes are described, the packet types involved, how
 placement-driven topology changes the routing graph, reduction semantics,
-observable counters, and validation rules. The packet types, route
-descriptor fields, queue-full/barrier semantics, and counter name set are
-**frozen at v1.0 as of Milestone 160** (§1.3).
+observable counters, and validation rules.
 
 **Scope:** Documentation and specification only.  No C runtime, Python tool,
 Makefile, `.att1` format, or inference behavior changes.
+
+**Freeze status: FROZEN v1.0 (Milestone 160).**  See §16 for the frozen-fields
+vs. reserved-fields policy, the queue-full/barrier/counter contract, and the
+barrier-mechanism decision that Stage 2+ endpoint work must preserve.
 
 **Related documents:**
 
@@ -52,106 +54,6 @@ tile boundaries during a decode iteration.  Everything else stays local.
 The fabric carries `d_model × sizeof(f32)` bytes per activation crossing — on
 the order of 512 B to 16 KiB depending on model size.  It does not carry weight
 data after initial load.
-
-### 1.3 Freeze Policy (Milestone 160)
-
-The fabric packet and barrier semantics described in this document are
-declared **frozen at v1.0** as of Milestone 160. Freezing means the packet
-type enumeration in §3, the route descriptor fields in §2.1, the queue-full
-and barrier semantics in §2.2/§2.3, and the counter name set in §6 are now
-the interface that Stage 2+ work (the emulated PCIe endpoint, `backend_pcie.c`,
-and any eventual FPGA/ASIC prototype) must implement and that the M161
-conformance suite validates against. This is the fourth and last of the four
-Stage 1 interface freezes (M157 register map, M158 command/completion
-schema, M159 DMA descriptor/replay schema, M160 fabric/barrier semantics)
-that must all be ratified before Gate 1.
-
-**Frozen fields** — covered by this freeze; changing any of the following
-after v1.0 requires a fabric-schema **major** version bump and is a
-backward-incompatible change:
-
-- The packet type enumeration and byte values in §3 (`ACTIVATION_SEND`
-  `0x01` through `CONTROL_ACK` `0x08`), and the direction (one-to-one,
-  one-to-many, many-to-one, all-to-all, tile-to-host) declared for each.
-- The route descriptor field set in §2.1 (`route_id`, `source_tile`,
-  `dest_tile_mask`, `packet_type`, `payload_type`, `payload_bytes`,
-  `fence_id`, `completion_fence_id`, `reduction_id`, `trace_id`) and the
-  `payload_type` code assignments (`0=activation` through `5=control_ack`).
-- **Queue-full / backpressure behavior**: a fabric send to a destination
-  whose inbound queue is full returns `ATT1_ERR_QUEUE_FULL`
-  (`att1_fabric_send()`, `include/att1_fabric.h`) and the packet is not
-  enqueued; the sender must retry or fail explicitly — there is no silent
-  drop and no blocking wait. `att1_fabric_broadcast()` preflights every
-  destination in the group before sending to any of them: if any destination
-  is invalid or full, **no** destination receives the packet (all-or-nothing
-  broadcast), matching the `ACTIVATION_BROADCAST` semantics in §3.
-- **Barrier all-or-nothing semantics** (§2.3): a `TILE_BARRIER` is a
-  single-generation primitive (`att1_fabric_barrier_arrive()`,
-  `include/att1_fabric.h`) — the first arriving tile defines the participant
-  set from its `participants` argument; every later arrival for the same
-  barrier generation must present the identical participant set; the
-  barrier completes (`out_complete` set) only for the arrival that
-  satisfies every participant, at which point it resets for reuse. No
-  tile observes a completed barrier until all declared participants have
-  arrived, and no new activation routes for decode step N+1 may be issued
-  until the step-N `TILE_BARRIER` completes (§2.3).
-- The counter name set in §6.1–§6.6 (`packets_sent`, `packets_received`,
-  `payload_bytes_sent`, `payload_bytes_received`, `packets_by_type[8]`,
-  `bytes_by_type[8]`, `reductions_started`, `reductions_completed`,
-  `reduction_partial_arrivals`, `barriers_started`, `barriers_completed`,
-  `barrier_arrivals`, `fabric_congestion_count`, `stall_fabric_cycles`,
-  `route_failures`, `dropped_packets`, `ordering_violations`) and their
-  mapping to `att1_fabric_counters` / `att1_aimu_trace_fabric_counters`.
-- Validation rules F1–F12 (§7) governing a valid fabric routing
-  configuration.
-
-**Resolution of M93 §8.15-4 (barrier: PCIe atomic CAS vs. dedicated
-register)** — resolved at the spec level as: barrier arrival and
-completion are signaled through the existing command-queue mechanism
-(the `TILE_BARRIER` command, §4 code `0x06` here / `0x41` in
-[aimu_pcie_command_requirements.md](aimu_pcie_command_requirements.md)
-§4.13) and its completion record (M158 §7.4), **not** a raw PCIe atomic
-compare-and-swap on a BAR-mapped register. This mirrors how the in-process
-simulator already implements the barrier (`att1_fabric_barrier_arrive()`
-tracks a participant bitmask and arrival count entirely in AIMU-local
-state) and avoids depending on host root-complex support for PCIe atomics,
-which is not guaranteed on all platforms. A tile signals arrival by
-completing its `TILE_BARRIER` command (with the participant `dest_tile_mask`
-and a `phase` tag that must match across all participants, §2.3);
-`FABRIC_ERROR_STATUS.BARRIER_TIMEOUT`
-([aimu_register_map.md](aimu_register_map.md) §6.11) reports a barrier
-that failed to complete within `timeout_ms`. No new dedicated barrier
-register is required or added by this freeze; the existing
-`FABRIC_STATUS`/`FABRIC_ERROR_STATUS` registers (§6.1, §6.11 of the
-register map) remain sufficient to observe barrier state.
-
-**Reserved fields — not frozen, safe to extend:**
-
-- New packet types beyond `0x08` may be added in a future minor version.
-- New `payload_type` codes beyond `5` may be added in a future minor
-  version.
-- Additional counters may be appended in a future minor version; existing
-  counter names and meanings may not change in place.
-- The routing table entry layout referenced from
-  [aimu_register_map.md](aimu_register_map.md) §6.3–§6.5 remains deferred
-  (per M110) and is not frozen by this milestone.
-
-**Version bump rules** (mirrors M157 §1.6, M158 §1.5, M159 §15.7):
-
-- **Patch**: documentation clarification only; no field, code, or
-  semantics change.
-- **Minor**: additive only — new packet types, new payload-type codes, new
-  counters. Existing Stage 2+ consumers built against v1.0 continue to
-  work unmodified.
-- **Major**: any change to a frozen packet-type value, route descriptor
-  field, queue-full/barrier semantics, or counter name/meaning above.
-
-Implementation status: `att1_fabric_send()`, `att1_fabric_broadcast()`, and
-`att1_fabric_barrier_arrive()` (`include/att1_fabric.h`, `src/fabric.c`)
-implement the queue-full and barrier semantics frozen above and are
-exercised by the fabric test suite; this freeze formalizes that behavior as
-the contractual v1.0 baseline that the M161 conformance suite and Stage 2
-emulated endpoint must reproduce.
 
 ---
 
@@ -482,15 +384,16 @@ by the M109 command plan mapper or a future M116 validator.
 
 ### 8.1 Phase 1 Fabric Simulator (`src/fabric.c`, `simulator/sim_fabric_bus.c`)
 
-The ATT-1 Phase 1 fabric simulator (`att1_fabric_t`) implements:
+The ATT-1 Phase 1 fabric simulator (`att1_fabric`) implements:
 
 - Fixed-capacity inbound queues per tile.
 - `att1_fabric_send()` — point-to-point unicast.
 - `att1_fabric_broadcast()` — excludes sender; preflight checks all destinations.
-- `att1_fabric_barrier_wait()` — single-generation all-or-nothing.
+- `att1_fabric_barrier_arrive()` — single-generation all-or-nothing.
 - Counters: `packets_sent`, `packets_received`, `broadcast_packets`,
-  `payload_bytes_sent`, `queue_full_errors`, `invalid_packets`,
-  `empty_receives`, `barrier_arrivals`, `barrier_completions`.
+  `payload_bytes_sent`, `payload_bytes_received`, `queue_full_errors`,
+  `invalid_packets`, `empty_receives`, `barrier_arrivals`,
+  `barrier_completions`.
 
 These map to M114 route types as follows:
 
@@ -499,7 +402,7 @@ These map to M114 route types as follows:
 | `att1_fabric_send(src, dst, payload)` | `ACTIVATION_SEND` |
 | `att1_fabric_broadcast(src, NULL, payload)` | `ACTIVATION_BROADCAST` |
 | `att1_fabric_broadcast` + host accumulate | `PARTIAL_REDUCE` |
-| `att1_fabric_barrier_wait()` | `TILE_BARRIER` |
+| `att1_fabric_barrier_arrive()` | `TILE_BARRIER` |
 
 The Phase 1 simulator does not distinguish `PARTIAL_REDUCE` from
 `ACTIVATION_BROADCAST` at the API level; both use `att1_fabric_broadcast`.
@@ -1553,3 +1456,136 @@ The text and JSON reports share the same field set:
 - No concat completeness validation.
 - No C, Makefile, binary format, or inference behavior changes.
 - No CUDA kernels or runtime scheduler changes.
+
+---
+
+## 16. Freeze Policy (Milestone 160)
+
+This fabric packet, routing-metadata, queue-full, barrier, and counter contract
+is declared **frozen at v1.0** as of Milestone 160. This milestone freezes the
+already-shipped semantics implemented by `include/att1_fabric.h` and
+`src/fabric.c`; it does not introduce a new fabric runtime behavior. Stage 2+
+work (the emulated PCIe endpoint, `backend_pcie.c`, and any FPGA/ASIC prototype)
+must preserve these semantics, and the M161 conformance suite is expected to
+validate against them.
+
+**Frozen fields** — covered by this freeze; changing any of the following after
+v1.0 requires a fabric-interface **major** version bump and is a backward-
+incompatible change:
+
+- The route-descriptor metadata vocabulary in §2.1: `route_id`, `source_tile`,
+  `dest_tile_mask`, `packet_type`, `payload_type`, `payload_bytes`, `fence_id`,
+  `completion_fence_id`, `reduction_id`, and `trace_id` keep their current
+  names, types, and meanings.
+- The §3 route-type code assignments `0x01`–`0x08` keep their current meaning:
+  `ACTIVATION_SEND`, `ACTIVATION_BROADCAST`, `PARTIAL_REDUCE`,
+  `LOGITS_REDUCE`, `KV_TRANSFER`, `TILE_BARRIER`, `TRACE_EVENT`,
+  and `CONTROL_ACK`.
+- The in-process C API packet-kind enumeration `att1_packet_type`
+  (`include/att1_fabric.h`) keeps its current ordinal values and names:
+
+  | Value | `att1_packet_type` | Meaning in the shipped simulator |
+  |---|---|---|
+  | `0` | `ATT1_PACKET_ACTIVATION` | Activation-class payload packet |
+  | `1` | `ATT1_PACKET_LOGITS` | Logit / partial-result payload packet |
+  | `2` | `ATT1_PACKET_KV_PAGE` | KV-page payload packet |
+  | `3` | `ATT1_PACKET_CONTROL` | Control / acknowledgment packet |
+  | `4` | `ATT1_PACKET_BARRIER` | Barrier token packet |
+  | `5` | `ATT1_PACKET_TRACE` | Trace-event packet |
+
+  The six-value C enum and the eight-value §3 route-type table are both frozen
+  and intentionally remain distinct: the simulator packet enum is the shipped
+  payload-kind API, while the route descriptor fields (`packet_type`,
+  `payload_type`, `dest_tile_mask`, `reduction_id`) carry the finer-grained
+  routing distinction.
+- Queue-full behavior implemented by `att1_fabric_send()` and
+  `att1_fabric_broadcast()` (`src/fabric.c`):
+  - `att1_fabric_send()` returns `ATT1_ERR_QUEUE_FULL` when the destination
+    inbound queue is already at capacity; the packet is not enqueued, existing
+    queue order is unchanged, and `queue_full_errors` increments once.
+  - `att1_fabric_broadcast()` is preflighted and all-or-nothing: if any target
+    tile is invalid, the call returns `ATT1_ERR_INVALID_ARG` and no destination
+    receives the packet; if any valid non-source destination queue is full, the
+    call returns `ATT1_ERR_QUEUE_FULL` and no destination receives the packet.
+  - On success, broadcast fan-out is counted per delivered destination packet:
+    `broadcast_packets` counts recipient enqueues, not API-call count.
+- Barrier semantics implemented by `att1_fabric_barrier_arrive()`:
+  - The barrier is single-generation and all-or-nothing.
+  - The first valid arrival fixes the participant set for that generation.
+  - Later arrivals must present the exact same participant set; non-participants
+    and duplicate arrivals are invalid.
+  - `out_complete` is set to `1` only on the arrival that completes the full
+    participant set; earlier arrivals observe `0`.
+  - Completion resets the barrier state immediately so the same participant set
+    or a different one may be reused in the next generation.
+- The frozen v1.0 counter-name set that existing tests and future hardware must
+  map 1:1:
+
+  | Frozen name | Source / mapping | Frozen meaning |
+  |---|---|---|
+  | `packets_sent` | `att1_fabric_counters.packets_sent` | Successful packet enqueues |
+  | `packets_received` | `att1_fabric_counters.packets_received` | Successful packet dequeues |
+  | `broadcast_packets` | `att1_fabric_counters.broadcast_packets` | Successful broadcast recipient enqueues (fan-out count) |
+  | `payload_bytes_sent` | `att1_fabric_counters.payload_bytes_sent` | Payload bytes enqueued |
+  | `payload_bytes_received` | `att1_fabric_counters.payload_bytes_received` | Payload bytes dequeued |
+  | `queue_full_errors` | `att1_fabric_counters.queue_full_errors` | Failed send/broadcast attempts due to full destination queue |
+  | `invalid_packets` | `att1_fabric_counters.invalid_packets` | Invalid send/receive/barrier argument events |
+  | `empty_receives` | `att1_fabric_counters.empty_receives` | Nonblocking receives that found no packet |
+  | `barrier_arrivals` | `att1_fabric_counters.barrier_arrivals` | Individual valid barrier arrivals |
+  | `barrier_completions` | `att1_fabric_counters.barrier_completions` | Barrier generations completed |
+  | `stall_fabric_cycles` | `CNT_STALL_FABRIC` (`docs/aimu_register_map.md` §7.20) | Cycles stalled on fabric send/receive progress |
+  | `stall_barrier_cycles` | `CNT_STALL_BARRIER` (`docs/aimu_register_map.md` §7.21) | Cycles stalled in `TILE_BARRIER` waiting for peers |
+  | `stall_queue_full_cycles` | `CNT_STALL_QUEUE_FULL` (`docs/aimu_register_map.md` §7.22) | Cycles stalled by queue-full backpressure |
+
+**Reserved fields / additive extensions — not frozen, safe to extend:**
+
+- Route-type code points outside the current §3 assignments `0x01`–`0x08`.
+- `payload_type` values outside the current §2.1 set `0`–`5`.
+- Additional optional route-report JSON fields, per-route annotations, or
+  diagnostics that do not rename or change any frozen field above.
+- Additional counters beyond the frozen name set above (for example the richer
+  advisory counters described in §6.2–§6.6 such as `packets_by_type[8]`,
+  `bytes_by_type[8]`, `reductions_*`, `route_failures`, or
+  `ordering_violations`), provided the frozen v1.0 names and meanings remain
+  unchanged.
+- The microarchitectural realization of the barrier state machine, except for
+  the M93 §8.15-4 decision below that it must not depend on host-visible PCIe
+  atomic compare-and-swap support.
+
+**Resolution of M93 §8.15-4 (barrier implementation):**
+
+- v1.0 resolves the open question in `docs/aimu_architecture.md` §8.15-4 in
+  favor of a **dedicated AIMU-local barrier register/state-machine path**, not a
+  host-visible PCIe atomic compare-and-swap primitive.
+- Rationale:
+  1. PCIe AtomicOp support is optional and topology-dependent across hosts, root
+     complexes, and switches, so making it mandatory would weaken the
+     substrate-independent contract that M161 must validate.
+  2. The frozen first-arrival-defines-participants rule and the
+     completing-arrival-only `out_complete=1` rule require endpoint-local state
+     beyond a single shared CAS word.
+  3. The decision does **not** change the M158 command packet layout or any
+     already-defined §2/§3 route metadata; it only resolves the previously
+     reserved implementation choice behind the existing `TILE_BARRIER`
+     semantics.
+
+**Version bump rules** (mirrors M157 §1.6 / M158 §1.5 / M159 §15.7):
+
+- **Patch**: documentation clarification only; no route-field, enum, counter,
+  or semantic change.
+- **Minor**: additive only — new route-type codes in currently unused space, new
+  `payload_type` values in currently unused space, new optional route-report
+  fields, new counters beyond the frozen v1.0 name set, or new dedicated
+  barrier debug/status registers that preserve all existing semantics.
+- **Major**: any rename, removal, or meaning change to a frozen route field,
+  route-type code, `att1_packet_type` value, counter name, queue-full rule, or
+  barrier semantic listed above.
+
+Implementation status: `include/att1_fabric.h` defines the frozen
+`att1_packet_type`, `att1_fabric_packet`, and `att1_fabric_counters` contracts;
+`src/fabric.c` implements the send/receive/broadcast/barrier semantics above;
+`tests/test_fabric.c` and `tests/test_runtime.c` already exercise the queue-
+full, counter, and barrier-completion behavior that this milestone freezes. The
+in-process fabric API does not expose a standalone runtime version constant
+today; this milestone formalizes the existing behavior as the contractual v1.0
+baseline rather than changing it.

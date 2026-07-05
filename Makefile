@@ -34,8 +34,8 @@ TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
 	cuda_matmul cuda_norm cuda_ffn cuda_rope cuda_attention cuda_transformer_block cuda_infer cuda_cluster cuda_bench \
      q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4 cluster_infer_q4 q4_bench cuda_matmul_q4 cuda_infer_q4 cuda_cluster_infer_q4 \
      aimu_cmdq aimu_device aimu_dma aimu_trace aimu_mmio aimu_host aimu_userspace aimu_mmio_replay aimu_mem \
-     aimu_exec \
-     aimu_mmio_regression
+     aimu_exec aimu_conformance \
+     aimu_mmio_regression aimu_endpoint backend_pcie aimu_cluster_decode
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -51,6 +51,7 @@ COMMON_SRCS := \
 	$(SRC_DIR)/backend_cpu_q8.c \
 	$(SRC_DIR)/backend_cpu_q4.c \
 	$(SRC_DIR)/backend_cuda.c \
+	$(SRC_DIR)/backend_pcie.c \
 	$(SRC_DIR)/quant.c \
 	$(SRC_DIR)/matmul_q8.c \
 	$(SRC_DIR)/trace.c \
@@ -79,7 +80,11 @@ $(SRC_DIR)/aimu_mmio.c \
      $(SRC_DIR)/aimu_host.c \
 	$(SRC_DIR)/aimu_userspace.c \
 	$(SRC_DIR)/aimu_mem.c \
-	$(SRC_DIR)/aimu_exec.c
+	$(SRC_DIR)/aimu_exec.c \
+	$(SRC_DIR)/aimu_conformance.c \
+	$(SRC_DIR)/aimu_endpoint_protocol.c \
+	$(SRC_DIR)/aimu_endpoint_client.c \
+	$(SRC_DIR)/aimu_cluster_bridge.c
 
 COMMON_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(COMMON_SRCS))
 SIM_OBJS := $(BUILD_DIR)/$(SRC_DIR)/main.o $(COMMON_OBJS)
@@ -91,13 +96,15 @@ AIMU_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-replay.o $(COMMON_OBJS)
 AIMU_EMULATOR_BIN := $(BUILD_DIR)/att1-aimu-mmio-emulator
 AIMU_EMULATOR_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-emulator.o $(COMMON_OBJS)
 AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJS)
+AIMU_ENDPOINT_BIN := $(BUILD_DIR)/att1-aimu-endpoint
+AIMU_ENDPOINT_OBJS := $(BUILD_DIR)/tools/att1-aimu-endpoint.o $(COMMON_OBJS)
 TINY_LLM_OBJS := $(BUILD_DIR)/examples/run_tiny_llm.o $(COMMON_OBJS)
 CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 
 .PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-coverage fuzz-smoke fuzz-libfuzzer fuzz-afl clean-fuzz docs-check
 .SECONDARY:
 
-all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
+all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
 
 $(SIM_BIN): $(SIM_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -123,6 +130,9 @@ $(AIMU_EMULATOR_BIN): $(AIMU_EMULATOR_OBJS)
 $(AIMU_MMIO_REPLAY_BIN): $(AIMU_MMIO_REPLAY_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+$(AIMU_ENDPOINT_BIN): $(AIMU_ENDPOINT_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 $(TINY_LLM_BIN): $(TINY_LLM_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -136,12 +146,12 @@ $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TEST_BINS)
+test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin || exit $$?; \
 	done
 
-test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(TEST_BINS)
+test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		printf '\n=== %s ===\n' "$$test_bin"; \
 		./$$test_bin || exit $$?; \
