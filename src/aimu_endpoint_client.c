@@ -463,15 +463,28 @@ static att1_status_t client_fabric_receive(void *ctx,
                                                : out_payload_capacity);
     st = endpoint_roundtrip(cc, &req, &resp);
     if (st == ATT1_OK) {
+        /* A malformed/hostile daemon response could claim a payload_bytes
+         * value larger than the fixed resp.payload array itself
+         * (ATT1_AIMU_ENDPOINT_MAX_PAYLOAD) or larger than the caller's own
+         * buffer capacity; clamp to both so a hostile response can never
+         * cause a read past resp.payload, and so *out_payload_bytes never
+         * reports more bytes than were actually copied into out_payload
+         * (M168 hostile-endpoint hardening). */
+        uint32_t payload_bytes = resp.payload_bytes;
+        if (payload_bytes > ATT1_AIMU_ENDPOINT_MAX_PAYLOAD) {
+            payload_bytes = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD;
+        }
+        if (payload_bytes > out_payload_capacity) {
+            payload_bytes = (uint32_t)out_payload_capacity;
+        }
         if (out_packet != NULL) {
             *out_packet = resp.fabric_packet;
         }
         if (out_payload_bytes != NULL) {
-            *out_payload_bytes = resp.payload_bytes;
+            *out_payload_bytes = payload_bytes;
         }
-        if (out_payload != NULL && resp.payload_bytes > 0u &&
-            out_payload_capacity >= resp.payload_bytes) {
-            memcpy(out_payload, resp.payload, resp.payload_bytes);
+        if (out_payload != NULL && payload_bytes > 0u) {
+            memcpy(out_payload, resp.payload, payload_bytes);
         }
     }
     return st;
@@ -633,13 +646,26 @@ static att1_status_t client_kv_read(void *ctx,
     req.kv_value_bytes = (uint32_t)(value_count * sizeof(float));
     st = endpoint_roundtrip(cc, &req, &resp);
     if (st == ATT1_OK) {
+        /* Clamp against both the caller's own buffer capacity and the
+         * wire payload's key/value half-capacity: a malformed or hostile
+         * daemon response could otherwise claim kv_key_bytes/kv_value_bytes
+         * larger than half_payload, which would read past the matching
+         * half of resp.payload (an out-of-bounds read within this local
+         * struct) once the caller's buffer is large enough not to trip the
+         * caller-capacity clamp alone (M168 hostile-endpoint hardening). */
         size_t out_key_bytes = resp.kv_key_bytes;
         size_t out_value_bytes = resp.kv_value_bytes;
         if (out_key_bytes > (key_count * sizeof(float))) {
             out_key_bytes = key_count * sizeof(float);
         }
+        if (out_key_bytes > half_payload) {
+            out_key_bytes = half_payload;
+        }
         if (out_value_bytes > (value_count * sizeof(float))) {
             out_value_bytes = value_count * sizeof(float);
+        }
+        if (out_value_bytes > half_payload) {
+            out_value_bytes = half_payload;
         }
         if (out_key != NULL && out_key_bytes > 0u) {
             memcpy(out_key, resp.payload, out_key_bytes);
@@ -684,13 +710,22 @@ static att1_status_t client_kv_copy_range(void *ctx,
     req.kv_value_bytes = (uint32_t)(values_count * sizeof(float));
     st = endpoint_roundtrip(cc, &req, &resp);
     if (st == ATT1_OK) {
+        /* See client_kv_read() above: clamp against half_payload too, not
+         * just the caller's own buffer capacity (M168 hostile-endpoint
+         * hardening). */
         size_t out_key_bytes = resp.kv_key_bytes;
         size_t out_value_bytes = resp.kv_value_bytes;
         if (out_key_bytes > (keys_count * sizeof(float))) {
             out_key_bytes = keys_count * sizeof(float);
         }
+        if (out_key_bytes > half_payload) {
+            out_key_bytes = half_payload;
+        }
         if (out_value_bytes > (values_count * sizeof(float))) {
             out_value_bytes = values_count * sizeof(float);
+        }
+        if (out_value_bytes > half_payload) {
+            out_value_bytes = half_payload;
         }
         if (out_keys != NULL && out_key_bytes > 0u) {
             memcpy(out_keys, resp.payload, out_key_bytes);

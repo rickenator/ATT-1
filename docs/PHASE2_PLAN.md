@@ -386,12 +386,45 @@ device.
   `compiler/backend_comparison_report.py` (neither of which has any pcie
   backend support today) is independent follow-up work.
 
-**M168: Fault injection and hostile-endpoint testing**
+**M168: Fault injection and hostile-endpoint testing (complete)**
 
 - Queue-full, malformed completion, out-of-order/duplicate KV appends,
   endpoint crash mid-decode, DMA descriptor rejection — all must map to
   `att1_status_t` without UB (M93 §8.7-6). Extends the Phase 1
   hostile-input tradition to the transport boundary.
+- New `tests/test_aimu_endpoint_fault_injection.c` drives all five cases
+  against a real `att1-aimu-endpoint` daemon process (queue-full,
+  out-of-order/duplicate KV append, DMA descriptor rejection, endpoint
+  crash mid-decode) plus one hostile mock daemon (malformed completion)
+  that speaks just enough of the M162 wire protocol to reply with
+  deliberately oversized `kv_key_bytes`/`kv_value_bytes`/`payload_bytes`
+  claims. `tools/att1-aimu-endpoint.c` gained `--cmd-ring-depth`/
+  `--comp-ring-depth` CLI overrides so the queue-full case doesn't need to
+  wait on the 64-deep default ring.
+- Fixing this milestone surfaced two real defects, both now fixed:
+  (1) `src/aimu_endpoint_protocol.c`'s `endpoint_write_all()` used a plain
+  `write()`; writing to a socket whose peer already crashed/closed
+  (exactly the "endpoint crash mid-decode" scenario) raises `SIGPIPE`,
+  whose default disposition kills the *client* process outright instead of
+  returning `ATT1_ERR_IO` — reproduced by the new crash-mid-decode test
+  before the fix. Switched to `send(..., MSG_NOSIGNAL)` so the same failure
+  now maps cleanly to `ATT1_ERR_IO`. (2) `src/aimu_endpoint_client.c`'s
+  `client_kv_read()`/`client_kv_copy_range()`/`client_fabric_receive()`
+  trusted daemon-reported `kv_key_bytes`/`kv_value_bytes`/`payload_bytes`
+  values against only the caller's own buffer capacity, not against the
+  wire payload's actual half/full capacity
+  (`ATT1_AIMU_ENDPOINT_MAX_PAYLOAD`); a malformed or hostile daemon
+  response claiming an oversized length could cause a read past the local
+  `att1_aimu_endpoint_response` struct once the caller's own buffer was
+  large enough not to trip the capacity check alone. All three functions
+  now clamp against both bounds before any `memcpy`, and
+  `client_fabric_receive()`'s reported `*out_payload_bytes` now always
+  matches the bytes actually copied. `make clean && make && make test`:
+  all suites PASS 0 FAIL in this CPU-only environment (new
+  `aimu_endpoint_fault_injection` suite: 5 PASS 0 FAIL); `make regression`:
+  ALL STEPS PASSED; no changes to the M158 frozen command packet layout,
+  `src/aimu_conformance.c`'s exec hook, `src/aimu_cmdq.c`, or any
+  previously-frozen register/DMA/KV/fabric semantics.
 
 **M169: Replay fidelity gate**
 
