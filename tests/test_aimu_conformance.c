@@ -172,15 +172,19 @@ static int test_command_lifecycle_and_snapshot(void)
     REQUIRE(att1_aimu_conformance_cmd_dispatch_one(endpoint) == ATT1_OK,
             "commands: dispatch_one completes EXEC_MATMUL");
     memset(&completion, 0, sizeof(completion));
+    /* M166: the in-process endpoint now really executes EXEC_MATMUL; a
+     * zeroed command (no input/output buffers, no resident tensor) is
+     * rejected as invalid rather than unsupported. */
     REQUIRE(att1_aimu_conformance_cmd_poll_completion(endpoint, &completion) == ATT1_OK &&
-            completion.result_code == ATT1_AIMU_ERR_UNSUPPORTED_OP &&
-            att1_aimu_result_to_status((att1_aimu_result)completion.result_code) == ATT1_ERR_UNSUPPORTED,
-            "commands: unsupported result-code mapping preserved");
+            completion.result_code == ATT1_AIMU_ERR_INVALID_COMMAND &&
+            att1_aimu_result_to_status((att1_aimu_result)completion.result_code) == ATT1_ERR_INVALID_ARG,
+            "commands: invalid EXEC_MATMUL command rejected");
 
     REQUIRE(att1_aimu_conformance_cmd_get_counters(endpoint, &counters) == ATT1_OK &&
             counters.commands_submitted == 2u &&
-            counters.commands_completed == 2u &&
-            counters.unsupported_commands == 1u &&
+            counters.commands_completed == 1u &&
+            counters.commands_failed == 1u &&
+            counters.unsupported_commands == 0u &&
             counters.fence_value == 1u,
             "commands: cmdq counters reflect lifecycle");
 
@@ -194,7 +198,7 @@ static int test_command_lifecycle_and_snapshot(void)
     REQUIRE(att1_aimu_conformance_mmio_read64(endpoint,
                                               ATT1_MMIO_CNT_CMD_COMPLETED_LO,
                                               &counter64) == ATT1_OK &&
-            counter64 == 2u,
+            counter64 == 1u,
             "commands: MMIO completed counter matches snapshot");
     REQUIRE(att1_aimu_conformance_trace_get_snapshot(endpoint, &snapshot) == ATT1_OK &&
             snapshot.meta.snapshot_id == 1u &&

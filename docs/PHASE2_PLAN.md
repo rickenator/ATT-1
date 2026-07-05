@@ -290,12 +290,35 @@ device.
 - No changes to `src/kv_mmu.c` itself (M151 simulator reused unchanged) or
   to `EXEC_*` command execution (still deferred to M166).
 
-**M166: Single-tile emulated decode, end to end**
+**M166: Single-tile emulated decode, end to end** — *complete;
+[`include/att1_aimu_cmdq.h`](../include/att1_aimu_cmdq.h),
+[`src/aimu_cmdq.c`](../src/aimu_cmdq.c),
+[`src/aimu_conformance.c`](../src/aimu_conformance.c),
+[`src/backend_pcie.c`](../src/backend_pcie.c),
+[`tests/test_aimu_conformance.c`](../tests/test_aimu_conformance.c),
+[`tests/test_backend_pcie.c`](../tests/test_backend_pcie.c).*
 
 - One transformer forward pass + multi-step decode against tiny fixtures
   through `backend_pcie`, matching CPU f32 exactly and q8/q4 within
   tolerance. Existing smoke tests must pass unmodified against
   endpoint-reported counters (M93 §8.2-5).
+- `att1_aimu_cmdq` gains an optional real-execution hook
+  (`att1_aimu_cmdq_set_exec_hook()`); unset, it preserves the original M105
+  "always `ATT1_AIMU_ERR_UNSUPPORTED_OP`" behavior exactly, so every raw
+  `att1_aimu_cmdq`-level test is unaffected. The in-process
+  `att1_aimu_conformance_endpoint` (M161) installs a hook that maintains a
+  resident-tensor registry (populated by `LOAD_TENSOR_TILE`) and executes
+  `EXEC_MATMUL`/`EXEC_RMSNORM`/`EXEC_ROPE`/`EXEC_FFN` against real host
+  buffers using the same `att1_math.h`/`att1_quant.h` primitives the CPU
+  backends call directly.
+- `backend_pcie.c`'s math ops auto-register their weight/norm pointer under
+  a tensor_id the first time it is used and reuse it thereafter; `EXEC_FFN`
+  packs its two input buffers into one scratch buffer since the frozen
+  packet has only one input address field; `softmax_f32` is computed
+  locally (still no dedicated frozen command type, M103 §4.6).
+- `EXEC_ATTENTION`, `KV_APPEND`/`KV_READ`, `FABRIC_SEND`/`FABRIC_REDUCE`,
+  and `VALIDATE_TENSOR` remain unsupported at the cmdq level; two-tile
+  cluster decode over the M162 socket transport is deferred to M167.
 
 **M167: Two-tile emulated cluster decode**
 
