@@ -174,12 +174,32 @@ This stage moves the tile from "same address space" to "separate process
 behind a transport," which is the essential structural step toward a real
 device.
 
-**M162: Endpoint process skeleton**
+**M162: Endpoint process skeleton** — *complete;
+[`tools/att1-aimu-endpoint.c`](../tools/att1-aimu-endpoint.c),
+[`include/att1_aimu_endpoint_protocol.h`](../include/att1_aimu_endpoint_protocol.h),
+[`src/aimu_endpoint_protocol.c`](../src/aimu_endpoint_protocol.c),
+[`include/att1_aimu_endpoint_client.h`](../include/att1_aimu_endpoint_client.h),
+[`src/aimu_endpoint_client.c`](../src/aimu_endpoint_client.c),
+[`tests/test_aimu_endpoint.c`](../tests/test_aimu_endpoint.c).*
 
 - `att1-aimu-endpoint` daemon: a separate process owning tile memory,
   exposing the frozen register file and command queue over shared memory or
   Unix domain sockets with identical queue semantics and counters (M93 §8.8
   explicitly permits this substitution).
+- Implemented as a thin Unix-domain-socket transport wrapped around the
+  existing M161 in-process conformance simulator (`att1_aimu_conformance_*`),
+  so the daemon's register/command/DMA/fabric behavior is byte-identical to
+  the same-process path by construction rather than by a separate
+  reimplementation.
+- A matching socket-backed `att1_aimu_conformance_ops` client
+  (`att1_aimu_conformance_socket_connect()`) lets any existing or future
+  conformance-style test/tool talk to the daemon exactly like the in-process
+  endpoint.
+- `tests/test_aimu_endpoint.c` spawns the daemon as a child process,
+  connects over the socket, and exercises register RO/RW semantics, the
+  NOP command lifecycle with counters, DMA validate/submit with counters,
+  and fabric send/receive/barrier with counters — confirming identical
+  results to the M161 in-process suite.
 
 **M163: `backend_pcie.c` host backend**
 
