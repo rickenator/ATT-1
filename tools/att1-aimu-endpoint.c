@@ -34,7 +34,9 @@
 
 #define _POSIX_C_SOURCE 200112L
 
+#include "att1_aimu_cmdq.h"
 #include "att1_aimu_conformance.h"
+#include "att1_aimu_dma.h"
 #include "att1_aimu_endpoint_protocol.h"
 #include "att1_status.h"
 
@@ -46,6 +48,261 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+/*
+ * Cross-process EXEC_* tensor-math execution (real fix for the M167
+ * "known limitation": M166's exec hook resolves tensor operands via raw
+ * host pointers embedded in the command packet, which are only valid in
+ * the process that issued them; forwarding those pointer values verbatim
+ * to this daemon's separate address space and dereferencing them here is
+ * undefined behavior (it used to reproducibly crash the daemon).
+ *
+ * Instead, for the command types whose exec hook dereferences
+ * `input_buf_addr`/`output_buf_addr`/the resident-tensor registry's
+ * `host_addr` (LOAD_TENSOR_TILE, EXEC_MATMUL, EXEC_RMSNORM, EXEC_ROPE,
+ * EXEC_FFN), CMD_SUBMIT now carries the *actual* operand bytes in the
+ * request's generic `payload` field (already part of the frozen M162 wire
+ * protocol, previously unused for this op): this daemon copies those bytes
+ * into buffers it owns, rewrites the submitted command's address fields to
+ * point at its own memory before handing the command to the wrapped
+ * `att1_aimu_conformance_endpoint` (so every later `EXEC_*`/exec-hook
+ * dereference is safely within this process), and — since the M158 frozen
+ * command packet only carries two address fields and dispatch happens
+ * asynchronously relative to submit — remembers the daemon-owned output
+ * buffer keyed by `command_id` so `CMD_POLL_COMPLETION` can copy the real
+ * result bytes back to the client in its response payload once the
+ * command has actually executed.
+ *
+ * `LOAD_TENSOR_TILE` currently only supports this real transfer for
+ * `dtype == ATT1_AIMU_DMA_DTYPE_F32`: the frozen packet only carries a
+ * `tensor_id`/`dtype`/packed `dim0`/`dim1` (`op_param_1`), so an f32 weight
+ * matrix (`dim0 * dim1` contiguous floats) is exactly reconstructible from
+ * those fields, but the q8/q4 weight pointer instead references an
+ * `att1_q8_matrix`/`att1_q4_matrix` *struct* with its own nested owned
+ * pointers (`values`/`scales` or `packed`/`scales`, plus a `group_size` for
+ * q4 that the frozen packet has nowhere to carry) — safely reconstructing
+ * that would need wire-protocol changes beyond this fix's scope, so q8/q4
+ * `LOAD_TENSOR_TILE` over the socket transport is cleanly rejected with
+ * `ATT1_ERR_UNSUPPORTED` instead of dereferencing a foreign-process struct
+ * pointer (turning the old crash into a clean, documented error).
+ */
+#define ATT1_AIMU_ENDPOINT_MAX_PENDING_XFERS 16u
+
+typedef struct att1_aimu_endpoint_pending_xfer {
+    int      used;
+    uint32_t command_id;
+    void    *input_ptr;
+    void    *output_ptr;   /* == input_ptr for in-place ops (EXEC_ROPE) */
+    uint32_t output_bytes;
+    int      free_input;   /* 0 when output_ptr == input_ptr (free once) */
+} att1_aimu_endpoint_pending_xfer;
+
+static att1_aimu_endpoint_pending_xfer
+    g_pending_xfers[ATT1_AIMU_ENDPOINT_MAX_PENDING_XFERS];
+
+static int cmd_type_needs_buffer_xfer(uint8_t command_type)
+{
+    switch ((att1_aimu_cmd_type)command_type) {
+    case ATT1_AIMU_CMD_EXEC_MATMUL:
+    case ATT1_AIMU_CMD_EXEC_RMSNORM:
+    case ATT1_AIMU_CMD_EXEC_ROPE:
+    case ATT1_AIMU_CMD_EXEC_FFN:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static void pending_xfer_release(att1_aimu_endpoint_pending_xfer *entry)
+{
+    if (entry->free_input) {
+        free(entry->input_ptr);
+    }
+    free(entry->output_ptr);
+    memset(entry, 0, sizeof(*entry));
+}
+
+static att1_aimu_endpoint_pending_xfer *pending_xfer_alloc_slot(void)
+{
+    size_t i;
+    for (i = 0u; i < ATT1_AIMU_ENDPOINT_MAX_PENDING_XFERS; i++) {
+        if (!g_pending_xfers[i].used) {
+            return &g_pending_xfers[i];
+        }
+    }
+    /* Table full (shouldn't happen: one command in flight at a time per
+     * the only current caller, src/backend_pcie.c); reclaim the oldest
+     * slot rather than leaking the new transfer silently. */
+    pending_xfer_release(&g_pending_xfers[0]);
+    return &g_pending_xfers[0];
+}
+
+static att1_aimu_endpoint_pending_xfer *pending_xfer_find(uint32_t command_id)
+{
+    size_t i;
+    for (i = 0u; i < ATT1_AIMU_ENDPOINT_MAX_PENDING_XFERS; i++) {
+        if (g_pending_xfers[i].used && g_pending_xfers[i].command_id == command_id) {
+            return &g_pending_xfers[i];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * dispatch_cmd_submit
+ *
+ * Handles ATT1_AIMU_ENDPOINT_OP_CMD_SUBMIT: rewrites LOAD_TENSOR_TILE (f32
+ * only)/EXEC_MATMUL/EXEC_RMSNORM/EXEC_ROPE/EXEC_FFN operand addresses to
+ * daemon-owned copies of the bytes carried in `req->payload` (see file
+ * header) before submitting to the wrapped endpoint, so the exec hook
+ * installed by src/aimu_conformance.c (M166) only ever dereferences memory
+ * that is valid in this process.
+ */
+static att1_status_t dispatch_cmd_submit(att1_aimu_conformance_endpoint *endpoint,
+                                         const att1_aimu_endpoint_request *req,
+                                         att1_aimu_endpoint_response *resp)
+{
+    att1_aimu_cmd cmd = req->cmd;
+    uint64_t orig_input_addr = cmd.input_buf_addr;
+    uint64_t orig_output_addr = cmd.output_buf_addr;
+    void *daemon_input = NULL;
+    void *daemon_output = NULL;
+    int in_place = 0;
+    int needs_xfer = 0;
+    att1_status_t st;
+
+    if ((att1_aimu_cmd_type)cmd.command_type == ATT1_AIMU_CMD_LOAD_TENSOR_TILE) {
+        uint32_t dim0 = cmd.op_param_1 >> 16;
+        uint32_t dim1 = cmd.op_param_1 & 0xFFFFu;
+        uint32_t bytes;
+
+        if (cmd.dtype != ATT1_AIMU_DMA_DTYPE_F32) {
+            resp->cmd = cmd;
+            return ATT1_ERR_UNSUPPORTED;
+        }
+        bytes = dim0 * dim1 * 4u;
+        if ((bytes == 0u) || (bytes != req->payload_bytes) ||
+            (bytes > ATT1_AIMU_ENDPOINT_MAX_PAYLOAD)) {
+            resp->cmd = cmd;
+            return ATT1_ERR_INVALID_ARG;
+        }
+        daemon_input = malloc(bytes);
+        if (daemon_input == NULL) {
+            resp->cmd = cmd;
+            return ATT1_ERR_OOM;
+        }
+        memcpy(daemon_input, req->payload, bytes);
+        cmd.input_buf_addr = (uint64_t)(uintptr_t)daemon_input;
+        /* Resident weight buffer: kept alive for the tensor's lifetime
+         * (i.e. this daemon process's lifetime), matching the "no separate
+         * device memory backing" residency model already documented for
+         * M164/M166; not tracked in the pending-transfer table since there
+         * is no result to read back. */
+    } else if (cmd_type_needs_buffer_xfer(cmd.command_type)) {
+        uint32_t bytes = cmd.input_buf_bytes;
+
+        if ((bytes == 0u) || (bytes != req->payload_bytes) ||
+            (bytes > ATT1_AIMU_ENDPOINT_MAX_PAYLOAD)) {
+            resp->cmd = cmd;
+            return ATT1_ERR_INVALID_ARG;
+        }
+        daemon_input = malloc(bytes);
+        if (daemon_input == NULL) {
+            resp->cmd = cmd;
+            return ATT1_ERR_OOM;
+        }
+        memcpy(daemon_input, req->payload, bytes);
+        cmd.input_buf_addr = (uint64_t)(uintptr_t)daemon_input;
+
+        if (cmd.output_buf_bytes > 0u) {
+            int same_addr = (orig_output_addr == orig_input_addr);
+            if (same_addr && (cmd.output_buf_bytes != bytes)) {
+                /* Same address but different byte counts can't be a
+                 * genuine in-place op (e.g. EXEC_ROPE always reuses the
+                 * same buffer at the same size); treat as caller error
+                 * rather than silently allocating a second buffer at the
+                 * same client-visible address. */
+                free(daemon_input);
+                resp->cmd = cmd;
+                return ATT1_ERR_INVALID_ARG;
+            }
+            in_place = same_addr;
+            if (in_place) {
+                daemon_output = daemon_input;
+            } else {
+                daemon_output = malloc(cmd.output_buf_bytes);
+                if (daemon_output == NULL) {
+                    free(daemon_input);
+                    resp->cmd = cmd;
+                    return ATT1_ERR_OOM;
+                }
+            }
+            cmd.output_buf_addr = (uint64_t)(uintptr_t)daemon_output;
+            needs_xfer = 1;
+        }
+    }
+
+    st = att1_aimu_conformance_cmd_submit(endpoint, &cmd);
+    if (st == ATT1_OK && needs_xfer) {
+        /* EXEC_MATMUL/RMSNORM/ROPE/FFN: remember the daemon-owned output
+         * buffer so CMD_POLL_COMPLETION can copy the real result back. */
+        att1_aimu_endpoint_pending_xfer *entry = pending_xfer_alloc_slot();
+        entry->used = 1;
+        entry->command_id = cmd.command_id;
+        entry->input_ptr = daemon_input;
+        entry->output_ptr = daemon_output;
+        entry->output_bytes = cmd.output_buf_bytes;
+        entry->free_input = !in_place;
+    } else if ((att1_aimu_cmd_type)cmd.command_type == ATT1_AIMU_CMD_LOAD_TENSOR_TILE) {
+        /* LOAD_TENSOR_TILE has no output to read back; on success the
+         * resident weight buffer is intentionally kept alive (see comment
+         * above), only freed here if submission itself failed. */
+        if (st != ATT1_OK) {
+            free(daemon_input);
+        }
+    } else if (daemon_input != NULL) {
+        /* EXEC_* submit failed before a completion could be scheduled:
+         * nothing to keep alive. */
+        if ((daemon_output != NULL) && (daemon_output != daemon_input)) {
+            free(daemon_output);
+        }
+        free(daemon_input);
+    }
+
+    /* Restore the client's own addresses in the echoed command so the
+     * response never leaks a daemon-local pointer value to the client. */
+    cmd.input_buf_addr = orig_input_addr;
+    cmd.output_buf_addr = orig_output_addr;
+    resp->cmd = cmd;
+    return st;
+}
+
+/*
+ * dispatch_cmd_poll_completion
+ *
+ * Handles ATT1_AIMU_ENDPOINT_OP_CMD_POLL_COMPLETION: after the wrapped
+ * endpoint reports a completion, copies any daemon-owned result bytes
+ * registered by dispatch_cmd_submit() (keyed by command_id) into the
+ * response payload, then releases the daemon-owned buffers.
+ */
+static att1_status_t dispatch_cmd_poll_completion(att1_aimu_conformance_endpoint *endpoint,
+                                                  att1_aimu_endpoint_response *resp)
+{
+    att1_status_t st = att1_aimu_conformance_cmd_poll_completion(endpoint, &resp->completion);
+    if (st == ATT1_OK) {
+        att1_aimu_endpoint_pending_xfer *entry =
+                pending_xfer_find(resp->completion.command_id);
+        if (entry != NULL) {
+            if ((entry->output_bytes > 0u) &&
+                (entry->output_bytes <= ATT1_AIMU_ENDPOINT_MAX_PAYLOAD)) {
+                memcpy(resp->payload, entry->output_ptr, entry->output_bytes);
+                resp->payload_bytes = entry->output_bytes;
+            }
+            pending_xfer_release(entry);
+        }
+    }
+    return st;
+}
 
 static void usage(FILE *fp)
 {
@@ -93,12 +350,9 @@ static att1_status_t dispatch_request(att1_aimu_conformance_endpoint *endpoint,
     case ATT1_AIMU_ENDPOINT_OP_MMIO_WRITE64:
         st = att1_aimu_conformance_mmio_write64(endpoint, req->offset, req->value64);
         break;
-    case ATT1_AIMU_ENDPOINT_OP_CMD_SUBMIT: {
-        att1_aimu_cmd cmd = req->cmd;
-        st = att1_aimu_conformance_cmd_submit(endpoint, &cmd);
-        resp->cmd = cmd;
+    case ATT1_AIMU_ENDPOINT_OP_CMD_SUBMIT:
+        st = dispatch_cmd_submit(endpoint, req, resp);
         break;
-    }
     case ATT1_AIMU_ENDPOINT_OP_CMD_DISPATCH_ONE:
         st = att1_aimu_conformance_cmd_dispatch_one(endpoint);
         break;
@@ -106,7 +360,7 @@ static att1_status_t dispatch_request(att1_aimu_conformance_endpoint *endpoint,
         st = att1_aimu_conformance_cmd_dispatch_all(endpoint);
         break;
     case ATT1_AIMU_ENDPOINT_OP_CMD_POLL_COMPLETION:
-        st = att1_aimu_conformance_cmd_poll_completion(endpoint, &resp->completion);
+        st = dispatch_cmd_poll_completion(endpoint, resp);
         break;
     case ATT1_AIMU_ENDPOINT_OP_CMD_GET_COUNTERS:
         st = att1_aimu_conformance_cmd_get_counters(endpoint, &resp->cmd_counters);
