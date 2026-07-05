@@ -215,8 +215,18 @@ static att1_status_t dispatch_cmd_submit(att1_aimu_conformance_endpoint *endpoin
         cmd.input_buf_addr = (uint64_t)(uintptr_t)daemon_input;
 
         if (cmd.output_buf_bytes > 0u) {
-            in_place = (orig_output_addr == orig_input_addr) &&
-                       (cmd.output_buf_bytes == bytes);
+            int same_addr = (orig_output_addr == orig_input_addr);
+            if (same_addr && (cmd.output_buf_bytes != bytes)) {
+                /* Same address but different byte counts can't be a
+                 * genuine in-place op (e.g. EXEC_ROPE always reuses the
+                 * same buffer at the same size); treat as caller error
+                 * rather than silently allocating a second buffer at the
+                 * same client-visible address. */
+                free(daemon_input);
+                resp->cmd = cmd;
+                return ATT1_ERR_INVALID_ARG;
+            }
+            in_place = same_addr;
             if (in_place) {
                 daemon_output = daemon_input;
             } else {

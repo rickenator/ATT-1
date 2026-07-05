@@ -67,6 +67,17 @@ static int client_cmd_needs_buffer_xfer(uint8_t command_type)
     }
 }
 
+static void pending_xfer_set(endpoint_client_pending_xfer *entry,
+                             uint32_t command_id,
+                             void *output_ptr,
+                             uint32_t output_bytes)
+{
+    entry->used = 1;
+    entry->command_id = command_id;
+    entry->output_ptr = output_ptr;
+    entry->output_bytes = output_bytes;
+}
+
 static void pending_xfer_register(endpoint_client_ctx *cc,
                                   uint32_t command_id,
                                   void *output_ptr,
@@ -75,20 +86,14 @@ static void pending_xfer_register(endpoint_client_ctx *cc,
     size_t i;
     for (i = 0u; i < ATT1_AIMU_ENDPOINT_CLIENT_MAX_PENDING_XFERS; i++) {
         if (!cc->pending[i].used) {
-            cc->pending[i].used = 1;
-            cc->pending[i].command_id = command_id;
-            cc->pending[i].output_ptr = output_ptr;
-            cc->pending[i].output_bytes = output_bytes;
+            pending_xfer_set(&cc->pending[i], command_id, output_ptr, output_bytes);
             return;
         }
     }
     /* Table full (shouldn't happen: the only current caller,
      * src/backend_pcie.c, keeps exactly one command in flight at a time);
      * reclaim the oldest slot rather than silently dropping the result. */
-    cc->pending[0].used = 1;
-    cc->pending[0].command_id = command_id;
-    cc->pending[0].output_ptr = output_ptr;
-    cc->pending[0].output_bytes = output_bytes;
+    pending_xfer_set(&cc->pending[0], command_id, output_ptr, output_bytes);
 }
 
 static att1_status_t endpoint_roundtrip(endpoint_client_ctx *cc,
@@ -303,9 +308,15 @@ static att1_status_t client_cmd_poll_completion(void *ctx, att1_aimu_completion 
         for (i = 0u; i < ATT1_AIMU_ENDPOINT_CLIENT_MAX_PENDING_XFERS; i++) {
             endpoint_client_pending_xfer *entry = &cc->pending[i];
             if (entry->used && entry->command_id == resp.completion.command_id) {
-                if ((resp.payload_bytes > 0u) &&
-                    (resp.payload_bytes <= entry->output_bytes)) {
+                if (resp.payload_bytes == entry->output_bytes) {
                     memcpy(entry->output_ptr, resp.payload, resp.payload_bytes);
+                } else {
+                    /* Protocol violation: the daemon computed output_bytes
+                     * from the same cmd->output_buf_bytes this client sent
+                     * at submit time, so these must match exactly; fail
+                     * loudly instead of silently dropping/truncating the
+                     * result. */
+                    st = ATT1_ERR_IO;
                 }
                 memset(entry, 0, sizeof(*entry));
                 break;
