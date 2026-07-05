@@ -201,12 +201,31 @@ device.
   and fabric send/receive/barrier with counters — confirming identical
   results to the M161 in-process suite.
 
-**M163: `backend_pcie.c` host backend**
+**M163: `backend_pcie.c` host backend** — *complete;
+[`include/att1_backend.h`](../include/att1_backend.h),
+[`src/backend_pcie.c`](../src/backend_pcie.c),
+[`tests/test_backend_pcie.c`](../tests/test_backend_pcie.c).*
 
 - New concrete `att1_backend_ops` implementation (per M93 §8.3) that
   dispatches via the endpoint transport instead of CPU/CUDA function calls.
   No other runtime code changes — this validates the backend-swap pattern
   proven by CUDA.
+- `att1_backend_pcie_create()` wraps a caller-owned, already-connected
+  `att1_aimu_conformance_endpoint` (M161 in-process or M162 socket-backed).
+  `alloc`/`free` manage ordinary host memory (mirroring the CUDA backend's
+  host-buffer convention); `sync` forwards to `sync_mmio`. Each math op
+  submits one frozen v1.0 (M158) command packet
+  (`EXEC_MATMUL`/`EXEC_RMSNORM`/`EXEC_ROPE`/`EXEC_FFN`) and round-trips it
+  through `cmd_submit`/`cmd_dispatch_one`/`cmd_poll_completion`, mapping the
+  completion result code to success/failure via
+  `att1_aimu_result_to_status()`. `softmax_f32` is left unimplemented: no
+  frozen command type covers plain softmax (only the larger fused
+  `EXEC_ATTENTION`).
+- Because the M161/M162 command-queue simulator does not yet execute any
+  `EXEC_*` command, every math op currently fails with
+  `ATT1_ERR_UNSUPPORTED`; this milestone proves the transport plumbing and
+  backend-swap contract, not compute correctness — that lands at M166 once
+  the endpoint actually executes `EXEC_*` commands.
 
 **M164: One-time shard transfer and tensor residency**
 
