@@ -203,6 +203,86 @@ static int test_endpoint_dma_and_fabric(void)
     return 0;
 }
 
+static int test_endpoint_kv_mmu(void)
+{
+    att1_aimu_conformance_endpoint *endpoint = NULL;
+    pid_t pid;
+    int status = 0;
+    const uint64_t session_id = 7u;
+    const size_t layer_id = 0u;
+    const size_t num_heads = 4u;
+    const size_t head_dim = 16u;
+    const size_t per_position = num_heads * head_dim;
+    float key[64];
+    float value[64];
+    float out_key[16];
+    float out_value[16];
+    att1_kv_mmu_counters counters;
+    size_t i;
+
+    for (i = 0u; i < per_position; ++i) {
+        key[i] = (float)(10u + i);
+        value[i] = (float)(20u + i);
+    }
+
+    unlink(g_socket_path);
+    pid = spawn_daemon(g_socket_path);
+    REQUIRE(pid > 0, "endpoint_kv: daemon spawn");
+    REQUIRE(connect_with_retry(g_socket_path, &endpoint) == 0,
+            "endpoint_kv: client connect");
+
+    REQUIRE(att1_aimu_conformance_kv_create_session(endpoint, session_id) == ATT1_OK,
+            "endpoint_kv: create session over socket");
+    REQUIRE(att1_aimu_conformance_kv_append(endpoint,
+                                            session_id,
+                                            layer_id,
+                                            0u,
+                                            key,
+                                            per_position,
+                                            value,
+                                            per_position) == ATT1_OK,
+            "endpoint_kv: append over socket");
+    REQUIRE(att1_aimu_conformance_kv_append(endpoint,
+                                            session_id,
+                                            layer_id,
+                                            0u,
+                                            key,
+                                            per_position,
+                                            value,
+                                            per_position) != ATT1_OK,
+            "endpoint_kv: duplicate append rejected over socket");
+
+    memset(out_key, 0, sizeof(out_key));
+    memset(out_value, 0, sizeof(out_value));
+    REQUIRE(att1_aimu_conformance_kv_read(endpoint,
+                                          session_id,
+                                          layer_id,
+                                          1u,
+                                          0u,
+                                          out_key,
+                                          head_dim,
+                                          out_value,
+                                          head_dim) == ATT1_OK &&
+            out_key[0] == key[head_dim] &&
+            out_value[0] == value[head_dim],
+            "endpoint_kv: read returns head-1 data over socket");
+
+    REQUIRE(att1_aimu_conformance_kv_get_counters(endpoint, &counters) == ATT1_OK &&
+            counters.append_ops == 1u &&
+            counters.read_ops == 1u &&
+            counters.errors == 1u,
+            "endpoint_kv: counters match over socket");
+
+    REQUIRE(att1_aimu_conformance_kv_destroy_session(endpoint, session_id) == ATT1_OK,
+            "endpoint_kv: destroy session over socket");
+
+    att1_aimu_conformance_endpoint_destroy(endpoint);
+    waitpid(pid, &status, 0);
+    unlink(g_socket_path);
+    PASS("kv_mmu");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -214,6 +294,7 @@ int main(void)
         waitpid(pid, &status, 0);
     }
     failed |= test_endpoint_dma_and_fabric();
+    failed |= test_endpoint_kv_mmu();
 
     unlink(g_socket_path);
 

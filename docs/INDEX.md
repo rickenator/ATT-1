@@ -146,6 +146,20 @@ weights are never re-read by the host once resident;
 expose transfer/rejection accounting and `att1_backend_pcie_tensor_is_resident()`
 lets callers query residency directly.
 
+`include/att1_aimu_conformance.h` / `src/aimu_conformance.c` (M165) add
+device-local KV-MMU operations (`kv_create_session`, `kv_destroy_session`,
+`kv_append`, `kv_read`, `kv_copy_range`, `kv_get_counters`) to the
+conformance endpoint, each forwarding to an internal `att1_kv_mmu` (M151)
+instance owned by the endpoint per the M93 §8.9 requirement that KV memory
+is device-local and the host never touches KV entries between decode
+steps; the M162 socket transport
+(`include/att1_aimu_endpoint_protocol.h`, `src/aimu_endpoint_client.c`,
+`tools/att1-aimu-endpoint.c`) gains matching wire ops so the semantics are
+identical whether the endpoint runs in-process or out-of-process;
+`tests/test_aimu_conformance.c` and `tests/test_aimu_endpoint.c` cover
+session lifecycle, append-ordering/duplicate rejection, range-copy, and
+counters.
+
 ---
 
 ## Reference Manuals

@@ -23,6 +23,7 @@
 #include "att1_aimu_dma.h"
 #include "att1_aimu_trace.h"
 #include "att1_fabric.h"
+#include "att1_kv_mmu.h"
 #include "att1_status.h"
 
 #include <stddef.h>
@@ -32,7 +33,7 @@
 extern "C" {
 #endif
 
-#define ATT1_AIMU_ENDPOINT_MAX_PAYLOAD 4096u
+#define ATT1_AIMU_ENDPOINT_MAX_PAYLOAD 16384u
 #define ATT1_AIMU_ENDPOINT_MAX_GROUP_TILES 16u
 
 typedef enum att1_aimu_endpoint_op {
@@ -56,6 +57,12 @@ typedef enum att1_aimu_endpoint_op {
     ATT1_AIMU_ENDPOINT_OP_FABRIC_BARRIER_ARRIVE,
     ATT1_AIMU_ENDPOINT_OP_FABRIC_GET_COUNTERS,
     ATT1_AIMU_ENDPOINT_OP_TRACE_GET_SNAPSHOT,
+    ATT1_AIMU_ENDPOINT_OP_KV_CREATE_SESSION,
+    ATT1_AIMU_ENDPOINT_OP_KV_DESTROY_SESSION,
+    ATT1_AIMU_ENDPOINT_OP_KV_APPEND,
+    ATT1_AIMU_ENDPOINT_OP_KV_READ,
+    ATT1_AIMU_ENDPOINT_OP_KV_COPY_RANGE,
+    ATT1_AIMU_ENDPOINT_OP_KV_GET_COUNTERS,
     ATT1_AIMU_ENDPOINT_OP_SHUTDOWN
 } att1_aimu_endpoint_op;
 
@@ -77,6 +84,14 @@ typedef struct att1_aimu_endpoint_request {
     uint32_t payload_bytes;
     uint32_t payload_capacity;
     unsigned char payload[ATT1_AIMU_ENDPOINT_MAX_PAYLOAD];
+    uint64_t kv_session_id;
+    uint32_t kv_layer_id;
+    uint32_t kv_head_id;
+    uint32_t kv_position;
+    uint32_t kv_start_position;
+    uint32_t kv_position_count;
+    uint32_t kv_key_bytes;
+    uint32_t kv_value_bytes;
 } att1_aimu_endpoint_request;
 
 typedef struct att1_aimu_endpoint_response {
@@ -91,6 +106,9 @@ typedef struct att1_aimu_endpoint_response {
     att1_fabric_counters fabric_counters;
     att1_fabric_packet fabric_packet;
     att1_aimu_trace_snapshot trace_snapshot;
+    att1_kv_mmu_counters kv_counters;
+    uint32_t kv_key_bytes;
+    uint32_t kv_value_bytes;
     uint32_t payload_bytes;
     unsigned char payload[ATT1_AIMU_ENDPOINT_MAX_PAYLOAD];
 } att1_aimu_endpoint_response;

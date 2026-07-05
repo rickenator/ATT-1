@@ -167,6 +167,82 @@ static att1_status_t dispatch_request(att1_aimu_conformance_endpoint *endpoint,
     case ATT1_AIMU_ENDPOINT_OP_TRACE_GET_SNAPSHOT:
         st = att1_aimu_conformance_trace_get_snapshot(endpoint, &resp->trace_snapshot);
         break;
+    case ATT1_AIMU_ENDPOINT_OP_KV_CREATE_SESSION:
+        st = att1_aimu_conformance_kv_create_session(endpoint, req->kv_session_id);
+        break;
+    case ATT1_AIMU_ENDPOINT_OP_KV_DESTROY_SESSION:
+        st = att1_aimu_conformance_kv_destroy_session(endpoint, req->kv_session_id);
+        break;
+    case ATT1_AIMU_ENDPOINT_OP_KV_APPEND: {
+        const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
+        size_t key_count = req->kv_key_bytes / sizeof(float);
+        size_t value_count = req->kv_value_bytes / sizeof(float);
+        const float *key = req->kv_key_bytes > 0u
+                ? (const float *)(const void *)req->payload
+                : NULL;
+        const float *value = req->kv_value_bytes > 0u
+                ? (const float *)(const void *)(req->payload + half_payload)
+                : NULL;
+        st = att1_aimu_conformance_kv_append(endpoint,
+                                             req->kv_session_id,
+                                             req->kv_layer_id,
+                                             req->kv_position,
+                                             key,
+                                             key_count,
+                                             value,
+                                             value_count);
+        break;
+    }
+    case ATT1_AIMU_ENDPOINT_OP_KV_READ: {
+        const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
+        size_t key_count = req->kv_key_bytes / sizeof(float);
+        size_t value_count = req->kv_value_bytes / sizeof(float);
+        float *out_key = key_count > 0u ? (float *)(void *)resp->payload : NULL;
+        float *out_value = value_count > 0u
+                ? (float *)(void *)(resp->payload + half_payload)
+                : NULL;
+        st = att1_aimu_conformance_kv_read(endpoint,
+                                           req->kv_session_id,
+                                           req->kv_layer_id,
+                                           req->kv_head_id,
+                                           req->kv_position,
+                                           out_key,
+                                           key_count,
+                                           out_value,
+                                           value_count);
+        if (st == ATT1_OK) {
+            resp->kv_key_bytes = req->kv_key_bytes;
+            resp->kv_value_bytes = req->kv_value_bytes;
+        }
+        break;
+    }
+    case ATT1_AIMU_ENDPOINT_OP_KV_COPY_RANGE: {
+        const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
+        size_t keys_count = req->kv_key_bytes / sizeof(float);
+        size_t values_count = req->kv_value_bytes / sizeof(float);
+        float *out_keys = keys_count > 0u ? (float *)(void *)resp->payload : NULL;
+        float *out_values = values_count > 0u
+                ? (float *)(void *)(resp->payload + half_payload)
+                : NULL;
+        st = att1_aimu_conformance_kv_copy_range(endpoint,
+                                                 req->kv_session_id,
+                                                 req->kv_layer_id,
+                                                 req->kv_head_id,
+                                                 req->kv_start_position,
+                                                 req->kv_position_count,
+                                                 out_keys,
+                                                 keys_count,
+                                                 out_values,
+                                                 values_count);
+        if (st == ATT1_OK) {
+            resp->kv_key_bytes = req->kv_key_bytes;
+            resp->kv_value_bytes = req->kv_value_bytes;
+        }
+        break;
+    }
+    case ATT1_AIMU_ENDPOINT_OP_KV_GET_COUNTERS:
+        st = att1_aimu_conformance_kv_get_counters(endpoint, &resp->kv_counters);
+        break;
     case ATT1_AIMU_ENDPOINT_OP_SHUTDOWN:
         *out_shutdown = 1;
         st = ATT1_OK;
