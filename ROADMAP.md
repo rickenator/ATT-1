@@ -99,13 +99,14 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 - Milestone 157: Register map freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §1.6 declares `REGISTER_MAP_VERSION` `0x0001_0000` frozen with an explicit frozen-fields vs. reserved-fields policy and version-bump rules; first of four Stage 1 interface freezes toward Gate 1.
 - Milestone 158: Command packet and completion schema freeze v1.0 (complete) — [docs/aimu_pcie_command_requirements.md](docs/aimu_pcie_command_requirements.md) §1.5 declares the 64-byte command packet layout, completion record, command type enumeration, and error/result code table frozen v1.0; `att1_aimu_result_to_status()` freezes the `att1_status_t` error/result-code mapping; second of four Stage 1 interface freezes toward Gate 1.
 - Milestone 159: DMA descriptor and replay schema freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §15.7 freezes the M107 in-process `att1_aimu_dma_desc`/validation/counter contract, and [docs/schema_compatibility.md](docs/schema_compatibility.md) freezes the M113/M122/M123 replay-report schemas plus their v1 compatibility contract; third of four Stage 1 interface freezes toward Gate 1.
+- Milestone 160: Fabric packet and barrier semantics freeze v1.0 (complete) — [docs/aimu_fabric_routing.md](docs/aimu_fabric_routing.md) §1.3 freezes the packet type enumeration, route descriptor fields, queue-full/backpressure behavior, `TILE_BARRIER` all-or-nothing semantics, and the counter name set; resolves M93 §8.15-4 (barrier signaled via the existing `TILE_BARRIER` command, not a raw PCIe atomic CAS or new register); fourth and last of four Stage 1 interface freezes toward Gate 1.
 
 ## Stage 1: Interface Freeze
 
 - Milestone 157: Register map freeze (v1.0) — BAR0 layout, doorbell, status, capability, counter registers; frozen vs. reserved fields policy.
 - Milestone 158: Command packet and completion schema freeze (v1.0) — including `att1_status_t` error/result-code mapping.
 - Milestone 159: DMA descriptor and replay schema freeze (v1.0) — compatibility contract in `docs/schema_compatibility.md`.
-- Milestone 160: Fabric packet and barrier semantics freeze (v1.0) — packet types, queue-full behavior, barrier semantics, counter name set; resolve barrier mechanism question (M93 §8.15-4).
+- Milestone 160: Fabric packet and barrier semantics freeze (v1.0) (complete) — packet types, queue-full behavior, barrier semantics, counter name set; resolved barrier mechanism question (M93 §8.15-4).
 - Milestone 161: Conformance test suite for frozen interfaces — substrate-independent harness (in-process sim, emulator, FPGA).
 
 Gate 1: all four freezes ratified; conformance suite green on the in-process simulator.

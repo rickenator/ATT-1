@@ -137,13 +137,21 @@ git push -u origin PHASE_2
   contract: what hardware must accept, what it may reject, how versions
   negotiate.
 
-**M160: Fabric packet and barrier semantics freeze (v1.0)**
+**M160: Fabric packet and barrier semantics freeze (v1.0)** — *complete;
+[aimu_fabric_routing.md](aimu_fabric_routing.md) §1.3.*
 
 - Freeze packet types, routing metadata, queue-full behavior, barrier
   all-or-nothing semantics, and the counter name set (M93 §8.8/§8.10) so
   hardware counters map 1:1 to existing tests.
-- Resolve open question M93 §8.15-4 (barrier: PCIe atomic CAS vs. dedicated
-  register) at the spec level.
+- §1.3 declares the packet type enumeration (§3), route descriptor fields
+  (§2.1), queue-full/backpressure behavior, `TILE_BARRIER` all-or-nothing
+  semantics (§2.3), and the counter name set (§6) frozen at v1.0, with
+  frozen-fields vs. reserved-fields policy and version-bump rules mirroring
+  M157–M159.
+- Resolved open question M93 §8.15-4 (barrier: PCIe atomic CAS vs. dedicated
+  register) at the spec level: barrier arrival/completion are signaled via
+  the existing `TILE_BARRIER` command and completion record, not a raw PCIe
+  atomic CAS or a new dedicated register.
 
 **M161: Conformance test suite for frozen interfaces**
 
