@@ -15,27 +15,30 @@
  *      output projection's contraction dimension. The combined logits are
  *      compared against a direct cpu-f32 reference and must match exactly.
  *
- *   2. `test_two_tile_decode_socket`: the same activation-routing/barrier/
- *      reduction protocol, driven by att1_aimu_cluster_bridge, over two
- *      real `att1-aimu-endpoint` daemon *processes* connected via separate
- *      Unix domain sockets (M162), proving the transport-agnostic fabric
- *      protocol genuinely crosses OS process boundaries (M93 §8.8). Real
- *      EXEC_* tensor-math execution is intentionally *not* exercised on
- *      these socket-backed endpoints: M166's exec hook resolves tensor
- *      operands via raw host pointers embedded in the command packet
- *      (`input_buf_addr`/`output_buf_addr`/the resident-tensor registry's
- *      `host_addr`), which are only valid within the process that issued
- *      them; forwarding those same pointer values verbatim to a *different*
- *      OS process (the daemon) and dereferencing them there is undefined
- *      behavior. Giving the socket-backed endpoint real device-local
- *      tensor memory (so tensor payloads are transferred and dereferenced
- *      only within the daemon's own address space) is future work, not
- *      M167 scope (M167 is scoped to fabric/barrier/reduction protocol
- *      correctness, M93 §8.2-2/8.2-4); this test therefore reuses the
- *      cpu-f32-computed reference values as the "per-tile activations"
- *      being routed, so only genuine socket traffic is exercised for the
- *      fabric/barrier calls, and asserts the daemons' own fabric counters
- *      (queried back over the same sockets) reflect that real traffic.
+ *   2. `test_two_tile_decode_socket`: the identical protocol, over two real
+ *      `att1-aimu-endpoint` daemon *processes* connected via separate Unix
+ *      domain sockets (M162), proving both that the transport-agnostic
+ *      fabric protocol genuinely crosses OS process boundaries (M93 §8.8)
+ *      *and* that real `EXEC_*` tensor-math execution (M166) now genuinely
+ *      works across that same socket transport: each tile's layer forward
+ *      pass and partial-logit matmul run through an att1_backend_pcie
+ *      bound to the socket-backed endpoint, exactly like the in-process
+ *      variant. Real cross-process EXEC_* execution used to be undefined
+ *      behavior (M166's exec hook resolves tensor operands via raw host
+ *      pointers — `input_buf_addr`/`output_buf_addr`/the resident-tensor
+ *      registry's `host_addr` — only valid within the process that issued
+ *      them; forwarding those pointer values verbatim to the daemon's
+ *      different address space and dereferencing them there reproducibly
+ *      crashed the daemon). This is now fixed: src/aimu_endpoint_client.c
+ *      copies the real operand bytes into the wire request/response
+ *      payload instead of forwarding raw pointers, and
+ *      tools/att1-aimu-endpoint.c copies that payload into daemon-owned
+ *      buffers and rewrites the command's address fields before executing
+ *      it, so every exec-hook dereference stays within the daemon's own
+ *      address space (f32 dtype end to end; q8/q4 `LOAD_TENSOR_TILE` over
+ *      the socket transport is cleanly rejected — see the file header
+ *      comment in tools/att1-aimu-endpoint.c — rather than reconstructing a
+ *      cross-process struct pointer).
  */
 
 #define _POSIX_C_SOURCE 200112L
@@ -466,6 +469,8 @@ static int test_two_tile_decode_socket(void)
     m167_fixture fx;
     att1_aimu_conformance_endpoint *ep0 = NULL;
     att1_aimu_conformance_endpoint *ep1 = NULL;
+    att1_backend *pcie0 = NULL;
+    att1_backend *pcie1 = NULL;
     att1_fabric_counters fc0, fc1;
     pid_t pid0, pid1;
     int status0 = 0, status1 = 0;
@@ -488,11 +493,20 @@ static int test_two_tile_decode_socket(void)
     REQUIRE(connect_with_retry(g_socket_path_1, &ep1) == 0,
             "two_tile_socket: client1 connect");
 
-    /* pcie0/pcie1 == NULL: only the fabric traffic (send/receive/barrier)
-     * crosses the real socket transport; see the file header comment for
-     * why real EXEC_* tensor math is out of scope for the socket-backed
-     * endpoint until it has real device-local tensor memory. */
-    rc = m167_run_protocol(&fx, ep0, ep1, NULL, NULL, combined_logits);
+    /* Each tile's layer forward pass and partial-logit matmul are really
+     * executed by the socket-backed daemon processes (LOAD_TENSOR_TILE/
+     * EXEC_MATMUL/EXEC_RMSNORM/EXEC_ROPE/EXEC_FFN, M166), now that
+     * src/aimu_endpoint_client.c/tools/att1-aimu-endpoint.c transfer the
+     * real operand bytes across the socket instead of forwarding raw host
+     * pointers (see the file header comment): this proves cross-process
+     * EXEC_* execution genuinely works, not just the fabric/barrier
+     * protocol. */
+    REQUIRE(att1_backend_pcie_create(ep0, 0u, &pcie0) == ATT1_OK,
+            "two_tile_socket: pcie backend0 create");
+    REQUIRE(att1_backend_pcie_create(ep1, 0u, &pcie1) == ATT1_OK,
+            "two_tile_socket: pcie backend1 create");
+
+    rc = m167_run_protocol(&fx, ep0, ep1, pcie0, pcie1, combined_logits);
 
     if (rc == 0) {
         for (i = 0u; i < M167_VOCAB; i++) {
@@ -519,6 +533,8 @@ static int test_two_tile_decode_socket(void)
                 "two_tile_socket: daemon fabric counters reflect real socket traffic");
     }
 
+    att1_backend_destroy(pcie0);
+    att1_backend_destroy(pcie1);
     att1_aimu_conformance_endpoint_destroy(ep0);
     att1_aimu_conformance_endpoint_destroy(ep1);
     waitpid(pid0, &status0, 0);

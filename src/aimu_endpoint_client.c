@@ -10,6 +10,8 @@
 
 #define _POSIX_C_SOURCE 200112L
 
+#include "att1_aimu_cmdq.h"
+#include "att1_aimu_dma.h"
 #include "att1_aimu_endpoint_client.h"
 #include "att1_aimu_endpoint_protocol.h"
 
@@ -20,9 +22,74 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+/*
+ * Cross-process EXEC_* tensor-math execution (real fix for the M167 known
+ * limitation, see the matching comment in tools/att1-aimu-endpoint.c):
+ * `client_cmd_submit()` below copies the real operand bytes named by
+ * `cmd->input_buf_addr` into the request's `payload` field (instead of
+ * forwarding the raw, client-process-only pointer value) for the command
+ * types whose exec hook dereferences those addresses (LOAD_TENSOR_TILE
+ * f32, EXEC_MATMUL, EXEC_RMSNORM, EXEC_ROPE, EXEC_FFN); the daemon copies
+ * that payload into memory it owns and rewrites the command before
+ * executing it (see dispatch_cmd_submit()). Because the M158 frozen
+ * command packet's `output_buf_addr` is likewise only valid in the client
+ * process, and dispatch (real execution) happens asynchronously relative
+ * to submit, this client remembers where each in-flight command's result
+ * belongs (keyed by the `command_id` the daemon assigns during submit) and
+ * copies the daemon's result payload — attached to the matching
+ * `CMD_POLL_COMPLETION` response — back into that local buffer once the
+ * command actually completes.
+ */
+#define ATT1_AIMU_ENDPOINT_CLIENT_MAX_PENDING_XFERS 8u
+
+typedef struct endpoint_client_pending_xfer {
+    int      used;
+    uint32_t command_id;
+    void    *output_ptr;   /* client-local destination buffer */
+    uint32_t output_bytes;
+} endpoint_client_pending_xfer;
+
 typedef struct endpoint_client_ctx {
     int fd;
+    endpoint_client_pending_xfer pending[ATT1_AIMU_ENDPOINT_CLIENT_MAX_PENDING_XFERS];
 } endpoint_client_ctx;
+
+static int client_cmd_needs_buffer_xfer(uint8_t command_type)
+{
+    switch ((att1_aimu_cmd_type)command_type) {
+    case ATT1_AIMU_CMD_EXEC_MATMUL:
+    case ATT1_AIMU_CMD_EXEC_RMSNORM:
+    case ATT1_AIMU_CMD_EXEC_ROPE:
+    case ATT1_AIMU_CMD_EXEC_FFN:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static void pending_xfer_register(endpoint_client_ctx *cc,
+                                  uint32_t command_id,
+                                  void *output_ptr,
+                                  uint32_t output_bytes)
+{
+    size_t i;
+    for (i = 0u; i < ATT1_AIMU_ENDPOINT_CLIENT_MAX_PENDING_XFERS; i++) {
+        if (!cc->pending[i].used) {
+            cc->pending[i].used = 1;
+            cc->pending[i].command_id = command_id;
+            cc->pending[i].output_ptr = output_ptr;
+            cc->pending[i].output_bytes = output_bytes;
+            return;
+        }
+    }
+    /* Table full (shouldn't happen: the only current caller,
+     * src/backend_pcie.c, keeps exactly one command in flight at a time);
+     * reclaim the oldest slot rather than silently dropping the result. */
+    cc->pending[0].used = 1;
+    cc->pending[0].command_id = command_id;
+    cc->pending[0].output_ptr = output_ptr;
+    cc->pending[0].output_bytes = output_bytes;
+}
 
 static att1_status_t endpoint_roundtrip(endpoint_client_ctx *cc,
                                         att1_aimu_endpoint_request *req,
@@ -140,15 +207,61 @@ static att1_status_t client_cmd_submit(void *ctx, att1_aimu_cmd *cmd)
     att1_aimu_endpoint_request req;
     att1_aimu_endpoint_response resp;
     att1_status_t st;
+    void *output_ptr = NULL;
+    uint32_t output_bytes = 0u;
     if (cmd == NULL) {
         return ATT1_ERR_INVALID_ARG;
     }
     memset(&req, 0, sizeof(req));
     req.op = ATT1_AIMU_ENDPOINT_OP_CMD_SUBMIT;
     req.cmd = *cmd;
+
+    /* See the file header comment: forward the real operand bytes instead
+     * of the (client-process-only) raw pointer for command types whose
+     * exec hook dereferences them. */
+    if ((att1_aimu_cmd_type)cmd->command_type == ATT1_AIMU_CMD_LOAD_TENSOR_TILE) {
+        uint32_t dim0 = cmd->op_param_1 >> 16;
+        uint32_t dim1 = cmd->op_param_1 & 0xFFFFu;
+        uint32_t bytes;
+
+        if (cmd->dtype != ATT1_AIMU_DMA_DTYPE_F32) {
+            /* q8/q4 weight tensors are referenced by a struct pointer with
+             * its own nested owned buffers (values/scales or
+             * packed/scales, plus a group_size the frozen packet has
+             * nowhere to carry for q4); safely reconstructing that in the
+             * daemon's address space needs wire-protocol changes beyond
+             * this fix, so refuse cleanly instead of forwarding a
+             * cross-process struct pointer (the prior undefined
+             * behavior). */
+            return ATT1_ERR_UNSUPPORTED;
+        }
+        bytes = dim0 * dim1 * 4u;
+        if ((bytes == 0u) || (cmd->input_buf_addr == 0u) ||
+            (bytes > ATT1_AIMU_ENDPOINT_MAX_PAYLOAD)) {
+            return ATT1_ERR_INVALID_ARG;
+        }
+        memcpy(req.payload, (const void *)(uintptr_t)cmd->input_buf_addr, bytes);
+        req.payload_bytes = bytes;
+    } else if (client_cmd_needs_buffer_xfer(cmd->command_type)) {
+        uint32_t bytes = cmd->input_buf_bytes;
+        if ((bytes == 0u) || (cmd->input_buf_addr == 0u) ||
+            (bytes > ATT1_AIMU_ENDPOINT_MAX_PAYLOAD)) {
+            return ATT1_ERR_INVALID_ARG;
+        }
+        memcpy(req.payload, (const void *)(uintptr_t)cmd->input_buf_addr, bytes);
+        req.payload_bytes = bytes;
+        if (cmd->output_buf_bytes > 0u) {
+            output_ptr = (void *)(uintptr_t)cmd->output_buf_addr;
+            output_bytes = cmd->output_buf_bytes;
+        }
+    }
+
     st = endpoint_roundtrip(cc, &req, &resp);
     if (st == ATT1_OK) {
         *cmd = resp.cmd;
+        if (output_ptr != NULL) {
+            pending_xfer_register(cc, cmd->command_id, output_ptr, output_bytes);
+        }
     }
     return st;
 }
@@ -182,8 +295,22 @@ static att1_status_t client_cmd_poll_completion(void *ctx, att1_aimu_completion 
     memset(&req, 0, sizeof(req));
     req.op = ATT1_AIMU_ENDPOINT_OP_CMD_POLL_COMPLETION;
     st = endpoint_roundtrip(cc, &req, &resp);
-    if (st == ATT1_OK && out != NULL) {
-        *out = resp.completion;
+    if (st == ATT1_OK) {
+        size_t i;
+        if (out != NULL) {
+            *out = resp.completion;
+        }
+        for (i = 0u; i < ATT1_AIMU_ENDPOINT_CLIENT_MAX_PENDING_XFERS; i++) {
+            endpoint_client_pending_xfer *entry = &cc->pending[i];
+            if (entry->used && entry->command_id == resp.completion.command_id) {
+                if ((resp.payload_bytes > 0u) &&
+                    (resp.payload_bytes <= entry->output_bytes)) {
+                    memcpy(entry->output_ptr, resp.payload, resp.payload_bytes);
+                }
+                memset(entry, 0, sizeof(*entry));
+                break;
+            }
+        }
     }
     return st;
 }
@@ -647,6 +774,7 @@ att1_status_t att1_aimu_conformance_socket_connect(
         close(fd);
         return ATT1_ERR_OOM;
     }
+    memset(cc, 0, sizeof(*cc));
     cc->fd = fd;
 
     endpoint = (att1_aimu_conformance_endpoint *)malloc(sizeof(*endpoint));

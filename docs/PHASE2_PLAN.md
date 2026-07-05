@@ -351,23 +351,40 @@ device.
   real `att1-aimu-endpoint` daemon *processes*, proving the fabric/barrier
   protocol genuinely crosses OS process boundaries (M93 §8.8) and
   asserting the daemons' own fabric counters (queried back over the
-  sockets) reflect real traffic. This variant intentionally reuses the
-  cpu-f32 reference values as each tile's "local computation" rather than
-  exercising `EXEC_*` math on the socket-backed endpoints: M166's exec
-  hook resolves tensor operands via raw host pointers, which are only
-  valid within the process that issued them, so forwarding those pointer
-  values verbatim to a daemon's different address space and dereferencing
-  them there is undefined behavior. Giving the socket-backed endpoint real
-  device-local tensor memory (so tensor payloads are transferred and
-  dereferenced only within the daemon's own address space) remains a
-  documented gap for a future milestone — M167 is scoped to the
-  fabric/barrier/reduction protocol (M93 §8.2-2/8.2-4), not cross-process
-  compute.
+  sockets) reflect real traffic. **Update:** this variant originally reused
+  the cpu-f32 reference values as each tile's "local computation" instead
+  of exercising `EXEC_*` math on the socket-backed endpoints, because
+  M166's exec hook resolves tensor operands via raw host pointers, which
+  are only valid within the process that issued them, so forwarding those
+  pointer values verbatim to a daemon's different address space and
+  dereferencing them there was undefined behavior (reproducibly crashed
+  the daemon). This is now fixed: `src/aimu_endpoint_client.c` copies the
+  real operand bytes for `LOAD_TENSOR_TILE`(f32)/`EXEC_MATMUL`/
+  `EXEC_RMSNORM`/`EXEC_ROPE`/`EXEC_FFN` into the wire request's `payload`
+  field instead of forwarding the raw pointer, and
+  `tools/att1-aimu-endpoint.c` copies that payload into daemon-owned
+  buffers and rewrites the submitted command's address fields before
+  executing it, so the exec hook only ever dereferences memory valid in
+  the daemon's own process; the daemon remembers the result buffer keyed by
+  `command_id` and returns the real output bytes in the matching
+  `CMD_POLL_COMPLETION` response, which the client copies into its own
+  output buffer. `test_two_tile_decode_socket` now binds an
+  `att1_backend_pcie` to each socket-backed endpoint exactly like the
+  in-process variant and asserts the combined logits still match the
+  cpu-f32 reference exactly. `q8`/`q4` `LOAD_TENSOR_TILE` over the socket
+  transport remains out of scope: those weight tensors are referenced by a
+  struct pointer with its own nested owned buffers (and, for q4, a
+  `group_size` the frozen v1.0 command packet has nowhere to carry), so
+  safely reconstructing them in the daemon's address space needs
+  wire-protocol changes beyond this fix; the client now refuses this case
+  cleanly (`ATT1_ERR_UNSUPPORTED`) instead of forwarding a cross-process
+  struct pointer.
 - The backend comparison report's `pcie` column (M92 extension per
-  M93 §8.4) remains deferred: it requires wiring a two-process cluster
-  decode path into `att1-bench`/`compiler/backend_comparison_report.py`,
-  which depends on the device-local tensor memory gap above being closed
-  first.
+  M93 §8.4) remains a separate, not-yet-implemented feature: the
+  cross-process `EXEC_*` correctness blocker above is resolved, but wiring
+  a two-process cluster decode path into `att1-bench`/
+  `compiler/backend_comparison_report.py` (neither of which has any pcie
+  backend support today) is independent follow-up work.
 
 **M168: Fault injection and hostile-endpoint testing**
 
