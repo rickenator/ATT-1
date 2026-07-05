@@ -137,7 +137,8 @@ git push -u origin PHASE_2
   contract: what hardware must accept, what it may reject, how versions
   negotiate.
 
-**M160: Fabric packet and barrier semantics freeze (v1.0)**
+**M160: Fabric packet and barrier semantics freeze (v1.0)** — *complete;
+[aimu_fabric_routing.md](aimu_fabric_routing.md) §16.*
 
 - Freeze packet types, routing metadata, queue-full behavior, barrier
   all-or-nothing semantics, and the counter name set (M93 §8.8/§8.10) so

@@ -87,7 +87,7 @@ in `docs/` unless noted otherwise.
 
 | Document | Description |
 |----------|-------------|
-| [aimu_fabric_routing.md](aimu_fabric_routing.md) | Fabric routing: packet format, route report schema, route planning |
+| [aimu_fabric_routing.md](aimu_fabric_routing.md) | Fabric routing: packet format, route report schema, route planning; **frozen v1.0 at M160** (§16) |
 
 ---
 
