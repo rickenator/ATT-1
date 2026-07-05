@@ -419,6 +419,14 @@ static att1_status_t client_kv_destroy_session(void *ctx, uint64_t session_id)
     return endpoint_roundtrip(cc, &req, &resp);
 }
 
+static att1_status_t client_kv_stream_bytes_fit(size_t bytes)
+{
+    if (bytes > (ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u)) {
+        return ATT1_ERR_INVALID_ARG;
+    }
+    return ATT1_OK;
+}
+
 static att1_status_t client_kv_append(void *ctx,
                                       uint64_t session_id,
                                       size_t layer_id,
@@ -435,7 +443,8 @@ static att1_status_t client_kv_append(void *ctx,
     size_t value_bytes = value_count * sizeof(float);
     const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
 
-    if (key_bytes > half_payload || value_bytes > half_payload) {
+    if (client_kv_stream_bytes_fit(key_bytes) != ATT1_OK ||
+        client_kv_stream_bytes_fit(value_bytes) != ATT1_OK) {
         return ATT1_ERR_INVALID_ARG;
     }
 
@@ -471,8 +480,8 @@ static att1_status_t client_kv_read(void *ctx,
     att1_status_t st;
     const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
 
-    if ((key_count * sizeof(float)) > half_payload ||
-        (value_count * sizeof(float)) > half_payload) {
+    if (client_kv_stream_bytes_fit(key_count * sizeof(float)) != ATT1_OK ||
+        client_kv_stream_bytes_fit(value_count * sizeof(float)) != ATT1_OK) {
         return ATT1_ERR_INVALID_ARG;
     }
 
@@ -521,8 +530,8 @@ static att1_status_t client_kv_copy_range(void *ctx,
     att1_status_t st;
     const size_t half_payload = ATT1_AIMU_ENDPOINT_MAX_PAYLOAD / 2u;
 
-    if ((keys_count * sizeof(float)) > half_payload ||
-        (values_count * sizeof(float)) > half_payload) {
+    if (client_kv_stream_bytes_fit(keys_count * sizeof(float)) != ATT1_OK ||
+        client_kv_stream_bytes_fit(values_count * sizeof(float)) != ATT1_OK) {
         return ATT1_ERR_INVALID_ARG;
     }
 

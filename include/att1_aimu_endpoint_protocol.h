@@ -36,6 +36,18 @@ extern "C" {
 #define ATT1_AIMU_ENDPOINT_MAX_PAYLOAD 16384u
 #define ATT1_AIMU_ENDPOINT_MAX_GROUP_TILES 16u
 
+/*
+ * ATT1_AIMU_ENDPOINT_MAX_PAYLOAD was 4096 bytes prior to M165. The KV-MMU
+ * ops (kv_append/kv_read/kv_copy_range, M165) split this single buffer into
+ * a key half and a value half, so it was doubled to 16384 bytes to leave
+ * headroom for small range-copy requests (a handful of KV positions at the
+ * default kv_head_dim) without shrinking the existing fabric send/receive
+ * and broadcast payload capacity. Both att1_aimu_endpoint_request and
+ * att1_aimu_endpoint_response embed one payload array of this size, so
+ * every wire message grows accordingly; this is a userspace-simulator
+ * protocol (not real PCIe), so the extra per-message bytes are acceptable.
+ */
+
 typedef enum att1_aimu_endpoint_op {
     ATT1_AIMU_ENDPOINT_OP_SYNC_MMIO = 1,
     ATT1_AIMU_ENDPOINT_OP_SNAPSHOT_COUNTERS,

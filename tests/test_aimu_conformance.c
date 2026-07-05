@@ -549,7 +549,7 @@ static int test_kv_mmu_session_lifecycle_and_semantics(void)
             counters.append_ops == 2u &&
             counters.read_ops == 3u &&
             counters.range_copy_ops == 1u &&
-            counters.errors >= 3u,
+            counters.errors == 4u,
             "kv_mmu: counters reflect append/read/range-copy/error activity");
 
     REQUIRE(att1_aimu_conformance_kv_destroy_session(endpoint, session_id) == ATT1_OK,
