@@ -1,9 +1,35 @@
 #include "att1_aimu_conformance.h"
 
 #include "att1_aimu_device.h"
+#include "att1_math.h"
+#include "att1_quant.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* M166: fixed-capacity resident-tensor registry backing the endpoint's
+ * real-execution hook (see conf_exec_hook() below). Populated by
+ * LOAD_TENSOR_TILE commands; consulted by EXEC_MATMUL/EXEC_RMSNORM to
+ * recover a weight tensor's host-resident representation from its
+ * tensor_id. `host_addr` is interpreted per `dtype`: for
+ * ATT1_AIMU_DMA_DTYPE_F32 it is a `const float *` (row-major
+ * dim0 x dim1 == d_out x d_model); for ATT1_AIMU_DMA_DTYPE_Q8 it is a
+ * `const att1_q8_matrix *`; for ATT1_AIMU_DMA_DTYPE_Q4 it is a
+ * `const att1_q4_matrix *`. This is an in-process emulation convenience
+ * (no separate device memory backing exists yet, matching M164's already
+ * documented limitation) — it lets the endpoint "execute" EXEC_* commands
+ * against the same tensors the caller already holds in host memory. */
+#define ATT1_AIMU_CONF_MAX_TENSORS 512u
+
+typedef struct att1_conf_tensor_entry {
+    int      used;
+    uint16_t tensor_id;
+    uint8_t  dtype;
+    uint16_t dim0;
+    uint16_t dim1;
+    uint64_t host_addr;
+} att1_conf_tensor_entry;
 
 typedef struct att1_aimu_conformance_inproc {
     att1_aimu_conformance_config config;
@@ -14,6 +40,10 @@ typedef struct att1_aimu_conformance_inproc {
     att1_aimu_mmio *mmio;
     att1_fabric fabric;
     att1_kv_mmu *kv_mmu;
+
+    /* M166: real-execution tensor registry (see att1_conf_tensor_entry). */
+    att1_conf_tensor_entry tensors[ATT1_AIMU_CONF_MAX_TENSORS];
+    size_t                 tensor_count;
 } att1_aimu_conformance_inproc;
 
 #define ATT1_AIMU_CONF_DEFAULT_TILE_COUNT            4u
@@ -283,6 +313,229 @@ static att1_status_t inproc_dma_get_counters(void *ctx, att1_aimu_dma_counters *
         return endpoint_invalid();
     }
     return att1_aimu_dma_get_counters(ep->dma, out);
+}
+
+/* =========================================================================
+ * M166: real EXEC_* / LOAD_TENSOR_TILE execution hook.
+ *
+ * Installed on the endpoint's internal att1_aimu_cmdq (see
+ * att1_aimu_cmdq_set_exec_hook() in include/att1_aimu_cmdq.h). Executes
+ * real math against host-resident tensors instead of returning
+ * ATT1_AIMU_ERR_UNSUPPORTED_OP, proving compute correctness for a
+ * single-tile emulated decode (M166) while leaving every raw
+ * att1_aimu_cmdq-level test (no hook installed there) unaffected.
+ * ====================================================================== */
+
+static att1_conf_tensor_entry *conf_tensor_find(att1_aimu_conformance_inproc *ep,
+                                                uint16_t tensor_id)
+{
+    size_t i;
+
+    for (i = 0u; i < ep->tensor_count; i++) {
+        if (ep->tensors[i].used && ep->tensors[i].tensor_id == tensor_id) {
+            return &ep->tensors[i];
+        }
+    }
+    return NULL;
+}
+
+static att1_aimu_result conf_exec_load_tensor_tile(att1_aimu_conformance_inproc *ep,
+                                                   const att1_aimu_cmd *cmd)
+{
+    att1_conf_tensor_entry *slot;
+
+    if (cmd->input_buf_addr == 0u) {
+        return ATT1_AIMU_ERR_INVALID_TENSOR;
+    }
+
+    slot = conf_tensor_find(ep, cmd->tensor_id);
+    if (slot == NULL) {
+        if (ep->tensor_count >= ATT1_AIMU_CONF_MAX_TENSORS) {
+            return ATT1_AIMU_ERR_OUT_OF_MEMORY;
+        }
+        slot = &ep->tensors[ep->tensor_count++];
+    }
+
+    slot->used      = 1;
+    slot->tensor_id = cmd->tensor_id;
+    slot->dtype     = cmd->dtype;
+    slot->dim0      = (uint16_t)(cmd->op_param_1 >> 16);
+    slot->dim1      = (uint16_t)(cmd->op_param_1 & 0xFFFFu);
+    slot->host_addr = cmd->input_buf_addr;
+
+    return ATT1_AIMU_OK;
+}
+
+static att1_aimu_result conf_exec_matmul(att1_aimu_conformance_inproc *ep,
+                                         const att1_aimu_cmd *cmd)
+{
+    const att1_conf_tensor_entry *w;
+    const float *lhs;
+    float *dst;
+    size_t d_out;
+    size_t d_model;
+    int rc;
+
+    if ((cmd->input_buf_addr == 0u) || (cmd->output_buf_addr == 0u)) {
+        return ATT1_AIMU_ERR_INVALID_COMMAND;
+    }
+
+    w = conf_tensor_find(ep, cmd->tensor_id);
+    if (w == NULL) {
+        return ATT1_AIMU_ERR_INVALID_TENSOR;
+    }
+    if (w->dtype != cmd->dtype) {
+        return ATT1_AIMU_ERR_UNSUPPORTED_DTYPE;
+    }
+
+    d_out = (size_t)cmd->op_param_0;
+    if (d_out == 0u) {
+        return ATT1_AIMU_ERR_INVALID_SHAPE;
+    }
+    d_model = (size_t)(cmd->input_buf_bytes / 4u);
+    if (d_model == 0u) {
+        return ATT1_AIMU_ERR_INVALID_SHAPE;
+    }
+
+    lhs = (const float *)(uintptr_t)cmd->input_buf_addr;
+    dst = (float *)(uintptr_t)cmd->output_buf_addr;
+
+    switch (cmd->dtype) {
+    case ATT1_AIMU_DMA_DTYPE_F32: {
+        const float *rhs = (const float *)(uintptr_t)w->host_addr;
+        rc = att1_matmul_f32(dst, lhs, rhs, 1u, d_out, d_model);
+        break;
+    }
+    case ATT1_AIMU_DMA_DTYPE_Q8: {
+        const att1_q8_matrix *weights = (const att1_q8_matrix *)(uintptr_t)w->host_addr;
+        rc = att1_matmul_q8xf32(dst, lhs, 1u, d_model, weights);
+        break;
+    }
+    case ATT1_AIMU_DMA_DTYPE_Q4: {
+        const att1_q4_matrix *weights = (const att1_q4_matrix *)(uintptr_t)w->host_addr;
+        rc = att1_matmul_q4xf32(dst, lhs, 1u, d_model, weights);
+        break;
+    }
+    default:
+        return ATT1_AIMU_ERR_UNSUPPORTED_DTYPE;
+    }
+
+    return (rc == 0) ? ATT1_AIMU_OK : ATT1_AIMU_ERR_INTERNAL;
+}
+
+static att1_aimu_result conf_exec_rmsnorm(att1_aimu_conformance_inproc *ep,
+                                          const att1_aimu_cmd *cmd)
+{
+    const att1_conf_tensor_entry *w;
+    const float *src;
+    const float *weight;
+    float *dst;
+    size_t count;
+    union { uint32_t u; float f; } eps_bits;
+    int rc;
+
+    if ((cmd->input_buf_addr == 0u) || (cmd->output_buf_addr == 0u)) {
+        return ATT1_AIMU_ERR_INVALID_COMMAND;
+    }
+
+    w = conf_tensor_find(ep, cmd->tensor_id);
+    if (w == NULL) {
+        return ATT1_AIMU_ERR_INVALID_TENSOR;
+    }
+    if (w->dtype != ATT1_AIMU_DMA_DTYPE_F32) {
+        return ATT1_AIMU_ERR_UNSUPPORTED_DTYPE;
+    }
+
+    count = (size_t)(cmd->input_buf_bytes / 4u);
+    if (count == 0u) {
+        return ATT1_AIMU_ERR_INVALID_SHAPE;
+    }
+
+    src    = (const float *)(uintptr_t)cmd->input_buf_addr;
+    dst    = (float *)(uintptr_t)cmd->output_buf_addr;
+    weight = (const float *)(uintptr_t)w->host_addr;
+
+    eps_bits.u = cmd->op_param_0;
+    rc = att1_rmsnorm_f32(dst, src, weight, count, eps_bits.f);
+
+    return (rc == 0) ? ATT1_AIMU_OK : ATT1_AIMU_ERR_INTERNAL;
+}
+
+static att1_aimu_result conf_exec_rope(const att1_aimu_cmd *cmd)
+{
+    float *values;
+    size_t count;
+    union { uint32_t u; float f; } theta_bits;
+    int rc;
+
+    if (cmd->input_buf_addr == 0u) {
+        return ATT1_AIMU_ERR_INVALID_COMMAND;
+    }
+
+    count = (size_t)(cmd->input_buf_bytes / 4u);
+    if (count == 0u) {
+        return ATT1_AIMU_ERR_INVALID_SHAPE;
+    }
+
+    values = (float *)(uintptr_t)cmd->input_buf_addr;
+    theta_bits.u = cmd->op_param_1;
+
+    rc = att1_rope_f32(values, count, (size_t)cmd->kv_position, theta_bits.f);
+
+    return (rc == 0) ? ATT1_AIMU_OK : ATT1_AIMU_ERR_INTERNAL;
+}
+
+static att1_aimu_result conf_exec_ffn(const att1_aimu_cmd *cmd)
+{
+    const float *packed;
+    float *dst;
+    size_t count;
+    int rc;
+
+    if ((cmd->input_buf_addr == 0u) || (cmd->output_buf_addr == 0u)) {
+        return ATT1_AIMU_ERR_INVALID_COMMAND;
+    }
+
+    count = (size_t)cmd->op_param_0;
+    if (count == 0u) {
+        return ATT1_AIMU_ERR_INVALID_SHAPE;
+    }
+
+    /* backend_pcie.c packs [gate (count floats) | value (count floats)]
+     * contiguously into the input buffer since the frozen command format
+     * has only one input address field (see pcie_ffn_swiglu_f32()). */
+    packed = (const float *)(uintptr_t)cmd->input_buf_addr;
+    dst    = (float *)(uintptr_t)cmd->output_buf_addr;
+
+    rc = att1_swiglu_f32(dst, packed, packed + count, count);
+
+    return (rc == 0) ? ATT1_AIMU_OK : ATT1_AIMU_ERR_INTERNAL;
+}
+
+static att1_aimu_result conf_exec_hook(void *hook_ctx, att1_aimu_cmd *cmd)
+{
+    att1_aimu_conformance_inproc *ep = endpoint_ctx(hook_ctx);
+
+    if ((ep == NULL) || (cmd == NULL)) {
+        return ATT1_AIMU_ERR_INVALID_COMMAND;
+    }
+
+    switch ((att1_aimu_cmd_type)cmd->command_type) {
+    case ATT1_AIMU_CMD_LOAD_TENSOR_TILE:
+        return conf_exec_load_tensor_tile(ep, cmd);
+    case ATT1_AIMU_CMD_EXEC_MATMUL:
+        return conf_exec_matmul(ep, cmd);
+    case ATT1_AIMU_CMD_EXEC_RMSNORM:
+        return conf_exec_rmsnorm(ep, cmd);
+    case ATT1_AIMU_CMD_EXEC_ROPE:
+        return conf_exec_rope(cmd);
+    case ATT1_AIMU_CMD_EXEC_FFN:
+        return conf_exec_ffn(cmd);
+    default:
+        /* VALIDATE_TENSOR, EXEC_ATTENTION, KV_*, FABRIC_* are not executed
+         * by this hook (M167/M168 scope); fall back to "unsupported". */
+        return ATT1_AIMU_ERR_UNSUPPORTED_OP;
+    }
 }
 
 static att1_status_t inproc_fabric_send(void *ctx,
@@ -570,6 +823,11 @@ att1_status_t att1_aimu_conformance_inproc_create(
         free(endpoint);
         return status;
     }
+
+    /* M166: install the real EXEC_* / LOAD_TENSOR_TILE execution hook so
+     * this in-process endpoint actually computes results instead of
+     * returning ATT1_AIMU_ERR_UNSUPPORTED_OP. */
+    att1_aimu_cmdq_set_exec_hook(ctx->cmdq, conf_exec_hook, ctx);
 
     status = att1_aimu_dma_create(&ctx->dma);
     if (status != ATT1_OK) {

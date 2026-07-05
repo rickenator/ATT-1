@@ -133,8 +133,8 @@ register/command/DMA/fabric semantics and counters over the transport.
 caller-owned `att1_aimu_conformance_endpoint` (in-process or M162
 socket-backed) instead of CPU/CUDA calls, validating the backend-swap
 pattern proven by CUDA; `tests/test_backend_pcie.c` exercises the
-submit/dispatch/poll transport round trip. Compute execution over the
-transport is not yet implemented (deferred to M166).
+submit/dispatch/poll transport round trip. As of M166, the in-process
+endpoint really executes these commands (see below).
 
 `att1_backend_pcie_load_tensor()` (M164, same file) implements the M93
 §8.12 one-time shard-transfer contract: it moves a tensor's bytes
@@ -159,6 +159,25 @@ identical whether the endpoint runs in-process or out-of-process;
 `tests/test_aimu_conformance.c` and `tests/test_aimu_endpoint.c` cover
 session lifecycle, append-ordering/duplicate rejection, range-copy, and
 counters.
+
+`include/att1_aimu_cmdq.h` / `src/aimu_cmdq.c` (M166) gain an optional
+real-execution hook (`att1_aimu_cmdq_set_exec_hook()`); unset (the
+default), `att1_aimu_cmdq_dispatch_one()` behaves exactly as before
+(`ATT1_AIMU_ERR_UNSUPPORTED_OP` for every `LOAD_TENSOR_TILE`/`EXEC_*`/
+`KV_*`/`FABRIC_*` command), so every raw `att1_aimu_cmdq` test is
+unaffected. `src/aimu_conformance.c` installs a hook on the in-process
+endpoint's cmdq that maintains a resident-tensor registry (populated by
+`LOAD_TENSOR_TILE`) and really executes `EXEC_MATMUL`/`EXEC_RMSNORM`/
+`EXEC_ROPE`/`EXEC_FFN` against real host buffers, reusing the same
+`att1_math.h`/`att1_quant.h` primitives the CPU backends call directly.
+`src/backend_pcie.c`'s math ops auto-register their weight/norm-vector
+pointer under a `tensor_id` the first time it is used (mirroring the
+"load once" residency model without needing a new `att1_backend_ops`
+parameter) and reuse it on every later call; `softmax_f32` is now
+implemented as a local host-side call (still no dedicated frozen command
+type). `tests/test_backend_pcie.c` proves per-op correctness plus a
+three-step, multi-position transformer-block decode matching cpu-f32
+exactly and cpu-q8/cpu-q4 within tolerance.
 
 ---
 

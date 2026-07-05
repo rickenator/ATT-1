@@ -174,6 +174,17 @@ void att1_aimu_cmdq_destroy(att1_aimu_cmdq *q)
     free(q);
 }
 
+void att1_aimu_cmdq_set_exec_hook(att1_aimu_cmdq             *q,
+                                   att1_aimu_cmdq_exec_hook_fn fn,
+                                   void                       *hook_ctx)
+{
+    if (q == NULL) {
+        return;
+    }
+    q->exec_hook     = fn;
+    q->exec_hook_ctx = hook_ctx;
+}
+
 /* -------------------------------------------------------------------------
  * Host-side submission
  * ---------------------------------------------------------------------- */
@@ -296,9 +307,17 @@ att1_status_t att1_aimu_cmdq_dispatch_one(att1_aimu_cmdq *q)
     case ATT1_AIMU_CMD_KV_READ:
     case ATT1_AIMU_CMD_FABRIC_SEND:
     case ATT1_AIMU_CMD_FABRIC_REDUCE:
-        /* Execution commands not yet implemented in the simulator. */
-        q->counters.unsupported_commands++;
-        result = ATT1_AIMU_ERR_UNSUPPORTED_OP;
+        /* M166: a higher layer that owns real tensor memory may install a
+         * hook to actually execute these command types. With no hook
+         * installed, preserve the original M105 behavior exactly. */
+        if (q->exec_hook != NULL) {
+            result = q->exec_hook(q->exec_hook_ctx, cmd);
+        } else {
+            result = ATT1_AIMU_ERR_UNSUPPORTED_OP;
+        }
+        if (result == ATT1_AIMU_ERR_UNSUPPORTED_OP) {
+            q->counters.unsupported_commands++;
+        }
         break;
 
     default:
