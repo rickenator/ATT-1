@@ -121,6 +121,13 @@ abstract endpoint in `include/att1_aimu_conformance.h` /
 `src/aimu_conformance.c`; `compiler/check_aimu_conformance.py` cross-checks
 the frozen docs against the shipped C headers.
 
+`tools/att1-aimu-endpoint.c` (M162) is an out-of-process endpoint daemon
+skeleton that serves the M161 conformance ops over a Unix domain socket
+(`include/att1_aimu_endpoint_protocol.h` / `src/aimu_endpoint_protocol.c`);
+`src/aimu_endpoint_client.c` provides a matching socket-backed conformance
+client, and `tests/test_aimu_endpoint.c` validates identical
+register/command/DMA/fabric semantics and counters over the transport.
+
 ---
 
 ## Reference Manuals

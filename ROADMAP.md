@@ -101,6 +101,7 @@ and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
 - Milestone 159: DMA descriptor and replay schema freeze v1.0 (complete) — [docs/aimu_register_map.md](docs/aimu_register_map.md) §15.7 freezes the M107 in-process `att1_aimu_dma_desc`/validation/counter contract, and [docs/schema_compatibility.md](docs/schema_compatibility.md) freezes the M113/M122/M123 replay-report schemas plus their v1 compatibility contract; third of four Stage 1 interface freezes toward Gate 1.
 - Milestone 160: Fabric packet and barrier semantics freeze v1.0 (complete) — [docs/aimu_fabric_routing.md](docs/aimu_fabric_routing.md) §16 freezes the route-descriptor metadata, route-type codes, shipped `att1_packet_type` / `att1_fabric_counters` contract, queue-full behavior, and single-generation barrier semantics, and resolves M93 §8.15-4 in favor of a dedicated barrier register/state-machine path; fourth of four Stage 1 interface freezes toward Gate 1.
 - Milestone 161: Conformance test suite for frozen interfaces (complete) — [include/att1_aimu_conformance.h](include/att1_aimu_conformance.h) / [src/aimu_conformance.c](src/aimu_conformance.c) add a substrate-independent AIMU endpoint vtable and in-process simulator adapter; [tests/test_aimu_conformance.c](tests/test_aimu_conformance.c) exercises register semantics, command lifecycle, DMA validation, and fabric/barrier/counter behavior through the abstract endpoint only; [compiler/check_aimu_conformance.py](compiler/check_aimu_conformance.py) cross-checks the frozen docs against the shipped C headers; Gate 1 satisfied.
+- Milestone 162: Endpoint process skeleton (complete) — [tools/att1-aimu-endpoint.c](tools/att1-aimu-endpoint.c) daemon owns tile memory/register file/command queue in a separate process and serves the frozen M161 conformance ops over a Unix domain socket via [include/att1_aimu_endpoint_protocol.h](include/att1_aimu_endpoint_protocol.h)/[src/aimu_endpoint_protocol.c](src/aimu_endpoint_protocol.c); [src/aimu_endpoint_client.c](src/aimu_endpoint_client.c) provides a matching socket-backed conformance client; [tests/test_aimu_endpoint.c](tests/test_aimu_endpoint.c) spawns the daemon and validates identical register/command/DMA/fabric semantics and counters over the transport; first of Stage 2's out-of-process milestones.
 
 ## Stage 1: Interface Freeze
 
@@ -114,7 +115,7 @@ Gate 1: satisfied — all four freezes ratified; conformance suite green on the 
 
 ## Stage 2: Out-of-Process Emulated PCIe Endpoint
 
-- Milestone 162: `att1-aimu-endpoint` process skeleton — separate process owning tile memory behind shared-memory/Unix-socket transport.
+- Milestone 162: `att1-aimu-endpoint` process skeleton (complete) — separate process owning tile memory behind a Unix-domain-socket transport, wrapping the M161 in-process conformance simulator so semantics/counters are identical by construction.
 - Milestone 163: `backend_pcie.c` host backend — new `att1_backend_ops` implementation; no other runtime changes.
 - Milestone 164: One-time shard transfer and tensor residency enforcement.
 - Milestone 165: Device-local KV-MMU in the endpoint — full session lifecycle and counters.
