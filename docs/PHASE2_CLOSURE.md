@@ -43,5 +43,5 @@ The hardware path can reopen when the evidence packet from
 5. `make test`, `make regression`, and docs lint still pass after the evidence
    packet is recorded.
 
-Until those items exist, the correct next work is evidence closure around M175,
-not M176 hardware execution.
+Those are the M175 green criteria. Until they exist, the correct next work is
+evidence closure around M175, not M176 hardware execution.

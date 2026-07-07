@@ -18,6 +18,9 @@ small packet of partner/production-like traces. This is not a PIVOT because
 the protocol evidence is improving and the userspace validation platform has
 standalone value.
 
+The green path is part of M175 itself: when the reopen criteria below are met,
+M175 flips from HOLD to GO and M176 may begin without renumbering the roadmap.
+
 ---
 
 ## 1. Inputs Reviewed
@@ -59,8 +62,10 @@ move is to tighten the software evidence packet until the hardware decision
 can be made without leaning on hope:
 
 1. Run the M171/M172/M173/M174 gates on one real local SmolLM2-135M-class
-   artifact and a long-context token file. Keep model weights and generated
-   public `.att1` artifacts out of Git, but record the report outputs.
+   artifact and a long-context token file. `HuggingFaceTB/SmolLM2-135M` is the
+   recommended starting target; SmolLM3-3B is a later scale-up target, not the
+   first M175 green packet. Keep model weights and generated public `.att1`
+   artifacts out of Git, but record the report outputs.
 2. Select the exact Phase 2 host-access path: VFIO, vendor XDMA userspace
    flow, or LitePCIe userspace bridge. No custom kernel driver.
 3. Define the minimum control-plane FPGA target in one page: BAR0 read/write,
@@ -111,6 +116,7 @@ make regression
 The real-workload evidence packet required to reopen the gate should include:
 
 ```sh
+python3 compiler/run_m175_green_packet.py ...
 python3 compiler/validate_m171_two_tile.py ...
 python3 compiler/validate_m172_beachhead.py ...
 python3 compiler/validate_m173_capacity.py ...
@@ -122,16 +128,16 @@ Use local paths only. Do not commit public model weights or generated public
 
 ---
 
-## 7. Exit Criteria To Reopen
+## 7. Green Criteria To Reopen
 
-The gate can reopen when all of the following are true:
+The gate can reopen to **GO** when all of the following are true:
 
 | Reopen item | Required evidence |
 |---|---|
-| Real external-model packet | M171/M172/M173/M174 JSON/text reports from a local external artifact and long-context token file. |
+| Real external-model packet | M171/M172/M173/M174 JSON/text reports from a local external artifact and long-context token file, preferably tied together by `compiler/run_m175_green_packet.py`. |
 | Host-access choice | One selected path: VFIO, vendor XDMA userspace, or LitePCIe userspace bridge, with board/toolchain implications. |
 | Minimal FPGA control-plane scope | Explicit list of registers, queues, counters, and replay paths for M176-M181; tensor math remains out of scope. |
 | Trace packet | At least one production-like or partner-style trace with pass/fail criteria. |
 | Regression stays green | `make test`, `make regression`, and docs lint pass after the evidence packet is recorded. |
 
-Until then, M176-M181 remain contingent and should not start.
+When these are true, M175 is no longer HOLD and M176-M181 may start.

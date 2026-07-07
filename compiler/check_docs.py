@@ -99,6 +99,7 @@ _REQUIRED_DOCS: list[str] = [
     "docs/CUDA_SIGNOFF_M155.md",
     "docs/FPGA_GATE_REVIEW_M175.md",
     "docs/PHASE2_CLOSURE.md",
+    "docs/M175_GREEN_EVIDENCE.md",
     "docs/EXTERNAL_REVIEW_PACKAGE.md",
     "docs/testing.md",
     "docs/CUDA_VALIDATION_PLAN.md",
