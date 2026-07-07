@@ -140,7 +140,7 @@ Gate 2: emulated endpoint passes conformance, replay fidelity, tolerances, fault
 
 ## Stage 4: FPGA Go/No-Go and (Gated) Physical Prototype
 
-- Milestone 175: FPGA gate review — GO / HOLD / PIVOT against M126 §10 criteria and M153 kill criteria.
+- Milestone 175: FPGA gate review (complete, HOLD) — [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md) reviews Stage 1 freezes, Stage 2 emulator fidelity, Stage 3 calibration/scale evidence, M126 criteria, and M153 kill criteria; decision is HOLD, not GO/PIVOT, until real external-model beachhead reports, explicit host-access choice, minimum FPGA control-plane scope, and production-like trace evidence are recorded.
 - Milestone 176: (GO only) Board selection, BOM decision, procurement.
 - Milestone 177: (GO only) PCIe enumeration + BAR0 MMIO via userspace access (VFIO/XDMA); no kernel driver.
 - Milestone 178: (GO only) Command queue doorbell + completion path on FPGA; conformance subset on real hardware.

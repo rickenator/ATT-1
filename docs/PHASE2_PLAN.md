@@ -579,14 +579,17 @@ device.
 
 ## 7. Stage 4 — FPGA Go/No-Go and (Gated) Physical Prototype
 
-**M175: FPGA gate review (successor to M120/M126)**
+**M175: FPGA gate review (successor to M120/M126)** — *complete;
+[`FPGA_GATE_REVIEW_M175.md`](FPGA_GATE_REVIEW_M175.md).*
 
-- Formal review against the M126 §10 gate criteria: interfaces frozen
-  (Stage 1), emulator end-to-end fidelity (Stage 2), calibrated performance
-  model and real-model evidence (Stage 3), plus M153 kill-criteria
-  assessment.
-- Outputs one of: **GO** (proceed to M176+), **HOLD** (iterate emulator), or
-  **PIVOT** (per M153: license the planning/control-plane stack).
+- Formal review against the M126 §10 gate criteria, Stage 1 interface freezes,
+  Stage 2 emulator fidelity, Stage 3 calibration/scale evidence, and M153
+  kill criteria.
+- Decision: **HOLD**. Do not start M176 board selection, BOM commitment,
+  procurement, or FPGA RTL yet. The emulator/control-plane path remains alive,
+  but the gate requires recorded real external-model beachhead reports,
+  explicit host-access selection, minimum FPGA control-plane scope, and at
+  least one production-like trace packet before M176-M181 can start.
 
 **M176–M181 (contingent on GO): FPGA control-plane prototype** — scoped per
 [fpga_feasibility.md](fpga_feasibility.md) §2, control-plane first, math
