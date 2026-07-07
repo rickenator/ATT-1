@@ -72,7 +72,7 @@ in `docs/` unless noted otherwise.
 | [aimu_phase3_go_no_go.md](aimu_phase3_go_no_go.md) | Phase 3 go/no-go criteria: readiness gates for hardware prototype direction |
 | [FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) | M175 FPGA gate review: HOLD decision, evidence table, and reopen criteria before M176+ hardware work |
 | [M175_GREEN_EVIDENCE.md](M175_GREEN_EVIDENCE.md) | M175 green evidence packet: required local inputs, runner command, outputs, and gate rule |
-| [M175_SMOLLM2_ARTIFACT_RECORD.md](M175_SMOLLM2_ARTIFACT_RECORD.md) | M175 SmolLM2-135M local artifact-readiness record: source scan passed, `.att1` emission blocked by GQA support gap |
+| [M175_SMOLLM2_ARTIFACT_RECORD.md](M175_SMOLLM2_ARTIFACT_RECORD.md) | M175 SmolLM2-135M local artifact record: f32/q8 `.att1` artifacts emitted outside Git using legacy GQA expansion |
 | [comps.md](comps.md) | Architectural comparisons to NVIDIA (Blackwell/Rubin), Apple M4 Neural Engine, and production GPU/TPU/ANE systems (M154 context) |
 | [fpga_feasibility.md](fpga_feasibility.md) | FPGA feasibility notes: scope, non-goal status, reference only |
 | [phase3_bom_board_options.md](phase3_bom_board_options.md) | Phase 3 BOM and board options: reference exploration for future hardware |

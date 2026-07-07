@@ -1,11 +1,11 @@
 # M175 SmolLM2 Artifact Record
 
-**Status:** Blocked before `.att1` emission.
+**Status:** f32 and q8 `.att1` artifacts emitted locally.
 
-This record captures the first M175 green-packet attempt using the local
-SmolLM2-135M source snapshot. It is intentionally a local artifact-readiness
-record, not a generated model artifact. Public model weights and generated
-public-model `.att1` files remain outside the ATT-1 repository.
+This record captures the first M175 green-packet artifact delivery using the
+local SmolLM2-135M source snapshot. It records local paths and validation
+results only; public model weights and generated public-model `.att1` files
+remain outside the ATT-1 repository.
 
 ## Source Snapshot
 
@@ -56,34 +56,80 @@ Key facts:
 | Estimated f32 artifact | `671.9 MB` |
 | Estimated q8 artifact | `330.2 MB` |
 
-Result:
+Initial result:
 
 ```text
 gqa_detected              yes
-required_change: GQA: num_key_value_heads=3, num_attention_heads=9 (ratio 3:1); GQA requires format change (n_kv_heads in att1_model_config), converter change, and runtime attention change (M68)
-compat: fail
+warning: GQA: num_key_value_heads=3, num_attention_heads=9 (ratio 3:1); converter expands K/V projection heads to legacy ATT-1 MHA-shaped tensors
+compat: pass
 ```
 
-## Artifact Decision
+## GQA Import Decision
 
-No f32 or q8 `.att1` artifacts were emitted for this model. Forcing conversion
-would create an artifact that the current runtime cannot interpret correctly:
-the current ATT-1 model configuration stores `n_heads`, but does not store
-`n_kv_heads`, and the runtime attention path assumes full multi-head K/V
-projection rather than grouped-query attention.
+SmolLM2-135M uses grouped-query attention: 9 query heads and 3 K/V heads. The
+current v1/v2 `.att1` model configuration stores `n_heads`, but does not store
+`n_kv_heads`, and the runtime attention path stores one K/V vector per query
+head.
 
-The correct next implementation step is GQA support, not artifact generation.
+For this M175 artifact delivery, the converter expands each grouped K/V
+projection head into the legacy full-head layout. This preserves the existing
+`.att1` binary format and runtime while trading additional K/V weight storage
+for a directly loadable artifact:
 
-Required work:
+- source K/V shape: `[192,576]`
+- emitted K/V shape: `[576,576]`
+- expansion: each source K/V head is repeated across its three query heads
 
-1. Extend the `.att1` model configuration in a versioned way so it can represent
-   `n_kv_heads` without breaking older fixtures.
-2. Update the LLaMA converter to emit K/V tensor metadata and weights using the
-   source model's grouped-query shapes.
-3. Update runtime attention and KV-cache handling so query heads map onto the
-   smaller K/V head set.
-4. Add source-comparison and two-tile validation coverage for a GQA model before
-   recording M171/M172 green-packet reports.
+Native `n_kv_heads` in the `.att1` format remains a future efficiency
+improvement, not a blocker for this local M175 artifact.
 
-Until that work lands, M175 remains HOLD and the green packet cannot honestly
-pass for SmolLM2-135M.
+## Local Artifacts
+
+| Artifact | Path | Size | SHA-256 |
+|---|---|---:|---|
+| f32 reference | `~/Models/att1/SmolLM2-135M/model_f32.att1` | 672 MB | `a0311864fbc541c0f45d27820ad617fcfab17ba3700fa3134863c20998885532` |
+| q8 primary | `~/Models/att1/SmolLM2-135M/model_q8.att1` | 250 MB | `6dc72ed5d72805446580ea667e30b09c5d10b06811bfedeb14f5d024fe175e84` |
+| f32 report | `~/Models/att1/SmolLM2-135M/model_f32_report.json` | local | n/a |
+| q8 report | `~/Models/att1/SmolLM2-135M/model_q8_report.json` | local | n/a |
+| f32 source compare | `~/Models/att1/SmolLM2-135M/source_compare_f32_report.json` | local | n/a |
+
+Both artifacts were emitted with `--tiles 2 --shard-meta`.
+
+## Validation
+
+`att1-inspect` loads both artifacts successfully:
+
+```text
+vocab_size=49152
+n_layers=30
+n_heads=9
+d_model=576
+d_ff=1536
+max_seq_len=8192
+rope_dim=64
+n_tiles=2
+tensor_count=273
+shard_meta_plan_matching=30
+shard_meta_plan_mismatch=0
+```
+
+The f32 static source comparison checks all 273 mapped tensors and reports exact
+agreement after GQA expansion:
+
+```text
+f32_tensors_checked: 273
+f32_max_abs_error:   0.000e+00
+f32_max_rel_error:   0.000e+00
+result:              pass
+```
+
+The optional Python forward path in `compare_att1_to_source.py` is not yet
+updated for the expanded legacy-GQA representation and reports a reshape error
+after the static comparison succeeds. That is not an artifact-loader failure.
+
+## Remaining M175 Work
+
+The `.att1` f32/q8 artifacts now exist. The M175 green packet still requires a
+long-context token file, placement report, route report, host-access decision,
+minimum FPGA scope note, and trace packet before
+`compiler/run_m175_green_packet.py` can honestly produce a passing manifest.

@@ -183,15 +183,17 @@ def _build_plan(cfg):
                 "source": f"{src}.self_attn.k_proj.weight",
                 "target": f"{dst}.attention.wk.weight",
                 "source_shape": [kv_dim, d],
-                "target_shape": [d, kv_dim],
+                "target_shape": [d, d],
                 "transpose": True,
+                "gqa_expand": n_kv_heads != n_heads,
             },
             {
                 "source": f"{src}.self_attn.v_proj.weight",
                 "target": f"{dst}.attention.wv.weight",
                 "source_shape": [kv_dim, d],
-                "target_shape": [d, kv_dim],
+                "target_shape": [d, d],
                 "transpose": True,
+                "gqa_expand": n_kv_heads != n_heads,
             },
             {
                 "source": f"{src}.self_attn.o_proj.weight",
@@ -257,6 +259,38 @@ def _transpose_2d(values, rows, cols):
     return result
 
 
+def _expand_gqa_projection(values, source_rows, source_cols, n_heads, n_kv_heads):
+    if n_kv_heads == n_heads:
+        return _transpose_2d(values, source_rows, source_cols)
+    if n_kv_heads <= 0 or n_heads <= 0 or n_heads % n_kv_heads != 0:
+        raise ValueError(
+            f"unsupported GQA shape: n_heads={n_heads}, n_kv_heads={n_kv_heads}"
+        )
+    if source_rows % n_kv_heads != 0:
+        raise ValueError(
+            f"GQA source rows {source_rows} not divisible by n_kv_heads {n_kv_heads}"
+        )
+
+    head_dim = source_rows // n_kv_heads
+    d_model = source_cols
+    if d_model != n_heads * head_dim:
+        raise ValueError(
+            f"GQA dimensions inconsistent: d_model={d_model}, "
+            f"n_heads={n_heads}, head_dim={head_dim}"
+        )
+
+    kv_group = n_heads // n_kv_heads
+    expanded = [0.0] * (d_model * d_model)
+    for in_col in range(d_model):
+        for q_head in range(n_heads):
+            kv_head = q_head // kv_group
+            for i in range(head_dim):
+                src_row = kv_head * head_dim + i
+                dst_col = q_head * head_dim + i
+                expanded[in_col * d_model + dst_col] = values[src_row * d_model + in_col]
+    return expanded
+
+
 # ---------------------------------------------------------------------------
 # Static tensor comparison
 # ---------------------------------------------------------------------------
@@ -296,7 +330,19 @@ def _compare_static(safetensors_path, att1_model, cfg_dict, verbose):
                 return 0, 0.0, 0.0, [], f"source tensor {src_name!r} not found"
 
         # Apply expected transpose to get ATT-1 layout.
-        if transpose:
+        if item.get("gqa_expand"):
+            s_rows, s_cols = item["source_shape"]
+            try:
+                src_vals = tuple(_expand_gqa_projection(
+                    list(src_vals),
+                    s_rows,
+                    s_cols,
+                    cfg_dict["n_heads"],
+                    cfg_dict.get("n_kv_heads", cfg_dict["n_heads"]),
+                ))
+            except ValueError as exc:
+                return 0, 0.0, 0.0, [], str(exc)
+        elif transpose:
             s_rows, s_cols = item["source_shape"]
             src_vals = tuple(_transpose_2d(list(src_vals), s_rows, s_cols))
 

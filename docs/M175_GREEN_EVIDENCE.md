@@ -69,17 +69,17 @@ The runner writes:
 
 ## Current State
 
-The source model has been cloned locally and the first artifact-readiness scan
-has been recorded in [M175_SMOLLM2_ARTIFACT_RECORD.md](M175_SMOLLM2_ARTIFACT_RECORD.md).
-The source safetensors file scans cleanly, but SmolLM2-135M uses grouped-query
-attention (`num_attention_heads=9`, `num_key_value_heads=3`). The current
-`.att1` model configuration, converter, runtime attention path, and KV-cache
-handling do not yet represent `n_kv_heads`, so converted f32/q8 `.att1`
-artifacts were not emitted.
+The source model has been cloned locally and f32/q8 artifacts have been emitted
+under `~/Models/att1/SmolLM2-135M`. See
+[M175_SMOLLM2_ARTIFACT_RECORD.md](M175_SMOLLM2_ARTIFACT_RECORD.md). SmolLM2-135M
+uses grouped-query attention (`num_attention_heads=9`,
+`num_key_value_heads=3`); the converter expands the grouped K/V projection
+heads into legacy full-head `.att1` tensors so the existing v1/v2 format and
+runtime can load the artifacts without a format break.
 
-Until GQA support exists, those artifacts and the three decision/trace notes
-exist, and the runner produces a passing manifest, the green packet cannot pass
-honestly.
+The green packet still cannot pass honestly until the long-context token file,
+placement report, route report, host-access decision, minimum FPGA scope note,
+and trace packet exist and the runner produces a passing manifest.
 
 ## Gate Rule
 

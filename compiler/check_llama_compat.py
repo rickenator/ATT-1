@@ -230,11 +230,10 @@ def check_architecture(raw_cfg: dict) -> tuple[str, list, list]:
         n_q  = int(n_heads)
         if n_kv != n_q:
             ratio = n_q // n_kv if n_kv > 0 else "?"
-            changes.append(
+            warnings.append(
                 f"GQA: num_key_value_heads={n_kv}, num_attention_heads={n_q} "
-                f"(ratio {ratio}:1); GQA requires format change (n_kv_heads "
-                f"in att1_model_config), converter change, and runtime "
-                f"attention change (M68)"
+                f"(ratio {ratio}:1); converter expands K/V projection heads "
+                f"to legacy ATT-1 MHA-shaped tensors"
             )
             gqa_detected = True
         else:

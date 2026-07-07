@@ -87,6 +87,7 @@ FIELD_ALIASES = {
     "vocab_size":   ["vocab_size"],
     "n_layers":     ["n_layers", "num_hidden_layers"],
     "n_heads":      ["n_heads", "num_attention_heads"],
+    "n_kv_heads":   ["n_kv_heads", "num_key_value_heads"],
     "d_model":      ["d_model", "hidden_size"],
     "d_ff":         ["d_ff", "intermediate_size"],
     "max_seq_len":  ["max_seq_len", "max_position_embeddings"],
@@ -139,9 +140,11 @@ def resolve_att1_config(cfg: dict, rope_theta_override: float | None) -> dict:
     missing = []
 
     for att1_key, aliases in FIELD_ALIASES.items():
-        val = _resolve(cfg, aliases)
+        required = att1_key != "n_kv_heads"
+        val = _resolve(cfg, aliases, required=required)
         if val is None:
-            missing.append(f"{att1_key} (looked for: {aliases})")
+            if required:
+                missing.append(f"{att1_key} (looked for: {aliases})")
         else:
             att1[att1_key] = int(val)
 
@@ -150,6 +153,9 @@ def resolve_att1_config(cfg: dict, rope_theta_override: float | None) -> dict:
         for m in missing:
             print(f"  {m}", file=sys.stderr)
         sys.exit(1)
+
+    if "n_kv_heads" not in att1:
+        att1["n_kv_heads"] = att1["n_heads"]
 
     # --- rope_theta ---
     if rope_theta_override is not None:
@@ -180,11 +186,18 @@ def validate_att1_config(att1: dict) -> list[str]:
     errors = []
     d_model  = att1["d_model"]
     n_heads  = att1["n_heads"]
+    n_kv_heads = att1.get("n_kv_heads", n_heads)
     rope_dim = att1["rope_dim"]
 
     if d_model % n_heads != 0:
         errors.append(
             f"d_model ({d_model}) must be divisible by n_heads ({n_heads})"
+        )
+    if n_kv_heads <= 0:
+        errors.append(f"n_kv_heads must be > 0 (got {n_kv_heads!r})")
+    elif n_heads % n_kv_heads != 0:
+        errors.append(
+            f"n_heads ({n_heads}) must be divisible by n_kv_heads ({n_kv_heads})"
         )
     head_dim = d_model // n_heads
     if rope_dim > head_dim:
@@ -208,12 +221,15 @@ def print_plan(arch: str, att1: dict, output_path: str | None,
     print(f"  vocab_size    : {att1['vocab_size']}")
     print(f"  n_layers      : {att1['n_layers']}")
     print(f"  n_heads       : {att1['n_heads']}")
+    print(f"  n_kv_heads    : {att1.get('n_kv_heads', att1['n_heads'])}")
     print(f"  d_model       : {att1['d_model']}")
     print(f"  d_ff          : {att1['d_ff']}")
     print(f"  max_seq_len   : {att1['max_seq_len']}")
     print(f"  rope_dim      : {att1['rope_dim']}")
     print(f"  rope_theta    : {att1['rope_theta']}")
     print(f"  head_dim      : {att1['d_model'] // att1['n_heads']}")
+    if att1.get("n_kv_heads", att1["n_heads"]) != att1["n_heads"]:
+        print("  gqa_import    : expand K/V heads to legacy ATT-1 MHA tensors")
     print(f"  n_tiles       : {att1['n_tiles']}")
     print(f"  shard_meta    : {'yes' if emit_shard_meta else 'no'}")
     n_tensors = 3 + att1["n_layers"] * 9  # tok_embed + 9/layer + output_norm + output_weight
@@ -267,6 +283,47 @@ def _tensor_from_values(name: str, shape: list[int], values) -> dict:
 
 def _transpose_2d(values, rows: int, cols: int) -> list[float]:
     return [values[(r * cols) + c] for c in range(cols) for r in range(rows)]
+
+
+def _expand_gqa_projection(values, source_rows: int, source_cols: int,
+                           n_heads: int, n_kv_heads: int) -> list[float]:
+    """Convert source [n_kv_heads * head_dim, d_model] to ATT-1 [d_model, d_model].
+
+    The existing v1/v2 ATT-1 runtime stores one K/V vector per query head.  GQA
+    source models store fewer K/V projection heads and share each K/V head
+    across a group of query heads.  This expansion repeats each K/V projection
+    head for the query heads in its group, preserving runtime behavior without
+    changing the binary model format.
+    """
+    if n_kv_heads == n_heads:
+        return _transpose_2d(values, source_rows, source_cols)
+    if n_kv_heads <= 0 or n_heads <= 0 or n_heads % n_kv_heads != 0:
+        raise ValueError(
+            f"unsupported GQA shape: n_heads={n_heads}, n_kv_heads={n_kv_heads}"
+        )
+    if source_rows % n_kv_heads != 0:
+        raise ValueError(
+            f"GQA source rows {source_rows} not divisible by n_kv_heads {n_kv_heads}"
+        )
+
+    head_dim = source_rows // n_kv_heads
+    d_model = source_cols
+    if d_model != n_heads * head_dim:
+        raise ValueError(
+            f"GQA dimensions inconsistent: d_model={d_model}, "
+            f"n_heads={n_heads}, head_dim={head_dim}"
+        )
+
+    kv_group = n_heads // n_kv_heads
+    expanded = [0.0] * (d_model * d_model)
+    for in_col in range(d_model):
+        for q_head in range(n_heads):
+            kv_head = q_head // kv_group
+            for i in range(head_dim):
+                src_row = kv_head * head_dim + i
+                dst_col = q_head * head_dim + i
+                expanded[in_col * d_model + dst_col] = values[src_row * d_model + in_col]
+    return expanded
 
 
 def _round_away_from_zero(value: float) -> int:
@@ -810,6 +867,10 @@ def llama_source_tensor_plan(att1: dict) -> list[dict]:
     d  = att1["d_model"]
     v  = att1["vocab_size"]
     ff = att1["d_ff"]
+    n_heads = att1["n_heads"]
+    n_kv_heads = att1.get("n_kv_heads", n_heads)
+    head_dim = d // n_heads
+    kv_dim = n_kv_heads * head_dim
 
     plan: list[dict] = [{
         "source": "model.embed_tokens.weight",
@@ -840,16 +901,18 @@ def llama_source_tensor_plan(att1: dict) -> list[dict]:
             {
                 "source": f"{src}.self_attn.k_proj.weight",
                 "target": f"{dst}.attention.wk.weight",
-                "source_shape": [d, d],
+                "source_shape": [kv_dim, d],
                 "target_shape": [d, d],
                 "transpose": True,
+                "gqa_expand": n_kv_heads != n_heads,
             },
             {
                 "source": f"{src}.self_attn.v_proj.weight",
                 "target": f"{dst}.attention.wv.weight",
-                "source_shape": [d, d],
+                "source_shape": [kv_dim, d],
                 "target_shape": [d, d],
                 "transpose": True,
+                "gqa_expand": n_kv_heads != n_heads,
             },
             {
                 "source": f"{src}.self_attn.o_proj.weight",
@@ -939,7 +1002,16 @@ def build_real_f32_tensors(att1: dict, safetensors_path: str) -> list[dict]:
             )
 
         values = td.values
-        if item["transpose"]:
+        if item.get("gqa_expand"):
+            rows, cols = item["source_shape"]
+            values = _expand_gqa_projection(
+                list(values),
+                rows,
+                cols,
+                att1["n_heads"],
+                att1.get("n_kv_heads", att1["n_heads"]),
+            )
+        elif item["transpose"]:
             rows, cols = item["source_shape"]
             values = _transpose_2d(values, rows, cols)
 
