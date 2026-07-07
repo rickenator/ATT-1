@@ -2358,6 +2358,142 @@ static int check_m171_two_tile_smoke(void)
 }
 
 /*
+ * M172 beachhead workload baseline smoke.
+ *
+ * Exercises the deterministic q8 two-tile cluster metrics harness on the
+ * checked-in tiny fixture. Real M172 public-model runs should use a longer
+ * prompt and external artifacts; --allow-tiny-fixture is required here so the
+ * smoke test cannot be mistaken for the real beachhead workload.
+ */
+static int check_m172_beachhead_smoke(void)
+{
+    char output[32768];
+
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    {
+        FILE *fp = fopen("build/m172_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("m172_beachhead_smoke: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n4\n5\n6\n7\n8\n", fp);
+        fclose(fp);
+    }
+
+    if (run_command(
+            "python3 compiler/validate_m172_beachhead.py"
+            " --att1-q8 models/real_tiny_q8/model.att1"
+            " --tokens-file build/m172_ids.txt"
+            " --tokens 2 --tiles 2 --runs 2"
+            " --min-prompt-tokens 8"
+            " --max-jitter-pct 100000"
+            " --dollars-per-hour 2.50"
+            " --cuda-baseline-us-per-token 100"
+            " --cuda-dollars-per-hour 1.50"
+            " --allow-tiny-fixture"
+            " --report-json build/m172_beachhead_report.json"
+            " > build/m172_beachhead_report.txt 2>&1") != 0) {
+        fputs("m172_beachhead_smoke: validation script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m172_beachhead_report.txt", output, sizeof(output)) != 0) {
+        fputs("m172_beachhead_smoke: cannot read report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "# ATT-1 M172 beachhead baseline") == NULL) ||
+        (strstr(output, "backend=cpu-q8 mode=cluster") == NULL) ||
+        (strstr(output, "latency_us_per_token_avg:") == NULL) ||
+        (strstr(output, "latency_jitter_pct:") == NULL) ||
+        (strstr(output, "memory_movement_bytes_per_token_avg:") == NULL) ||
+        (strstr(output, "kv_ops_per_token_avg:") == NULL) ||
+        (strstr(output, "cost_per_million_tokens_usd:") == NULL) ||
+        (strstr(output, "latency_vs_cuda_baseline_ratio:") == NULL) ||
+        (strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok") == NULL)) {
+        fputs("m172_beachhead_smoke: report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m172_beachhead_report.json", output, sizeof(output)) != 0) {
+        fputs("m172_beachhead_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"m172_beachhead_report_version\": 1") == NULL) ||
+        (strstr(output, "\"metric_definitions\"") == NULL) ||
+        (strstr(output, "\"latency_jitter_pct\"") == NULL) ||
+        (strstr(output, "\"memory_movement_bytes_per_token_avg\"") == NULL) ||
+        (strstr(output, "\"result\": \"pass\"") == NULL)) {
+        fputs("m172_beachhead_smoke: JSON report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * M173 placement/capacity budget smoke.
+ *
+ * Uses the stable M98/M100 placement fixture and validates the fixed Phase 2
+ * per-tile envelopes (256 MiB, 512 MiB, 1024 MiB) plus the KV page-size
+ * decision artifact. Real M173 evidence should feed this tool a placement
+ * report generated from the selected external model artifact.
+ */
+static int check_m173_capacity_smoke(void)
+{
+    char output[32768];
+
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    if (run_command(
+            "python3 compiler/validate_m173_capacity.py"
+            " --report compiler/fixtures/placement_report_valid.json"
+            " --context 2048 --sessions 1"
+            " --budgets-mib 256,512,1024"
+            " --require-pass-budget-mib 256"
+            " --report-json build/m173_capacity_report.json"
+            " > build/m173_capacity_report.txt 2>&1") != 0) {
+        fputs("m173_capacity_smoke: validation script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m173_capacity_report.txt", output, sizeof(output)) != 0) {
+        fputs("m173_capacity_smoke: cannot read report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "# ATT-1 M173 capacity validation") == NULL) ||
+        (strstr(output, "budget_mib=256 status=PASS") == NULL) ||
+        (strstr(output, "budget_mib=512 status=PASS") == NULL) ||
+        (strstr(output, "budget_mib=1024 status=PASS") == NULL) ||
+        (strstr(output, "selected_page_tokens: 16") == NULL) ||
+        (strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok") == NULL)) {
+        fputs("m173_capacity_smoke: report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m173_capacity_report.json", output, sizeof(output)) != 0) {
+        fputs("m173_capacity_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"m173_capacity_report_version\": 1") == NULL) ||
+        (strstr(output, "\"pass_budgets_mib\"") == NULL) ||
+        (strstr(output, "\"selected_page_tokens\": 16") == NULL) ||
+        (strstr(output, "\"required_pass_budget_mib\": 256") == NULL) ||
+        (strstr(output, "\"result\": \"pass\"") == NULL)) {
+        fputs("m173_capacity_smoke: JSON report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * check_public_tokenized_validation() - M71
  *
  * Python-skippable.  When tokenizers or transformers is available, validates
@@ -4412,6 +4548,8 @@ int main(void)
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
         (check_m171_two_tile_smoke()      != 0) ||
+        (check_m172_beachhead_smoke()     != 0) ||
+        (check_m173_capacity_smoke()      != 0) ||
         (check_scaling_report()           != 0) ||
         (check_tile_capacity_smoke()      != 0) ||
         (check_placement_validator_smoke() != 0) ||

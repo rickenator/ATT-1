@@ -213,6 +213,18 @@ must report fabric and KV activity. Public model weights and generated
 public `.att1` artifacts remain external; `tests/test_bench_smoke.c` covers
 the harness with checked-in tiny fixtures via `--allow-tiny-fixture`.
 
+`compiler/validate_m172_beachhead.py` (M172) is the deterministic beachhead
+metrics harness. It repeatedly runs a q8 two-tile cluster decode workload and
+publishes latency stability, memory movement per token, KV pressure, fabric
+packets per token, and optional cost-per-million-token comparison against a
+CUDA baseline.
+
+`compiler/validate_m173_capacity.py` (M173) is the Phase 2 placement/capacity
+gate for M175. It evaluates M98/M100 placement reports against 256 MiB,
+512 MiB, and 1024 MiB per-tile memory budgets, scales KV by target context and
+session count, emits a JSON decision artifact, and records the current KV
+page-size decision as 16 tokens for the f32 KV model.
+
 ---
 
 ## Reference Manuals

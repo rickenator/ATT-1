@@ -509,19 +509,48 @@ device.
   `tests/test_bench_smoke.c` so CI covers the validation flow without adding
   public model artifacts.
 
-**M172: Beachhead workload definition and baseline metrics (M153 items 1–2)**
+**M172: Beachhead workload definition and baseline metrics (M153 items 1–2)** —
+*complete;
+[`compiler/validate_m172_beachhead.py`](../compiler/validate_m172_beachhead.py),
+[`tests/test_bench_smoke.c`](../tests/test_bench_smoke.c).*
 
-- Define the long-context, bandwidth-bound, high-KV-pressure decode
-  workload; publish hard success metrics: memory movement, latency
-  stability, cost-per-token vs. the CUDA baseline from M155. Deterministic,
-  reproducible benchmark harness.
+- Added `validate_m172_beachhead.py`, a deterministic q8 two-tile cluster
+  baseline harness. It consumes local q8 `.att1` artifacts and local token ID
+  files only, runs `att1-bench --mode cluster --tiles 2 --backend cpu-q8`
+  repeatedly, and rejects non-two-tile runs.
+- The report defines hard metrics for the M175 path: latency per generated
+  token, run-to-run latency jitter, memory movement per generated token
+  (activation bytes, logits bytes, fabric payload bytes sent/received), KV ops
+  per generated token, fabric packets per token, optional cost per million
+  tokens, and optional ratio against a supplied CUDA baseline from M155.
+- Real M172 runs require a long prompt (`--min-prompt-tokens >= 128` by
+  default). The checked-in tiny fixture path is accepted only with explicit
+  `--allow-tiny-fixture`, used by `tests/test_bench_smoke.c` so CI covers the
+  harness without adding public model artifacts.
 
-**M173: Placement and capacity validation at Phase 2 memory envelopes**
+**M173: Placement and capacity validation at Phase 2 memory envelopes** —
+*complete;
+[`compiler/validate_m173_capacity.py`](../compiler/validate_m173_capacity.py),
+[`tests/test_bench_smoke.c`](../tests/test_bench_smoke.c).*
 
-- Run placement scenarios against the M93 §8.6 device budgets
-  (256 MB / 512 MB / 1 GB) and the KV math (≈300 MB for 2048-token f32 KV);
-  confirm feasible-placement signals for the prototype configurations.
-  Resolve open question M93 §8.15-2 (KV page size) empirically.
+- Added `validate_m173_capacity.py`, a placement-report capacity gate for the
+  M175 decision path. It consumes an M98/M100 placement report, evaluates the
+  fixed Phase 2 per-tile memory envelopes (256 MiB, 512 MiB, 1024 MiB), scales
+  KV capacity by target context length and session count, and emits text plus
+  `m173_capacity_report_version=1` JSON.
+- The default success rule is "at least one evaluated budget is PASS"; callers
+  can tighten that with `--require-pass-budget-mib`. This lets the report show
+  intentional 256 MiB failures without hiding 512 MiB / 1 GiB feasibility from
+  the gate review.
+- M93 §8.15-2 is resolved for the current f32 KV model as a 16-token KV page.
+  The validator scores candidate page sizes by page bytes, pages per layer per
+  session, and worst-case tail waste; under the current default candidate set
+  (16/32/64/128 tokens) and 256 KiB page-size ceiling, 16 tokens is the
+  selected page size. This is a software planning decision, not a physical SRAM
+  proof.
+- `tests/test_bench_smoke.c` covers the gate on the checked-in placement
+  fixture, requiring all three tiny-fixture budgets to PASS and the JSON report
+  to record the 16-token page decision.
 
 **M174: Activation precision study (open question M93 §8.15-3)**
 
