@@ -72,7 +72,6 @@ in `docs/` unless noted otherwise.
 | [comps.md](comps.md) | Architectural comparisons to NVIDIA (Blackwell/Rubin), Apple M4 Neural Engine, and production GPU/TPU/ANE systems (M154 context) |
 | [fpga_feasibility.md](fpga_feasibility.md) | FPGA feasibility notes: scope, non-goal status, reference only |
 | [phase3_bom_board_options.md](phase3_bom_board_options.md) | Phase 3 BOM and board options: reference exploration for future hardware |
-| [future_memory_tiers.md](future_memory_tiers.md) | Future hardware note: sequential flash/DRAM/HBM memory tiers for AIMU inference |
 
 ---
 
@@ -224,6 +223,12 @@ gate for M175. It evaluates M98/M100 placement reports against 256 MiB,
 512 MiB, and 1024 MiB per-tile memory budgets, scales KV by target context and
 session count, emits a JSON decision artifact, and records the current KV
 page-size decision as 16 tokens for the f32 KV model.
+
+`compiler/validate_m174_activation_precision.py` (M174) is the activation
+precision study for M175. It compares f32 and bf16 inter-tile activation
+payloads from fabric route reports, measures deterministic bf16 round-trip
+error, and records the current decision to use bf16 activation payloads for the
+Phase 2 prototype planning path while keeping f32 as the reference precision.
 
 ---
 

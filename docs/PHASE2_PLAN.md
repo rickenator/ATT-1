@@ -552,11 +552,28 @@ device.
   fixture, requiring all three tiny-fixture budgets to PASS and the JSON report
   to record the 16-token page decision.
 
-**M174: Activation precision study (open question M93 §8.15-3)**
+**M174: Activation precision study (open question M93 §8.15-3)** —
+*complete;
+[`compiler/validate_m174_activation_precision.py`](../compiler/validate_m174_activation_precision.py),
+[`tests/test_bench_smoke.c`](../tests/test_bench_smoke.c),
+[`aimu_fabric_routing.md`](aimu_fabric_routing.md).*
 
-- Measure f32 vs. bf16 inter-tile activation packets: fabric bandwidth
-  savings vs. q8/q4 tolerance impact. Decision recorded in the fabric spec
-  (as a versioned amendment if adopted).
+- Added `validate_m174_activation_precision.py`, a deterministic f32-vs-bf16
+  activation-packet study for the M175 decision path. It consumes an M115/M117
+  fabric route report, isolates activation routes, compares f32 and bf16
+  payload/wire bytes, and runs a deterministic bf16 round-trip error study over
+  representative activation values.
+- The tiny route fixture shows 50.0% activation-payload savings and 40.0%
+  wire-byte savings after 64-byte packet overhead; deterministic sample
+  round-trip error is below the default thresholds (`max_abs_error <= 0.02`,
+  `rms_abs_error <= 0.004`), selecting `bf16` for Phase 2 prototype activation
+  payload planning.
+- M93 §8.15-3 is resolved as: f32 remains the reference and diagnostic
+  activation precision, while bf16 is acceptable for inter-tile activation
+  payloads when the M174 report passes. This is recorded in
+  `docs/aimu_fabric_routing.md` as an additive v1.0-compatible amendment:
+  existing `payload_bytes` remains the encoded byte count and no frozen route
+  field is renamed.
 
 ---
 

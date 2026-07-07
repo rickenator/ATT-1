@@ -690,6 +690,7 @@ packages are required for the planning pipeline tools.
 | `validate_m171_two_tile.py` | Validate M171 q8/f32 local artifacts through the two-tile cluster path | `--model-dir`, `--att1-f32`, `--att1-q8`, `--tokens-file`, `--tiles 2`, `--report-json` |
 | `validate_m172_beachhead.py` | Run the M172 deterministic q8 two-tile beachhead baseline | `--att1-q8`, `--tokens-file`, `--runs`, `--min-prompt-tokens`, `--cuda-baseline-us-per-token`, `--report-json` |
 | `validate_m173_capacity.py` | Validate M173 256/512/1024 MiB placement capacity budgets and KV page-size decision | `--report`, `--context`, `--sessions`, `--budgets-mib`, `--require-pass-budget-mib`, `--report-json` |
+| `validate_m174_activation_precision.py` | Study M174 f32-vs-bf16 inter-tile activation payload savings and error | `--route-report`, `--sample-count`, `--min-payload-savings-percent`, `--max-abs-error`, `--report-json` |
 | `map_execution_plan_to_commands.py` | Execution plan → command plan | `--plan`, `--plan-json`, `--strict` |
 | `map_commands_to_fabric_routes.py` | Command plan → fabric route report | `--plan`, `--report-json` |
 | `validate_fabric_routes.py` | Validate M115 fabric route report | `--report`, `--strict`, `--report-json` |

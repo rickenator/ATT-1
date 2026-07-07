@@ -51,9 +51,12 @@ tile boundaries during a decode iteration.  Everything else stays local.
 | Activation scratchpad | Intermediate activation buffers (post-RMSNorm, post-RoPE, pre-FFN) allocated from tile-local staging |
 | Local op output buffers | Results of `EXEC_RMSNORM`, `EXEC_ROPE`, `EXEC_ATTENTION` before the next fabric send |
 
-The fabric carries `d_model × sizeof(f32)` bytes per activation crossing — on
-the order of 512 B to 16 KiB depending on model size.  It does not carry weight
-data after initial load.
+The f32 reference fabric model carries `d_model × sizeof(f32)` bytes per
+activation crossing — on the order of 512 B to 16 KiB depending on model size.
+As of M174, the Phase 2 prototype planning path may encode inter-tile
+activation payloads as bf16 when the M174 activation-precision report passes;
+`payload_bytes` remains the encoded byte count for the selected precision.
+The fabric does not carry weight data after initial load.
 
 ---
 
@@ -1568,6 +1571,25 @@ incompatible change:
      already-defined §2/§3 route metadata; it only resolves the previously
      reserved implementation choice behind the existing `TILE_BARRIER`
      semantics.
+
+**Resolution of M93 §8.15-3 (activation precision, M174):**
+
+- v1.0 keeps f32 as the reference and diagnostic activation precision, but the
+  Phase 2 prototype planning path may use **bf16 inter-tile activation
+  payloads** when `compiler/validate_m174_activation_precision.py` passes for
+  the route report being evaluated.
+- The M174 gate compares f32 and bf16 activation payload sizes from M115/M117
+  route metadata and runs a deterministic bf16 round-trip error study over
+  representative activation values. The checked-in tiny route fixture shows
+  50.0% activation-payload savings and 40.0% wire-byte savings after packet
+  overhead, with max absolute round-trip error below the configured q8/q4
+  credibility margins.
+- This is an additive v1.0-compatible decision: no frozen route field is
+  renamed or retyped. `payload_type=activation` keeps its meaning, and
+  `payload_bytes` continues to mean the actual encoded payload bytes carried by
+  the route. If a future schema adds an explicit per-route precision field, that
+  is a minor additive extension provided older consumers can still rely on
+  `payload_bytes`.
 
 **Version bump rules** (mirrors M157 §1.6 / M158 §1.5 / M159 §15.7):
 

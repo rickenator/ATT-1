@@ -2494,6 +2494,71 @@ static int check_m173_capacity_smoke(void)
 }
 
 /*
+ * M174 activation precision smoke.
+ *
+ * Validates the f32-vs-bf16 inter-tile activation packet study on the stable
+ * fabric route fixture. This is a deterministic planning check: it estimates
+ * wire-byte savings from route metadata and bf16 numeric impact from synthetic
+ * activation samples.
+ */
+static int check_m174_activation_precision_smoke(void)
+{
+    char output[32768];
+
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    if (run_command(
+            "python3 compiler/validate_m174_activation_precision.py"
+            " --route-report compiler/fixtures/fabric_route_report_tiny.json"
+            " --sample-count 1024"
+            " --report-json build/m174_activation_precision_report.json"
+            " > build/m174_activation_precision_report.txt 2>&1") != 0) {
+        fputs("m174_activation_precision_smoke: validation script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m174_activation_precision_report.txt",
+                  output,
+                  sizeof(output)) != 0) {
+        fputs("m174_activation_precision_smoke: cannot read report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "# ATT-1 M174 activation precision study") == NULL) ||
+        (strstr(output, "activation_route_count: 2") == NULL) ||
+        (strstr(output, "f32_activation_payload_bytes_per_token: 512") == NULL) ||
+        (strstr(output, "bf16_activation_payload_bytes_per_token: 256") == NULL) ||
+        (strstr(output, "payload_savings_percent: 50.000") == NULL) ||
+        (strstr(output, "selected_activation_precision: bf16") == NULL) ||
+        (strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok") == NULL)) {
+        fputs("m174_activation_precision_smoke: report missing expected fields\n",
+              stderr);
+        return -1;
+    }
+
+    if (read_file("build/m174_activation_precision_report.json",
+                  output,
+                  sizeof(output)) != 0) {
+        fputs("m174_activation_precision_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output,
+                "\"m174_activation_precision_report_version\": 1") == NULL) ||
+        (strstr(output, "\"selected_activation_precision\": \"bf16\"") == NULL) ||
+        (strstr(output, "\"payload_savings_percent\": 50.0") == NULL) ||
+        (strstr(output, "\"max_abs_error\"") == NULL) ||
+        (strstr(output, "\"result\": \"pass\"") == NULL)) {
+        fputs("m174_activation_precision_smoke: JSON report missing expected fields\n",
+              stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * check_public_tokenized_validation() - M71
  *
  * Python-skippable.  When tokenizers or transformers is available, validates
@@ -4550,6 +4615,7 @@ int main(void)
         (check_m171_two_tile_smoke()      != 0) ||
         (check_m172_beachhead_smoke()     != 0) ||
         (check_m173_capacity_smoke()      != 0) ||
+        (check_m174_activation_precision_smoke() != 0) ||
         (check_scaling_report()           != 0) ||
         (check_tile_capacity_smoke()      != 0) ||
         (check_placement_validator_smoke() != 0) ||
