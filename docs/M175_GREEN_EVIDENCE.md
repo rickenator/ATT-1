@@ -69,9 +69,17 @@ The runner writes:
 
 ## Current State
 
-The source model has been cloned locally, but converted f32/q8 `.att1`
-artifacts have not yet been recorded. Until those artifacts and the three
-decision/trace notes exist, the green packet cannot pass honestly.
+The source model has been cloned locally and the first artifact-readiness scan
+has been recorded in [M175_SMOLLM2_ARTIFACT_RECORD.md](M175_SMOLLM2_ARTIFACT_RECORD.md).
+The source safetensors file scans cleanly, but SmolLM2-135M uses grouped-query
+attention (`num_attention_heads=9`, `num_key_value_heads=3`). The current
+`.att1` model configuration, converter, runtime attention path, and KV-cache
+handling do not yet represent `n_kv_heads`, so converted f32/q8 `.att1`
+artifacts were not emitted.
+
+Until GQA support exists, those artifacts and the three decision/trace notes
+exist, and the runner produces a passing manifest, the green packet cannot pass
+honestly.
 
 ## Gate Rule
 
