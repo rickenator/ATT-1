@@ -469,18 +469,45 @@ device.
 
 ## 6. Stage 3 — Performance Model Calibration and Real-Model Scale
 
-**M170: Measured transport characterization**
+**M170: Measured transport characterization** — *complete;
+[`tools/att1-aimu-transport-bench.c`](../tools/att1-aimu-transport-bench.c),
+[`tests/test_aimu_transport_bench.c`](../tests/test_aimu_transport_bench.c).*
 
-- Measure latency/bandwidth of the emulated transport per packet class;
-  calibrate the M118 fabric bandwidth/latency simulator against measured
-  numbers so the model has an empirical anchor before hardware.
+- Added `att1-aimu-transport-bench`, a C11 benchmark that spawns the M162
+  `att1-aimu-endpoint` daemon and measures the socket-backed M161 conformance
+  transport through MMIO read, NOP command submit/dispatch/poll, fabric
+  send/receive, and KV append/read paths.
+- The tool prints a human-readable report and can emit JSON with
+  `m118_calibration.base_latency_ns`,
+  `m118_calibration.per_hop_latency_ns`, and
+  `m118_calibration.fabric_gib_sec`, giving the M118 fabric bandwidth/latency
+  simulator empirical host/process/socket anchors before hardware.
+- The numbers are characterization of the current userspace Unix-domain-socket
+  emulator path, not PCIe or FPGA measurements.
+- `tests/test_aimu_transport_bench.c` exercises the tool as a subprocess and
+  validates that the JSON report contains the expected benchmark and
+  calibration sections.
 
-**M171: Real small-model end-to-end (SmolLM2-135M class)**
+**M171: Real small-model end-to-end (SmolLM2-135M class)** — *complete;
+[`compiler/validate_m171_two_tile.py`](../compiler/validate_m171_two_tile.py),
+[`tests/test_bench_smoke.c`](../tests/test_bench_smoke.c).*
 
-- Convert and run a real ~135M model through the emulated two-tile path
-  (the exact sizing case in M93 §8.6), q8 primary, f32 reference. This
-  closes M120's "no tensor-level placement executed against a real model"
-  gap.
+- Added `validate_m171_two_tile.py`, an opt-in local validation harness for
+  the selected public-model class. It requires local filesystem paths for the
+  source model directory, converted f32 `.att1` artifact, converted q8 `.att1`
+  artifact, token IDs file, and `att1-bench`; it rejects URL-like paths and
+  does not download or commit public weights.
+- The harness requires the M171 two-tile cluster path (`--tiles 2`), runs q8
+  as the primary row and f32 as the reference row, and requires both rows to
+  report `mode=cluster`, `shard_plan=runtime`, generated token count, nonzero
+  fabric packets/payload bytes, and nonzero KV appends. It emits text plus a
+  `m171_two_tile_report_version=1` JSON report with the model config,
+  estimated parameter count, q8/f32 row details, and last-token comparison.
+- For real M171 use, the source config must estimate into the
+  SmolLM2-135M-class band (100M-200M parameters). The checked-in tiny fixture
+  path is accepted only with explicit `--allow-tiny-fixture`, used by
+  `tests/test_bench_smoke.c` so CI covers the validation flow without adding
+  public model artifacts.
 
 **M172: Beachhead workload definition and baseline metrics (M153 items 1–2)**
 

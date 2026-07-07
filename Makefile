@@ -26,6 +26,7 @@ Q8_BENCH_BIN := $(BUILD_DIR)/att1-q8-bench
 SIZE_BIN := $(BUILD_DIR)/att1-size
 AIMU_REPLAY_BIN := $(BUILD_DIR)/att1-aimu-replay
 AIMU_REPLAY_FIDELITY_BIN := $(BUILD_DIR)/att1-aimu-replay-fidelity
+AIMU_TRANSPORT_BENCH_BIN := $(BUILD_DIR)/att1-aimu-transport-bench
 AIMU_MMIO_REPLAY_BIN := $(BUILD_DIR)/att1-aimu-mmio-replay
 TINY_LLM_BIN := $(BUILD_DIR)/run_tiny_llm
 CLUSTER_LLM_BIN := $(BUILD_DIR)/run_cluster_llm
@@ -36,7 +37,7 @@ TEST_NAMES := smoke tensor matmul rmsnorm softmax rope silu swiglu \
      q8_bench q8_cluster cuda_q8_cluster backend_matrix converter_validation quant_q4 quant_q4_pack matmul_q4 quant_q4_fixture infer_q4 cluster_infer_q4 q4_bench cuda_matmul_q4 cuda_infer_q4 cuda_cluster_infer_q4 \
      aimu_cmdq aimu_device aimu_dma aimu_trace aimu_mmio aimu_host aimu_userspace aimu_mmio_replay aimu_mem \
      aimu_exec aimu_conformance \
-     aimu_mmio_regression aimu_endpoint aimu_endpoint_fault_injection backend_pcie aimu_cluster_decode aimu_replay_fidelity
+     aimu_mmio_regression aimu_endpoint aimu_endpoint_fault_injection backend_pcie aimu_cluster_decode aimu_replay_fidelity aimu_transport_bench
 TEST_BINS := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
 
 COMMON_SRCS := \
@@ -95,6 +96,7 @@ Q8_BENCH_OBJS := $(BUILD_DIR)/tools/att1-q8-bench.o $(COMMON_OBJS)
 SIZE_OBJS := $(BUILD_DIR)/tools/att1-size.o $(COMMON_OBJS)
 AIMU_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-replay.o $(COMMON_OBJS)
 AIMU_REPLAY_FIDELITY_OBJS := $(BUILD_DIR)/tools/att1-aimu-replay-fidelity.o $(COMMON_OBJS)
+AIMU_TRANSPORT_BENCH_OBJS := $(BUILD_DIR)/tools/att1-aimu-transport-bench.o $(COMMON_OBJS)
 AIMU_EMULATOR_BIN := $(BUILD_DIR)/att1-aimu-mmio-emulator
 AIMU_EMULATOR_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-emulator.o $(COMMON_OBJS)
 AIMU_MMIO_REPLAY_OBJS := $(BUILD_DIR)/tools/att1-aimu-mmio-replay.o $(COMMON_OBJS)
@@ -106,7 +108,7 @@ CLUSTER_LLM_OBJS := $(BUILD_DIR)/examples/run_cluster_llm.o $(COMMON_OBJS)
 .PHONY: all clean test test-verbose regression bak restore asan ubsan sanitizer test-asan test-ubsan clean-asan clean-ubsan clean-sanitizer fuzz-loader fuzz-json fuzz-coverage fuzz-smoke fuzz-libfuzzer fuzz-afl clean-fuzz docs-check
 .SECONDARY:
 
-all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_REPLAY_FIDELITY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
+all: $(SIM_BIN) $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_REPLAY_FIDELITY_BIN) $(AIMU_TRANSPORT_BENCH_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TINY_LLM_BIN) $(CLUSTER_LLM_BIN)
 
 $(SIM_BIN): $(SIM_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -127,6 +129,9 @@ $(AIMU_REPLAY_BIN): $(AIMU_REPLAY_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(AIMU_REPLAY_FIDELITY_BIN): $(AIMU_REPLAY_FIDELITY_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(AIMU_TRANSPORT_BENCH_BIN): $(AIMU_TRANSPORT_BENCH_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(AIMU_EMULATOR_BIN): $(AIMU_EMULATOR_OBJS)
@@ -151,12 +156,12 @@ $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_REPLAY_FIDELITY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TEST_BINS)
+test: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_REPLAY_FIDELITY_BIN) $(AIMU_TRANSPORT_BENCH_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin || exit $$?; \
 	done
 
-test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_REPLAY_FIDELITY_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TEST_BINS)
+test-verbose: $(INSPECT_BIN) $(BENCH_BIN) $(Q8_BENCH_BIN) $(SIZE_BIN) $(AIMU_REPLAY_BIN) $(AIMU_REPLAY_FIDELITY_BIN) $(AIMU_TRANSPORT_BENCH_BIN) $(AIMU_EMULATOR_BIN) $(AIMU_MMIO_REPLAY_BIN) $(AIMU_ENDPOINT_BIN) $(TEST_BINS)
 	@for test_bin in $(TEST_BINS); do \
 		printf '\n=== %s ===\n' "$$test_bin"; \
 		./$$test_bin || exit $$?; \

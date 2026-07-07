@@ -2285,6 +2285,79 @@ static int check_public_backend_smoke(void)
 }
 
 /*
+ * M171 two-tile real-model validator smoke.
+ *
+ * The real SmolLM2-135M artifacts stay outside Git. This uses the checked-in
+ * tiny f32/q8 artifacts with --allow-tiny-fixture so CI exercises the exact
+ * M171 q8-primary/f32-reference two-tile validation flow without committing
+ * public weights or generated public .att1 files.
+ */
+static int check_m171_two_tile_smoke(void)
+{
+    char output[16384];
+
+    if (run_command("python3 --version > /dev/null 2>&1") != 0) {
+        return 0;
+    }
+
+    {
+        FILE *fp = fopen("build/m171_ids.txt", "w");
+        if (fp == NULL) {
+            fputs("m171_two_tile_smoke: could not create token IDs file\n", stderr);
+            return -1;
+        }
+        fputs("1\n2\n3\n", fp);
+        fclose(fp);
+    }
+
+    if (run_command(
+            "python3 compiler/validate_m171_two_tile.py"
+            " --model-dir compiler/fixtures/tiny_llama"
+            " --att1-f32 models/real_tiny_f32/model.att1"
+            " --att1-q8 models/real_tiny_q8/model.att1"
+            " --tokens-file build/m171_ids.txt"
+            " --tokens 1 --tiles 2"
+            " --allow-tiny-fixture"
+            " --report-json build/m171_two_tile_report.json"
+            " > build/m171_two_tile_report.txt 2>&1") != 0) {
+        fputs("m171_two_tile_smoke: validation script failed\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m171_two_tile_report.txt", output, sizeof(output)) != 0) {
+        fputs("m171_two_tile_smoke: cannot read report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "# ATT-1 M171 two-tile validation") == NULL) ||
+        (strstr(output, "primary: backend=cpu-q8 mode=cluster") == NULL) ||
+        (strstr(output, "reference: backend=cpu-f32 mode=cluster") == NULL) ||
+        (strstr(output, "shard_plan=runtime") == NULL) ||
+        (strstr(output, "generated_tokens=1") == NULL) ||
+        (strstr(output, "fabric_packets_sent=") == NULL) ||
+        (strstr(output, "kv_appends=") == NULL) ||
+        (strstr(output, "last_token_match: yes") == NULL) ||
+        (strstr(output, "result: pass") == NULL) ||
+        (strstr(output, "report: ok") == NULL)) {
+        fputs("m171_two_tile_smoke: report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    if (read_file("build/m171_two_tile_report.json", output, sizeof(output)) != 0) {
+        fputs("m171_two_tile_smoke: cannot read JSON report\n", stderr);
+        return -1;
+    }
+    if ((strstr(output, "\"m171_two_tile_report_version\": 1") == NULL) ||
+        (strstr(output, "\"primary\"") == NULL) ||
+        (strstr(output, "\"reference\"") == NULL) ||
+        (strstr(output, "\"result\": \"pass\"") == NULL)) {
+        fputs("m171_two_tile_smoke: JSON report missing expected fields\n", stderr);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * check_public_tokenized_validation() - M71
  *
  * Python-skippable.  When tokenizers or transformers is available, validates
@@ -4338,6 +4411,7 @@ int main(void)
         (check_prefill_decode_split_smoke() != 0) ||
         (check_public_backend_smoke()     != 0) ||
         (check_public_tokenized_validation() != 0) ||
+        (check_m171_two_tile_smoke()      != 0) ||
         (check_scaling_report()           != 0) ||
         (check_tile_capacity_smoke()      != 0) ||
         (check_placement_validator_smoke() != 0) ||

@@ -647,7 +647,28 @@ att1-aimu-mmio-replay --plan PATH [--bar0-file PATH] [--tiles N]
 
 ---
 
-### 8.7 Python Compiler Tools
+### 8.7 `att1-aimu-transport-bench`
+
+**Purpose:** M170 userspace endpoint-transport characterization. Spawns the
+M162 `att1-aimu-endpoint` daemon, measures representative M161 conformance
+operations over the Unix-domain-socket transport, and emits M118 calibration
+anchors for the fabric bandwidth/latency simulator.
+
+```sh
+att1-aimu-transport-bench [--iterations N] [--payload-bytes N]
+                          [--socket PATH] [--report-json PATH] [--verbose]
+```
+
+**Output:** Human-readable latency/bandwidth rows for MMIO read, NOP command
+submit/dispatch/poll, fabric send/receive, and KV append/read. With
+`--report-json`, the report includes `m118_calibration.base_latency_ns`,
+`m118_calibration.per_hop_latency_ns`, and
+`m118_calibration.fabric_gib_sec`. These are host/process/socket emulator
+measurements, not PCIe or FPGA measurements.
+
+---
+
+### 8.8 Python Compiler Tools
 
 All Python tools live in `compiler/`. They require Python 3; no third-party
 packages are required for the planning pipeline tools.
@@ -666,6 +687,7 @@ packages are required for the planning pipeline tools.
 | `map_placement_to_commands.py` | Placement report → AIMU command plan | `--report`, `--plan-json`, `--strict` |
 | `plan_tensor_execution.py` | Command/route → execution plan | `--placement-report`, `--command-plan`, `--plan-json` |
 | `validate_tensor_execution_plan.py` | Validate M125 execution plan JSON | `--plan`, `--strict`, `--report-json` |
+| `validate_m171_two_tile.py` | Validate M171 q8/f32 local artifacts through the two-tile cluster path | `--model-dir`, `--att1-f32`, `--att1-q8`, `--tokens-file`, `--tiles 2`, `--report-json` |
 | `map_execution_plan_to_commands.py` | Execution plan → command plan | `--plan`, `--plan-json`, `--strict` |
 | `map_commands_to_fabric_routes.py` | Command plan → fabric route report | `--plan`, `--report-json` |
 | `validate_fabric_routes.py` | Validate M115 fabric route report | `--report`, `--strict`, `--report-json` |
@@ -686,7 +708,7 @@ parse/argument error. Most accept `--strict` to promote warnings to errors.
 
 ---
 
-### 8.8 Demo and Regression Scripts
+### 8.9 Demo and Regression Scripts
 
 | Script | Purpose |
 |--------|---------|

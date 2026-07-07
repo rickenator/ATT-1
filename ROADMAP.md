@@ -132,8 +132,8 @@ Gate 2: emulated endpoint passes conformance, replay fidelity, tolerances, fault
 
 ## Stage 3: Performance Model Calibration and Real-Model Scale
 
-- Milestone 170: Measured transport characterization — calibrate M118 fabric simulator against measured numbers.
-- Milestone 171: Real small-model end-to-end (SmolLM2-135M class) through the emulated two-tile path.
+- Milestone 170: Measured transport characterization (complete) — [tools/att1-aimu-transport-bench.c](tools/att1-aimu-transport-bench.c) measures the M162 Unix-domain-socket endpoint transport through the M161 conformance API (MMIO read, NOP command lifecycle, fabric send/receive, KV append/read), emits text/JSON reports with M118 calibration fields, and [tests/test_aimu_transport_bench.c](tests/test_aimu_transport_bench.c) validates the report path.
+- Milestone 171: Real small-model end-to-end (SmolLM2-135M class) through the emulated two-tile path (complete) — [compiler/validate_m171_two_tile.py](compiler/validate_m171_two_tile.py) validates local external f32/q8 artifacts through the required two-tile cluster path with q8 as the primary run and f32 as the reference, requiring fabric/KV activity and emitting a JSON report; [tests/test_bench_smoke.c](tests/test_bench_smoke.c) exercises the same flow on checked-in tiny fixtures via explicit `--allow-tiny-fixture`.
 - Milestone 172: Beachhead workload definition and baseline metrics — memory movement, latency stability, cost-per-token vs. CUDA baseline.
 - Milestone 173: Placement and capacity validation at 256 MB / 512 MB / 1 GB device budgets; resolve KV page size question (M93 §8.15-2).
 - Milestone 174: Activation precision study — f32 vs. bf16 inter-tile packets (M93 §8.15-3).

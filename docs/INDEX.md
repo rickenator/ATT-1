@@ -198,6 +198,20 @@ tensor-math execution across the socket transport remains a documented
 gap (the M166 exec hook resolves tensor operands via raw host pointers
 that are only valid within the process that issued them).
 
+`tools/att1-aimu-transport-bench.c` (M170) measures the current
+Unix-domain-socket endpoint transport through the M161 conformance API and
+emits M118 calibration fields (`base_latency_ns`, `per_hop_latency_ns`,
+`fabric_gib_sec`) for the fabric bandwidth/latency simulator. The associated
+`tests/test_aimu_transport_bench.c` subprocess smoke test validates the JSON
+report path.
+
+`compiler/validate_m171_two_tile.py` (M171) is the local public-model
+two-tile validation harness: q8 is the primary run, f32 is the reference run,
+both must execute through `att1-bench --mode cluster --tiles 2`, and both
+must report fabric and KV activity. Public model weights and generated
+public `.att1` artifacts remain external; `tests/test_bench_smoke.c` covers
+the harness with checked-in tiny fixtures via `--allow-tiny-fixture`.
+
 ---
 
 ## Reference Manuals
