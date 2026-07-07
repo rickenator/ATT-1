@@ -1022,7 +1022,9 @@ The following are explicitly outside the scope of ATT-1:
 | M150 | Release candidate checkpoint | Complete — see [docs/RELEASE_CANDIDATE_M150.md](RELEASE_CANDIDATE_M150.md) |
 | M151 | API opacity and refactor plan | Complete — KV cache/MMU status APIs, opaque KV-MMU handle, status alias cleanup |
 | M152 | Deeper fuzzing and coverage expansion | Complete — 67 deterministic fuzz cases, coverage guard, optional libFuzzer/AFL harnesses |
-| M153+ | Release dry-run, external review response log, or hardware prototype work | TBD |
+| M153 | Winning strategy implementation | Complete — evidence-gated hardware progression contract |
+| M154-M175 | Phase 2 software evidence phase | Closed at M175 with HOLD — see [docs/PHASE2_CLOSURE.md](PHASE2_CLOSURE.md) and [docs/FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) |
+| M176+ | Hardware prototype work | Deferred until the M175 gate is reopened |
 
 See `docs/OPERATION_LOG.md` for the full milestone history and
 `docs/RELEASE_READINESS.md` for the current readiness gate status.

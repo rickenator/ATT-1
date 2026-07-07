@@ -63,7 +63,8 @@ in `docs/` unless noted otherwise.
 | Document | Description |
 |----------|-------------|
 | [aimu_architecture.md](aimu_architecture.md) | AIMU tile architecture: command queue, MMIO register map, DMA model, execution phases |
-| [PHASE2_PLAN.md](PHASE2_PLAN.md) | Phase 2 roadmap (M154–M184): stages, gates, Definition of Done, frozen entry baseline, risks |
+| [PHASE2_PLAN.md](PHASE2_PLAN.md) | Phase 2 roadmap record (M154–M175): stages, gates, Definition of Done, frozen entry baseline, HOLD closure |
+| [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md) | Final Phase 2 closure note: M175 HOLD decision, deferred hardware work, and reopen criteria |
 | [PHASE1_TO_PHASE2_GAP_AUDIT.md](PHASE1_TO_PHASE2_GAP_AUDIT.md) | Phase 1 → Phase 2 gap audit (M156): requirements-traceability table for M93 §8 vs. M103–M155 deliverables |
 | [aimu_register_map.md](aimu_register_map.md) | AIMU MMIO register map: BAR0 layout, control/status registers, DMA descriptors; **wire/register contract frozen v1.0 at M157** (§1.6), **in-process DMA simulator model frozen v1.0 at M159** (§15.7) |
 | → [AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) | See Reference Manuals section: AIMU command packet reference, EXEC/LOAD/KV/FABRIC/TRACE semantics, MMIO interaction, replay tools |

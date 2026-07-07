@@ -1,12 +1,12 @@
 # ATT-1 Phase 2 Plan: From Simulator to Hardware-Expressible Prototype (M154)
 
-**Status:** Ratified at Milestone 154 (Phase 2 kickoff).
-**Revision:** 1.0
+**Status:** Closed at M175 with a HOLD decision.
+**Revision:** 1.1
 
-This document is the Phase 2 roadmap scaffolding. As with Phase 1, milestone
-scope and ordering will shift as evidence accumulates — that is expected and
-normal — but the stages, gates, Definition of Done, and non-goals below are
-the governing structure for Phase 2.
+This document is the Phase 2 roadmap record. It was ratified at M154 and is now
+closed at M175: the software evidence phase is complete enough to make the
+hardware gate decision, and that decision is **HOLD**. M176-M181 hardware work
+does not start until the M175 reopen criteria are satisfied.
 
 ---
 
@@ -589,11 +589,11 @@ device.
   procurement, or FPGA RTL yet. The emulator/control-plane path remains alive,
   but the gate requires recorded real external-model beachhead reports,
   explicit host-access selection, minimum FPGA control-plane scope, and at
-  least one production-like trace packet before M176-M181 can start.
+  least one production-like trace packet before M176-M181 can be reconsidered.
 
-**M176–M181 (contingent on GO): FPGA control-plane prototype** — scoped per
-[fpga_feasibility.md](fpga_feasibility.md) §2, control-plane first, math
-later:
+**M176–M181: deferred by M175 HOLD.** These items remain the candidate FPGA
+control-plane prototype scope if the gate reopens, but they are not active
+Phase 2 work:
 
 - **M176:** Board selection and BOM decision (from
   [phase3_bom_board_options.md](phase3_bom_board_options.md) groundwork);
@@ -612,14 +612,15 @@ later:
   yet) — completing the "protocol is hardware-expressible" proof for the
   control plane.
 
-Math-on-FPGA (matmul unit choice, M93 §8.15-1) is deliberately deferred to a
-later decision point within Phase 2 or into Phase 3, informed by M175.
+Math-on-FPGA (matmul unit choice, M93 §8.15-1) remains deferred outside this
+closed Phase 2 record.
 
 ---
 
 ## 8. Stage 5 — Productization and Partner Validation (M153 items 4, 7–9)
 
-Runs partially in parallel with Stages 2–4:
+Stage 5 is deferred by the M175 HOLD decision. The following items remain
+useful follow-on work, but are not complete Phase 2 evidence:
 
 **M182: Packaged validation platform**
 
@@ -634,12 +635,11 @@ Runs partially in parallel with Stages 2–4:
   explicit pass/fail criteria (M153 item 8); hostile-input validation on
   partner-supplied artifacts.
 
-**M184: Phase 2 close-out review and Phase 3 go/no-go**
+**M184: superseded by M175 Phase 2 closure**
 
-- Requirements traceability final pass against M93 §8.2's six proof
-  obligations; updated go/no-go successor to M120 covering ASIC direction;
-  kill-criteria verdict per M153 item 10; tag `PHASE_2` equivalent
-  close-out.
+- This closure is now recorded in
+  [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md). The final verdict is HOLD, not
+  Phase 3 GO.
 
 ---
 
@@ -662,6 +662,10 @@ Direct restatement of M93 §8.2, plus governance:
 8. **FPGA gate decision made explicitly,** with evidence, whichever way it
    goes.
 
+Phase 2 meets this definition for a HOLD closure: the emulated/control-plane
+path is documented and regression-tested, but physical hardware work is not
+authorized.
+
 ---
 
 ## 10. Non-Goals (unchanged from M93 §8.14 + repo policy)
@@ -681,19 +685,21 @@ work, not a Phase 2 gate.
   silent drift.
 - **CUDA signoff slippage (M155):** blocks credible baselines; front-loaded
   deliberately.
-- **FPGA gate is a genuine fork:** M176–M181 may be replaced wholesale by a
-  HOLD/PIVOT path; the plan treats them as contingent, not committed.
+- **FPGA gate is a genuine fork:** M175 selected HOLD. M176-M181 remain
+  contingent and inactive until the gate is reopened.
 - **Transport emulation fidelity:** shared-memory queues can hide real PCIe
   pathologies (ordering, MMIO latency, DMA coherence); M170 calibration and
   M126's caveats bound how much the emulator can claim.
-- **Partner traces (M183):** external dependency; can slide without blocking
-  the technical gate at M184.
+- **Partner traces:** now an M175 reopen criterion; external dependency and
+  not completed Phase 2 evidence.
 
 ---
 
 ## Related Documents
 
 - [aimu_architecture.md](aimu_architecture.md) — §8 Phase 2 PCIe/AIMU prototype requirements (M93)
+- [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md) — final Phase 2 closure note
+- [FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) — M175 HOLD gate review
 - [aimu_phase3_go_no_go.md](aimu_phase3_go_no_go.md) — M120 go/no-go review; §12 M153 winning-strategy execution contract
 - [fpga_feasibility.md](fpga_feasibility.md) — M126 FPGA feasibility and gate criteria
 - [phase3_bom_board_options.md](phase3_bom_board_options.md) — board/BOM groundwork

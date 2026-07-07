@@ -85,11 +85,13 @@
 
 ---
 
-# Phase 2 Roadmap (M154–M184)
+# Phase 2 Roadmap (M154–M175, Closed at HOLD)
 
 Phase 1 (M0–M153) proved the protocol in software. Phase 2 proves the
 protocol is hardware-expressible. Full detail, gates, Definition of Done,
-and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md).
+and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md). Phase 2 is closed at
+M175 with a HOLD decision; see [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md)
+and [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md).
 
 ## Stage 0: Entry, Baseline, and Debt Closure
 
@@ -141,15 +143,11 @@ Gate 2: emulated endpoint passes conformance, replay fidelity, tolerances, fault
 ## Stage 4: FPGA Go/No-Go and (Gated) Physical Prototype
 
 - Milestone 175: FPGA gate review (complete, HOLD) — [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md) reviews Stage 1 freezes, Stage 2 emulator fidelity, Stage 3 calibration/scale evidence, M126 criteria, and M153 kill criteria; decision is HOLD, not GO/PIVOT, until real external-model beachhead reports, explicit host-access choice, minimum FPGA control-plane scope, and production-like trace evidence are recorded.
-- Milestone 176: (GO only) Board selection, BOM decision, procurement.
-- Milestone 177: (GO only) PCIe enumeration + BAR0 MMIO via userspace access (VFIO/XDMA); no kernel driver.
-- Milestone 178: (GO only) Command queue doorbell + completion path on FPGA; conformance subset on real hardware.
-- Milestone 179: (GO only) DMA descriptor validation and shard transfer to device memory.
-- Milestone 180: (GO only) Counter/trace registers readable by existing test infrastructure unmodified.
-- Milestone 181: (GO only) Fabric route replay acknowledgment on FPGA — control-plane hardware-expressibility proof complete.
+- Milestones 176-181: deferred by M175 HOLD — board selection, procurement, FPGA RTL, hardware BAR0/MMIO, hardware DMA, trace registers, and fabric route acknowledgment do not start until the M175 gate is reopened.
 
 ## Stage 5: Productization and Partner Validation
 
-- Milestone 182: Packaged validation platform — planning/replay/conformance/placement toolchain as a standalone deliverable.
-- Milestone 183: Design-partner trace program — 2–3 partners, production-like traces, explicit pass/fail criteria.
-- Milestone 184: Phase 2 close-out review and Phase 3 go/no-go — traceability final pass, kill-criteria verdict, PHASE_2 close-out tag.
+- Milestones 182-184: superseded by Phase 2 closure at M175 — software
+  validation packaging and partner-style trace capture remain useful follow-on
+  work, but design-partner traces are now an M175 reopen criterion rather than
+  completed Phase 2 evidence.

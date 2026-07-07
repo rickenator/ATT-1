@@ -162,8 +162,9 @@ No changes to the Phase 2 roadmap ([PHASE2_PLAN.md](PHASE2_PLAN.md),
   source of the five unproven items confirmed in §5.
 - [aimu_pcie_prototype_review.md](aimu_pcie_prototype_review.md) — M110
   design review and per-milestone history through M139.
-- [PHASE2_PLAN.md](PHASE2_PLAN.md) — Phase 2 roadmap (M154–M184), stages,
-  gates, and Definition of Done referenced throughout this audit.
+- [PHASE2_PLAN.md](PHASE2_PLAN.md) — Phase 2 roadmap record (M154-M175),
+  gates, Definition of Done, and M175 HOLD closure referenced throughout this
+  audit.
 - [CUDA_VALIDATION_PLAN.md](CUDA_VALIDATION_PLAN.md) — M138 CUDA signoff
   plan, closed at M155 (§2 and §5, item 6, of this audit).
 - [OPERATION_LOG.md](OPERATION_LOG.md) — milestone-by-milestone delivery

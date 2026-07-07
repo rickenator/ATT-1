@@ -98,6 +98,7 @@ _REQUIRED_DOCS: list[str] = [
     "docs/RELEASE_CANDIDATE_M150.md",
     "docs/CUDA_SIGNOFF_M155.md",
     "docs/FPGA_GATE_REVIEW_M175.md",
+    "docs/PHASE2_CLOSURE.md",
     "docs/EXTERNAL_REVIEW_PACKAGE.md",
     "docs/testing.md",
     "docs/CUDA_VALIDATION_PLAN.md",
@@ -370,6 +371,7 @@ def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
     Validate key milestone/status invariants:
       - OPERATION_LOG must contain a Milestone 175 entry.
       - OPERATION_LOG must show M174 as complete.
+      - Phase 2 closure must be visible from README and PHASE2_PLAN.
       - CPU CI must be described as CPU-only somewhere in testing docs.
       - CUDA signoff described as manual RTX 3090.
     """
@@ -394,6 +396,21 @@ def check_milestone_consistency(repo: Path, report: CheckReport) -> None:
                 "docs/OPERATION_LOG.md",
                 "OPERATION_LOG has no '- Milestone 174:' entry (M174 not yet recorded as complete)",
             )
+
+    closure_surfaces = [
+        ("README.md", repo / "README.md"),
+        ("docs/PHASE2_PLAN.md", repo / "docs" / "PHASE2_PLAN.md"),
+        ("docs/PHASE2_CLOSURE.md", repo / "docs" / "PHASE2_CLOSURE.md"),
+    ]
+    for label, path in closure_surfaces:
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if not re.search(r"\bHOLD\b", text) or "M175" not in text:
+                report.add_error(
+                    "milestone-consistency",
+                    label,
+                    "Phase 2 closure surface must mention M175 and the HOLD decision",
+                )
 
     # CPU CI described as CPU-only in testing.md or RELEASE_READINESS
     testing_md = repo / "docs" / "testing.md"

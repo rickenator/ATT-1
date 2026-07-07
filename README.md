@@ -14,6 +14,13 @@ programmable near-memory inference units that own local tensor memory and
 participate in a fabric. The core doctrine: **move less data by executing closer
 to where the tensor data lives.**
 
+Phase 2 is now closed at M175 with a **HOLD** decision on the FPGA path:
+the software validation platform and emulated control-plane evidence are useful,
+but board selection, procurement, FPGA RTL, and real PCIe/BAR0 hardware work
+remain gated on the reopen criteria in
+[docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md) and
+[docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md).
+
 The runtime supports f32, q8, and q4 quantized inference in single-tile and
 multi-tile cluster configurations, with CPU and CUDA backends, a KV-cache MMU,
 a tokenizer, and a schema-validated planning/control-plane simulator.
@@ -75,6 +82,7 @@ future PCIe/AIMU prototype without prematurely committing to silicon details.
 | Schema-validated planning outputs | Complete (M134/M135) |
 | CPU-only GitHub Actions CI | Complete (M137) |
 | CUDA signoff (manual, CUDA-capable host) | Complete on RTX 3090 (M155) |
+| Phase 2 hardware gate | Closed at M175 with HOLD; M176+ hardware work is gated |
 
 ## Quick Build and Test
 
@@ -130,7 +138,7 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 | Category | Key document |
 |----------|-------------|
 | Architecture overview | [DESIGN.md](DESIGN.md) |
-| Phase 2 roadmap | [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md) |
+| Phase 2 roadmap and closure | [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md), [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md) |
 | Build, test, and CI | [docs/testing.md](docs/testing.md) |
 | Model format | [docs/model_format.md](docs/model_format.md) |
 | Quantization | [docs/quantization.md](docs/quantization.md) |
@@ -163,6 +171,7 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 - No Linux kernel driver.
 - No real PCIe endpoint or BAR0 MMIO.
 - No FPGA RTL or synthesis.
+- No board selection or procurement while the M175 HOLD gate remains closed.
 - No patent claim language of any kind.
 
 ## Repository Layout

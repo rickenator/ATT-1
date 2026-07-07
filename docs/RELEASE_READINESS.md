@@ -274,9 +274,10 @@ Run through this list before sending the repository to any external party.
 
 ---
 
-## 11. Recommended Next Milestones
+## 11. Milestone Status Snapshot
 
-Milestones M140–M156 are complete. See `docs/OPERATION_LOG.md` for their full entries.
+Milestones M140-M175 are complete or closed. See `docs/OPERATION_LOG.md` for
+their full entries.
 
 | Milestone | Working title | Scope |
 |-----------|---------------|-------|
@@ -287,4 +288,11 @@ Milestones M140–M156 are complete. See `docs/OPERATION_LOG.md` for their full 
 | M154 | Phase 2 kickoff and baseline freeze | Phase 2 plan, baseline, Definition of Done, and Stage 0 roadmap — complete |
 | M155 | CUDA signoff closure | RTX 3090 CUDA signoff complete; see `docs/CUDA_SIGNOFF_M155.md` |
 | M156 | Phase 1 to Phase 2 gap audit | Complete; see `docs/PHASE1_TO_PHASE2_GAP_AUDIT.md` |
-| M157 | Register map freeze v1.0 | **current next step**: Freeze BAR0 layout, doorbell, status, capability, and counter registers |
+| M157 | Register map freeze v1.0 | Complete |
+| M158 | Command packet and completion schema freeze v1.0 | Complete |
+| M159 | DMA descriptor and replay schema freeze v1.0 | Complete |
+| M160 | Fabric packet and barrier semantics freeze v1.0 | Complete |
+| M161 | Conformance test suite for frozen interfaces | Complete; Gate 1 satisfied |
+| M162-M169 | Out-of-process emulated endpoint | Complete; Gate 2 satisfied |
+| M170-M174 | Transport, real-artifact harnesses, capacity, and activation precision gates | Complete; evidence tools exist, real external-model reports remain local/opt-in |
+| M175 | FPGA gate review | Complete with HOLD; see `docs/FPGA_GATE_REVIEW_M175.md` and `docs/PHASE2_CLOSURE.md` |
