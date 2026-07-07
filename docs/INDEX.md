@@ -72,6 +72,7 @@ in `docs/` unless noted otherwise.
 | [comps.md](comps.md) | Architectural comparisons to NVIDIA (Blackwell/Rubin), Apple M4 Neural Engine, and production GPU/TPU/ANE systems (M154 context) |
 | [fpga_feasibility.md](fpga_feasibility.md) | FPGA feasibility notes: scope, non-goal status, reference only |
 | [phase3_bom_board_options.md](phase3_bom_board_options.md) | Phase 3 BOM and board options: reference exploration for future hardware |
+| [future_memory_tiers.md](future_memory_tiers.md) | Future hardware note: sequential flash/DRAM/HBM memory tiers for AIMU inference |
 
 ---
 
