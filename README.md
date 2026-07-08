@@ -22,6 +22,11 @@ scope. See [docs/M175_GREEN_EVIDENCE.md](docs/M175_GREEN_EVIDENCE.md),
 [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md), and
 [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md).
 
+M176 and later hardware work are treated as Phase 3 private work for IP
+reasons. Public ATT-1 remains the software/reference baseline; hardware
+implementation details belong in the private `ATT-1-HW` repository. See
+[docs/PHASE3_PRIVATE_BOUNDARY.md](docs/PHASE3_PRIVATE_BOUNDARY.md).
+
 The runtime supports f32, q8, and q4 quantized inference in single-tile and
 multi-tile cluster configurations, with CPU and CUDA backends, a KV-cache MMU,
 a tokenizer, and a schema-validated planning/control-plane simulator.
@@ -140,6 +145,7 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 |----------|-------------|
 | Architecture overview | [DESIGN.md](DESIGN.md) |
 | Phase 2 roadmap and closure | [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md), [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md) |
+| Phase 3 private boundary | [docs/PHASE3_PRIVATE_BOUNDARY.md](docs/PHASE3_PRIVATE_BOUNDARY.md) |
 | Build, test, and CI | [docs/testing.md](docs/testing.md) |
 | Model format | [docs/model_format.md](docs/model_format.md) |
 | Quantization | [docs/quantization.md](docs/quantization.md) |

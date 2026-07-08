@@ -11,9 +11,10 @@ control-plane work.
 
 ## Active Task
 
-Prepare M176 board/BOM and host-access planning under the M175 minimum
-control-plane scope. Tensor math, custom kernel-driver work, and public model
-artifacts remain out of scope.
+Prepare M176 board/BOM and host-access planning in the private `ATT-1-HW`
+repository under the M175 minimum control-plane scope. Public ATT-1 remains the
+software/reference baseline. Tensor math, custom kernel-driver work, and public
+model artifacts remain out of scope.
 
 ## Hard Rules
 
@@ -223,10 +224,11 @@ artifacts remain out of scope.
 - M175 green evidence continuation: M175 now owns the GREEN criteria directly: meeting the evidence packet flips M175 from HOLD to GO without renumbering M176-M181. Adds `compiler/run_m175_green_packet.py`, a local-only orchestrator for M171/M172/M173/M174 reports plus host-access decision, minimum FPGA scope, and trace-packet evidence; adds `docs/M175_GREEN_EVIDENCE.md`, the canonical packet shape, runner command, outputs, initial open status, and gate rule; updates `docs/FPGA_GATE_REVIEW_M175.md`, `docs/PHASE2_CLOSURE.md`, `docs/INDEX.md`, and `compiler/check_docs.py` accordingly. At that point a shallow local artifact scan found no obvious SmolLM2-class `.att1` artifacts under `/home/rick`, so the packet remained blocked until artifact delivery. Focused verification: `python3 -m py_compile compiler/run_m175_green_packet.py`: PASS; `python3 compiler/run_m175_green_packet.py --help`: PASS; `python3 compiler/check_docs.py`: PASS with 0 errors; `git diff --check`: PASS.
 - M175 SmolLM2 artifact delivery: `HuggingFaceTB/SmolLM2-135M` was cloned locally under `~/Models/SmolLM2-135M` at snapshot `93efa2f097d58c2a74874c7e644dbc9b0cee75a2`; `model.safetensors` is present as LFS object `80521b4028`. `compiler/convert_llama_to_att1.py` now imports GQA models by expanding each grouped K/V projection head into legacy full-head `.att1` tensors, preserving the existing v1/v2 artifact format and runtime. Local artifacts were emitted outside Git under `~/Models/att1/SmolLM2-135M`: `model_f32.att1` (672 MB, SHA-256 `a0311864fbc541c0f45d27820ad617fcfab17ba3700fa3134863c20998885532`) and `model_q8.att1` (250 MB, SHA-256 `6dc72ed5d72805446580ea667e30b09c5d10b06811bfedeb14f5d024fe175e84`), both with `--tiles 2 --shard-meta`. `att1-inspect` loads both artifacts with 273 tensors and shard metadata; f32 static source comparison checks all 273 tensors with `f32_max_abs_error=0` and `result: pass`. At artifact-delivery time, the remaining M175 green-packet work was the long-context token file, placement report, route report, host-access decision, FPGA-scope note, and trace packet; those are closed by the following entry.
 - M175 green packet closure: local inputs under `~/Models/att1/SmolLM2-135M/m175_inputs` complete the long-context token file, placement report, activation route report, host-access decision, minimum FPGA control-plane scope, and trace packet. `compiler/run_m175_green_packet.py` passed with the local SmolLM2-135M f32/q8 artifacts and wrote `~/Models/att1/SmolLM2-135M/m175_green_packet/m175_green_manifest.json`; M171 two-tile validation, M172 beachhead workload, M173 capacity validation, and M174 activation precision all report PASS. The host-access decision selects vendor XDMA userspace bridge first with VFIO fallback; the minimum scope is BAR0/MMIO, doorbell/completion, DMA descriptor validation/shard transfer, counters/traces, and fabric route replay acknowledgment only. Post-packet validation passed: `python3 compiler/check_docs.py`, `git diff --check`, `make test`, and `make regression`. Documentation is reconciled so M175 records the original HOLD and current GO state; M176-M181 may start under the constrained control-plane scope only. Public model weights and generated real-model `.att1` artifacts remain outside Git.
+- Phase 3 private boundary: M176 and later hardware work are now treated as Phase 3 private work for IP reasons. Adds `docs/PHASE3_PRIVATE_BOUNDARY.md`, which keeps public ATT-1 as the software/reference baseline and assigns board/BOM selection, vendor toolchain notes, procurement details, private traces, FPGA experiments, register-bridge implementation details, timing/resource reports, and patent-sensitive analysis to private `ATT-1-HW`. Public ATT-1 may reference public commit hashes and sanitized summaries only; private-to-public movement requires explicit disclosure review.
 
 ## Next Prompt for Codex
 
-Start M176 from the M175 minimum scope: board/BOM and host-access planning for
+Continue M176 in private `ATT-1-HW`: board/BOM and host-access planning for
 vendor XDMA userspace first, VFIO fallback, with no custom kernel driver and no
 tensor math. Keep all public model weights and generated real-model `.att1`
 artifacts outside Git.
