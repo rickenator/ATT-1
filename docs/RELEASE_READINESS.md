@@ -294,5 +294,5 @@ their full entries.
 | M160 | Fabric packet and barrier semantics freeze v1.0 | Complete |
 | M161 | Conformance test suite for frozen interfaces | Complete; Gate 1 satisfied |
 | M162-M169 | Out-of-process emulated endpoint | Complete; Gate 2 satisfied |
-| M170-M174 | Transport, real-artifact harnesses, capacity, and activation precision gates | Complete; evidence tools exist, real external-model reports remain local/opt-in |
-| M175 | FPGA gate review | Complete with HOLD; see `docs/FPGA_GATE_REVIEW_M175.md` and `docs/PHASE2_CLOSURE.md` |
+| M170-M174 | Transport, real-artifact harnesses, capacity, and activation precision gates | Complete; M175 green packet records local external-model reports outside Git |
+| M175 | FPGA gate review | Complete; initial HOLD reopened to GO for constrained M176-M181 control-plane work after green packet passed |

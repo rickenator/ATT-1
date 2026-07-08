@@ -63,15 +63,15 @@ in `docs/` unless noted otherwise.
 | Document | Description |
 |----------|-------------|
 | [aimu_architecture.md](aimu_architecture.md) | AIMU tile architecture: command queue, MMIO register map, DMA model, execution phases |
-| [PHASE2_PLAN.md](PHASE2_PLAN.md) | Phase 2 roadmap record (M154–M175): stages, gates, Definition of Done, frozen entry baseline, HOLD closure |
-| [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md) | Final Phase 2 closure note: M175 HOLD decision, deferred hardware work, and reopen criteria |
+| [PHASE2_PLAN.md](PHASE2_PLAN.md) | Phase 2 roadmap record (M154-M175): stages, gates, Definition of Done, frozen entry baseline, M175 green-packet GO update |
+| [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md) | Final Phase 2 closure note: initial M175 HOLD decision, green-packet reopen, and constrained M176-M181 scope |
 | [PHASE1_TO_PHASE2_GAP_AUDIT.md](PHASE1_TO_PHASE2_GAP_AUDIT.md) | Phase 1 → Phase 2 gap audit (M156): requirements-traceability table for M93 §8 vs. M103–M155 deliverables |
 | [aimu_register_map.md](aimu_register_map.md) | AIMU MMIO register map: BAR0 layout, control/status registers, DMA descriptors; **wire/register contract frozen v1.0 at M157** (§1.6), **in-process DMA simulator model frozen v1.0 at M159** (§15.7) |
 | → [AIMU_INTRINSICS_OPERATIONS_REFERENCE.md](AIMU_INTRINSICS_OPERATIONS_REFERENCE.md) | See Reference Manuals section: AIMU command packet reference, EXEC/LOAD/KV/FABRIC/TRACE semantics, MMIO interaction, replay tools |
 | [aimu_pcie_prototype_review.md](aimu_pcie_prototype_review.md) | AIMU PCIe prototype milestone history and review: M1–M139 entries |
 | [aimu_phase3_go_no_go.md](aimu_phase3_go_no_go.md) | Phase 3 go/no-go criteria: readiness gates for hardware prototype direction |
-| [FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) | M175 FPGA gate review: HOLD decision, evidence table, and reopen criteria before M176+ hardware work |
-| [M175_GREEN_EVIDENCE.md](M175_GREEN_EVIDENCE.md) | M175 green evidence packet: required local inputs, runner command, outputs, and gate rule |
+| [FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) | M175 FPGA gate review: initial HOLD, passing green-packet evidence, and GO decision for constrained M176-M181 control-plane work |
+| [M175_GREEN_EVIDENCE.md](M175_GREEN_EVIDENCE.md) | M175 green evidence packet: required local inputs, runner command, outputs, passing state, and gate rule |
 | [M175_SMOLLM2_ARTIFACT_RECORD.md](M175_SMOLLM2_ARTIFACT_RECORD.md) | M175 SmolLM2-135M local artifact record: f32/q8 `.att1` artifacts emitted outside Git using legacy GQA expansion |
 | [comps.md](comps.md) | Architectural comparisons to NVIDIA (Blackwell/Rubin), Apple M4 Neural Engine, and production GPU/TPU/ANE systems (M154 context) |
 | [fpga_feasibility.md](fpga_feasibility.md) | FPGA feasibility notes: scope, non-goal status, reference only |

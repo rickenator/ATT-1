@@ -14,11 +14,12 @@ programmable near-memory inference units that own local tensor memory and
 participate in a fabric. The core doctrine: **move less data by executing closer
 to where the tensor data lives.**
 
-Phase 2 is now closed at M175 with a **HOLD** decision on the FPGA path:
-the software validation platform and emulated control-plane evidence are useful,
-but board selection, procurement, FPGA RTL, and real PCIe/BAR0 hardware work
-remain gated on the reopen criteria in
-[docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md) and
+Phase 2 closed at M175 with an initial **HOLD** decision on the FPGA path, then
+the M175 green evidence packet passed. The gate is now **GO** for the constrained
+M176-M181 control-plane prototype path: board/BOM work may proceed, but tensor
+math, custom kernel-driver work, and public model artifacts remain out of
+scope. See [docs/M175_GREEN_EVIDENCE.md](docs/M175_GREEN_EVIDENCE.md),
+[docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md), and
 [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md).
 
 The runtime supports f32, q8, and q4 quantized inference in single-tile and
@@ -82,7 +83,7 @@ future PCIe/AIMU prototype without prematurely committing to silicon details.
 | Schema-validated planning outputs | Complete (M134/M135) |
 | CPU-only GitHub Actions CI | Complete (M137) |
 | CUDA signoff (manual, CUDA-capable host) | Complete on RTX 3090 (M155) |
-| Phase 2 hardware gate | Closed at M175 with HOLD; M176+ hardware work is gated |
+| Phase 2 hardware gate | M175 green packet passed; M176-M181 control-plane work may begin under constrained scope |
 
 ## Quick Build and Test
 
@@ -169,9 +170,9 @@ See [docs/INDEX.md](docs/INDEX.md) for the full documentation map.
 
 - No production ASIC design or tape-out.
 - No Linux kernel driver.
-- No real PCIe endpoint or BAR0 MMIO.
-- No FPGA RTL or synthesis.
-- No board selection or procurement while the M175 HOLD gate remains closed.
+- No tensor-math FPGA RTL or synthesis in the M176-M181 control-plane path.
+- No custom Linux kernel driver.
+- No public model artifacts or generated real-model `.att1` files in Git.
 - No patent claim language of any kind.
 
 ## Repository Layout

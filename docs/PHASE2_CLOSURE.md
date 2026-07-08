@@ -1,6 +1,7 @@
 # ATT-1 Phase 2 Closure
 
-**Status:** Closed at M175 with a HOLD decision.
+**Status:** Closed at M175; initial HOLD decision reopened after the M175 green
+evidence packet passed.
 
 **Date:** 2026-07-07
 
@@ -12,10 +13,12 @@ replay fidelity, transport characterization, real-artifact validation harnesses,
 beachhead metrics, placement/capacity validation, activation precision study,
 and the M175 FPGA gate review.
 
-The closure decision is **HOLD**. M176-M181 board selection, procurement, FPGA
-RTL, BAR0-on-hardware, DMA-on-hardware, trace registers on hardware, and fabric
-route acknowledgment on FPGA are not started by this closure. They remain
-contingent on reopening the M175 gate.
+The closure decision was initially **HOLD**. The M175 green evidence packet has
+now passed, so the gate is reopened to **GO** for constrained M176-M181
+control-plane work. Board/BOM work, BAR0-on-hardware, DMA descriptor
+validation, trace registers on hardware, and fabric route acknowledgment may
+proceed under the minimum scope. Tensor math, a custom Linux kernel driver, and
+public model artifacts remain out of scope.
 
 ## Closure Result
 
@@ -25,7 +28,7 @@ contingent on reopening the M175 gate.
 | Stage 1 interface freezes | Complete through M161; frozen v1.0 contracts documented |
 | Stage 2 emulated endpoint | Complete through M169; endpoint, pcie backend, KV-MMU, two-tile decode, hostile tests, and replay fidelity are covered |
 | Stage 3 evidence tools | Complete through M174; harnesses and fixtures exist, but real external-model evidence remains local/opt-in |
-| Stage 4 hardware gate | M175 complete; decision is HOLD |
+| Stage 4 hardware gate | M175 complete; initial HOLD, reopened to GO after green packet |
 | Stage 5 product/partner work | Deferred; design-partner traces are a reopen criterion, not completed Phase 2 evidence |
 
 ## Reopen Criteria
@@ -43,5 +46,7 @@ The hardware path can reopen when the evidence packet from
 5. `make test`, `make regression`, and docs lint still pass after the evidence
    packet is recorded.
 
-Those are the M175 green criteria. Until they exist, the correct next work is
-evidence closure around M175, not M176 hardware execution.
+Those M175 green criteria have now been met. The passing manifest is local-only:
+`~/Models/att1/SmolLM2-135M/m175_green_packet/m175_green_manifest.json`.
+Repository policy still forbids committing public model weights or generated
+real-model `.att1` artifacts.

@@ -85,13 +85,16 @@
 
 ---
 
-# Phase 2 Roadmap (M154–M175, Closed at HOLD)
+# Phase 2 Roadmap (M154-M175, Green Packet Passed)
 
 Phase 1 (M0–M153) proved the protocol in software. Phase 2 proves the
 protocol is hardware-expressible. Full detail, gates, Definition of Done,
-and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md). Phase 2 is closed at
-M175 with a HOLD decision; see [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md)
-and [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md).
+and risks: [docs/PHASE2_PLAN.md](docs/PHASE2_PLAN.md). Phase 2 closed at M175
+with an initial HOLD decision, then the M175 green evidence packet passed and
+reopened the gate to GO for constrained M176-M181 control-plane prototype work;
+see [docs/PHASE2_CLOSURE.md](docs/PHASE2_CLOSURE.md),
+[docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md), and
+[docs/M175_GREEN_EVIDENCE.md](docs/M175_GREEN_EVIDENCE.md).
 
 ## Stage 0: Entry, Baseline, and Debt Closure
 
@@ -142,8 +145,8 @@ Gate 2: emulated endpoint passes conformance, replay fidelity, tolerances, fault
 
 ## Stage 4: FPGA Go/No-Go and (Gated) Physical Prototype
 
-- Milestone 175: FPGA gate review (complete, HOLD) — [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md) reviews Stage 1 freezes, Stage 2 emulator fidelity, Stage 3 calibration/scale evidence, M126 criteria, and M153 kill criteria; decision is HOLD, not GO/PIVOT, until real external-model beachhead reports, explicit host-access choice, minimum FPGA control-plane scope, and production-like trace evidence are recorded.
-- Milestones 176-181: deferred by M175 HOLD — board selection, procurement, FPGA RTL, hardware BAR0/MMIO, hardware DMA, trace registers, and fabric route acknowledgment do not start until the M175 gate is reopened.
+- Milestone 175: FPGA gate review (complete; green packet passed) — [docs/FPGA_GATE_REVIEW_M175.md](docs/FPGA_GATE_REVIEW_M175.md) reviews Stage 1 freezes, Stage 2 emulator fidelity, Stage 3 calibration/scale evidence, M126 criteria, and M153 kill criteria. The initial decision was HOLD; [docs/M175_GREEN_EVIDENCE.md](docs/M175_GREEN_EVIDENCE.md) now records the passing packet that flips M175 to GO for constrained control-plane hardware work.
+- Milestones 176-181: active next hardware-planning path — board selection, procurement, hardware BAR0/MMIO, command/completion, DMA descriptor validation, trace registers, and fabric route acknowledgment may proceed under the M175 minimum scope. Tensor math and custom kernel-driver work remain out of scope.
 
 ## Stage 5: Productization and Partner Validation
 

@@ -1,6 +1,6 @@
 # M175 Green Evidence Packet
 
-**Status:** Open. M175 remains HOLD until this packet exists and passes.
+**Status:** Passed. M175 is GO for constrained M176-M181 control-plane work.
 
 This document defines the evidence packet that turns the M175 FPGA gate from
 HOLD to GO. It is part of M175; it does not create a new milestone and it does
@@ -77,9 +77,22 @@ uses grouped-query attention (`num_attention_heads=9`,
 heads into legacy full-head `.att1` tensors so the existing v1/v2 format and
 runtime can load the artifacts without a format break.
 
-The green packet still cannot pass honestly until the long-context token file,
-placement report, route report, host-access decision, minimum FPGA scope note,
-and trace packet exist and the runner produces a passing manifest.
+The green packet has passed with local-only inputs and reports under
+`~/Models/att1/SmolLM2-135M`. The passing manifest is:
+`~/Models/att1/SmolLM2-135M/m175_green_packet/m175_green_manifest.json`.
+
+Recorded result:
+
+| Gate | Result |
+|---|---|
+| M171 two-tile external artifact validation | PASS |
+| M172 beachhead workload | PASS |
+| M173 capacity validation | PASS |
+| M174 activation precision | PASS |
+| Host-access decision | PASS; vendor XDMA userspace bridge first, VFIO fallback |
+| Minimum FPGA scope | PASS; BAR0, doorbell/completion, DMA descriptor validation, counters/traces, route replay ack |
+| Trace packet | PASS; explicit pass/fail criteria recorded |
+| Post-packet checks | PASS; docs lint, whitespace check, `make test`, and `make regression` |
 
 ## Gate Rule
 
@@ -93,3 +106,6 @@ M175 may flip from HOLD to GO only when:
 5. The trace packet has explicit pass/fail criteria.
 6. `python3 compiler/check_docs.py`, `git diff --check`, `make test`, and
    `make regression` pass after the evidence is recorded.
+
+All six gate rules are satisfied. M176-M181 may proceed, limited to the
+control-plane prototype scope above.

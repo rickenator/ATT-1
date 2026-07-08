@@ -1,6 +1,6 @@
 # ATT-1 FPGA Gate Review (M175)
 
-**Decision:** HOLD
+**Decision:** GO for constrained M176-M181 control-plane work.
 
 **Date:** 2026-07-07
 
@@ -9,14 +9,12 @@ Phase 2 evidence accumulated through M174 against the M126 FPGA criteria,
 the M153 winning-strategy rules, and the Phase 2 Definition of Done declared
 at M154.
 
-The decision is **HOLD**: do not start M176 board selection, BOM commitment,
-procurement, or FPGA RTL yet. The emulator/control-plane work is strong enough
-to keep the hardware path alive, but not strong enough to authorize spend and
-schedule drag on a physical prototype. The missing evidence is practical:
-real external-artifact beachhead runs, explicit host-access selection, and a
-small packet of partner/production-like traces. This is not a PIVOT because
-the protocol evidence is improving and the userspace validation platform has
-standalone value.
+The original M175 review decision was **HOLD**: do not start M176 board
+selection, BOM commitment, procurement, or FPGA RTL until a practical evidence
+packet exists. That evidence packet now exists and passes, so the current
+decision is **GO** for constrained M176-M181 control-plane work. This does not
+authorize tensor math, a custom Linux kernel driver, or public model artifacts
+in Git.
 
 The green path is part of M175 itself: when the reopen criteria below are met,
 M175 flips from HOLD to GO and M176 may begin without renumbering the roadmap.
@@ -29,8 +27,8 @@ M175 flips from HOLD to GO and M176 may begin without renumbering the roadmap.
 |---|---|
 | Stage 1 interface freezes (M157-M161) | Complete; register map, command/completion packet, DMA/replay schemas, and fabric/barrier semantics are frozen v1.0 and conformance-checked. |
 | Stage 2 emulated endpoint (M162-M169) | Complete; out-of-process endpoint, pcie backend, device-local KV-MMU, two-tile decode, hostile-endpoint testing, and replay fidelity gate all pass. |
-| Stage 3 calibration/scale evidence (M170-M174) | Partial; transport characterization, validation harnesses, capacity gate, and activation-precision gate exist and pass on checked-in fixtures. |
-| M126 FPGA feasibility criteria | Mostly advanced from "not yet" to software-complete, but host path and real workload evidence remain incomplete. |
+| Stage 3 calibration/scale evidence (M170-M174) | Complete for the M175 gate; transport characterization, real local SmolLM2-135M-class reports, capacity gate, and activation-precision gate pass. |
+| M126 FPGA feasibility criteria | Advanced enough for a constrained control-plane prototype; tensor math remains deferred. |
 | M153 kill criteria | Not triggered; no evidence yet of durable repeatable advantage, but also no evidence that the planning/control-plane path should be abandoned. |
 
 ---
@@ -44,48 +42,38 @@ M175 flips from HOLD to GO and M176 may begin without renumbering the roadmap.
 | Replay fidelity across in-process and socket endpoint | M169 `att1-aimu-replay-fidelity` gate. | PASS |
 | Fault injection and hostile endpoint behavior | M168 suite covers queue full, malformed completions, DMA rejection, endpoint crash, and KV ordering faults. | PASS |
 | Two-tile cooperative decode through emulated transport | M167 plus socket-backed execution fix; `aimu_cluster_decode` passes. | PASS |
-| Real small-model validation path | M171 harness exists and CI covers tiny fixtures; real external artifacts remain local/opt-in and are not committed as gate evidence. | PARTIAL |
-| Beachhead workload metrics | M172 defines latency, memory movement, KV pressure, fabric packets, and optional CUDA/cost comparison; checked-in evidence is tiny-fixture only. | PARTIAL |
-| Placement/capacity envelopes | M173 evaluates 256/512/1024 MiB budgets and selects 16-token KV pages; checked-in evidence is tiny-fixture only. | PARTIAL |
+| Real small-model validation path | M171 green-packet report passed on local SmolLM2-135M f32/q8 `.att1` artifacts outside Git. | PASS |
+| Beachhead workload metrics | M172 green-packet report passed on the local q8 two-tile beachhead workload. | PASS |
+| Placement/capacity envelopes | M173 green-packet report passed; 16-token KV pages remain the selected planning point. | PASS |
 | Activation precision decision | M174 selects bf16 activation payloads for Phase 2 planning when the gate passes; f32 remains reference/diagnostic precision. | PASS |
-| Host hardware access path selected | Standing direction is userspace access via VFIO or vendor XDMA with no custom kernel driver, but a concrete board/toolchain path is not selected. | PARTIAL |
-| M153 design-partner / production-like traces | Not yet available in repo evidence. | FAIL |
+| Host hardware access path selected | Vendor XDMA userspace bridge selected first, with VFIO fallback; no custom kernel driver. | PASS |
+| M153 design-partner / production-like traces | One production-like trace packet with explicit pass/fail criteria is recorded as a local M175 input. | PASS |
 
 ---
 
 ## 3. Decision
 
-**HOLD.**
+**GO for constrained control-plane work.**
 
-Do not proceed to M176 board selection or procurement yet. The correct next
-move is to tighten the software evidence packet until the hardware decision
-can be made without leaning on hope:
-
-1. Run the M171/M172/M173/M174 gates on one real local SmolLM2-135M-class
-   artifact and a long-context token file. `HuggingFaceTB/SmolLM2-135M` is the
-   recommended starting target; SmolLM3-3B is a later scale-up target, not the
-   first M175 green packet. Keep model weights and generated public `.att1`
-   artifacts out of Git, but record the report outputs.
-2. Select the exact Phase 2 host-access path: VFIO, vendor XDMA userspace
-   flow, or LitePCIe userspace bridge. No custom kernel driver.
-3. Define the minimum control-plane FPGA target in one page: BAR0 read/write,
-   command doorbell, completion polling, DMA descriptor validation, counter
-   snapshot, and fabric-route acknowledgment only.
-4. Add at least one production-like or partner-style trace packet with explicit
-   pass/fail criteria, even if synthetic/anonymized at first.
+M176 may begin with board/BOM selection and host-access planning around vendor
+XDMA userspace first, VFIO fallback. M176-M181 remain limited to BAR0
+read/write, command doorbell, completion polling, DMA descriptor validation,
+counter/trace readback, and fabric-route acknowledgment. Tensor math and custom
+kernel-driver work stay deferred.
 
 ---
 
-## 4. Why Not GO
+## 4. Why This Is Now GO
 
-GO would authorize M176-M181, which means hardware research turns into board
-selection, procurement, and implementation work. That is premature because
-the most important Stage 3 evidence is still represented by deterministic
-fixtures and harnesses, not by a recorded external-model beachhead run.
+The missing M175 evidence is now present: a local external SmolLM2-135M-class
+artifact pair, long-context token input, M171-M174 reports, host-access
+decision, minimum FPGA scope, and trace packet all passed through
+`compiler/run_m175_green_packet.py`.
 
-The protocol is hardware-expressible in the emulator. The next question is
-whether the chosen workload has enough repeatable advantage to justify a
-physical control-plane prototype. M175 does not yet have that answer.
+The protocol is still not a full hardware-inference proof. The GO decision only
+authorizes the smallest physical control-plane prototype that can test PCIe
+enumeration, BAR0/MMIO, doorbell/completion, DMA descriptor validation,
+counters/traces, and route acknowledgment against the existing software stack.
 
 ---
 
@@ -97,7 +85,7 @@ Stage 2 work has materially reduced interface risk, and Stage 3 now has
 decision tools for transport, beachhead metrics, capacity, KV page sizing, and
 activation precision.
 
-The correct move is to keep the hardware path alive but gated.
+The correct move is to keep the hardware path narrow and evidence-gated.
 
 ---
 
@@ -113,14 +101,15 @@ make test
 make regression
 ```
 
-The real-workload evidence packet required to reopen the gate should include:
+The real-workload evidence packet that reopened the gate is:
 
 ```sh
-python3 compiler/run_m175_green_packet.py ...
-python3 compiler/validate_m171_two_tile.py ...
-python3 compiler/validate_m172_beachhead.py ...
-python3 compiler/validate_m173_capacity.py ...
-python3 compiler/validate_m174_activation_precision.py ...
+python3 compiler/run_m175_green_packet.py \
+  --model-dir ~/Models/SmolLM2-135M \
+  --att1-f32 ~/Models/att1/SmolLM2-135M/model_f32.att1 \
+  --att1-q8 ~/Models/att1/SmolLM2-135M/model_q8.att1 \
+  --out-dir ~/Models/att1/SmolLM2-135M/m175_green_packet \
+  ...
 ```
 
 Use local paths only. Do not commit public model weights or generated public
@@ -140,4 +129,5 @@ The gate can reopen to **GO** when all of the following are true:
 | Trace packet | At least one production-like or partner-style trace with pass/fail criteria. |
 | Regression stays green | `make test`, `make regression`, and docs lint pass after the evidence packet is recorded. |
 
-When these are true, M175 is no longer HOLD and M176-M181 may start.
+These are true. M175 is no longer HOLD and M176-M181 may start under the
+constrained control-plane scope.

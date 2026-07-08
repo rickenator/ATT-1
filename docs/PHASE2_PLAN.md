@@ -1,12 +1,14 @@
 # ATT-1 Phase 2 Plan: From Simulator to Hardware-Expressible Prototype (M154)
 
-**Status:** Closed at M175 with a HOLD decision.
+**Status:** Closed at M175; initial HOLD decision reopened after the M175 green
+evidence packet passed.
 **Revision:** 1.1
 
 This document is the Phase 2 roadmap record. It was ratified at M154 and is now
 closed at M175: the software evidence phase is complete enough to make the
-hardware gate decision, and that decision is **HOLD**. M176-M181 hardware work
-does not start until the M175 reopen criteria are satisfied.
+hardware gate decision. The initial decision was **HOLD**; the M175 green
+evidence packet later passed, reopening the gate to **GO** for constrained
+M176-M181 control-plane work.
 
 ---
 
@@ -585,15 +587,13 @@ device.
 - Formal review against the M126 §10 gate criteria, Stage 1 interface freezes,
   Stage 2 emulator fidelity, Stage 3 calibration/scale evidence, and M153
   kill criteria.
-- Decision: **HOLD**. Do not start M176 board selection, BOM commitment,
-  procurement, or FPGA RTL yet. The emulator/control-plane path remains alive,
-  but the gate requires recorded real external-model beachhead reports,
-  explicit host-access selection, minimum FPGA control-plane scope, and at
-  least one production-like trace packet before M176-M181 can be reconsidered.
+- Decision: initial **HOLD**, now **GO** for constrained control-plane work
+  after the M175 green evidence packet passed. The passed packet records local
+  SmolLM2-135M-class M171-M174 reports, host-access selection, minimum FPGA
+  control-plane scope, trace evidence, and post-packet regression checks.
 
-**M176–M181: deferred by M175 HOLD.** These items remain the candidate FPGA
-control-plane prototype scope if the gate reopens, but they are not active
-Phase 2 work:
+**M176-M181: active next hardware-planning path.** These items are limited to
+the M175 minimum FPGA control-plane scope:
 
 - **M176:** Board selection and BOM decision (from
   [phase3_bom_board_options.md](phase3_bom_board_options.md) groundwork);
@@ -612,15 +612,15 @@ Phase 2 work:
   yet) — completing the "protocol is hardware-expressible" proof for the
   control plane.
 
-Math-on-FPGA (matmul unit choice, M93 §8.15-1) remains deferred outside this
-closed Phase 2 record.
+Math-on-FPGA (matmul unit choice, M93 §8.15-1) remains deferred outside the
+M176-M181 control-plane path.
 
 ---
 
 ## 8. Stage 5 — Productization and Partner Validation (M153 items 4, 7–9)
 
-Stage 5 is deferred by the M175 HOLD decision. The following items remain
-useful follow-on work, but are not complete Phase 2 evidence:
+Stage 5 remains follow-on work. The following items remain useful but are not
+required to start the constrained M176-M181 control-plane path:
 
 **M182: Packaged validation platform**
 
@@ -638,8 +638,8 @@ useful follow-on work, but are not complete Phase 2 evidence:
 **M184: superseded by M175 Phase 2 closure**
 
 - This closure is now recorded in
-  [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md). The final verdict is HOLD, not
-  Phase 3 GO.
+  [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md). The M175 verdict is GO only for
+  constrained M176-M181 control-plane work, not broad Phase 3 hardware.
 
 ---
 
@@ -662,9 +662,9 @@ Direct restatement of M93 §8.2, plus governance:
 8. **FPGA gate decision made explicitly,** with evidence, whichever way it
    goes.
 
-Phase 2 meets this definition for a HOLD closure: the emulated/control-plane
-path is documented and regression-tested, but physical hardware work is not
-authorized.
+Phase 2 meets this definition: the emulated/control-plane path is documented
+and regression-tested, and the M175 green packet authorizes only the constrained
+M176-M181 physical control-plane prototype path.
 
 ---
 
@@ -685,13 +685,14 @@ work, not a Phase 2 gate.
   silent drift.
 - **CUDA signoff slippage (M155):** blocks credible baselines; front-loaded
   deliberately.
-- **FPGA gate is a genuine fork:** M175 selected HOLD. M176-M181 remain
-  contingent and inactive until the gate is reopened.
+- **FPGA gate remains narrow:** M175 initially selected HOLD, then reopened to
+  GO after the green packet. M176-M181 must stay inside the minimum
+  control-plane scope.
 - **Transport emulation fidelity:** shared-memory queues can hide real PCIe
   pathologies (ordering, MMIO latency, DMA coherence); M170 calibration and
   M126's caveats bound how much the emulator can claim.
-- **Partner traces:** now an M175 reopen criterion; external dependency and
-  not completed Phase 2 evidence.
+- **Partner traces:** one production-like trace packet satisfies the M175 green
+  packet, but broader partner validation remains follow-on work.
 
 ---
 
@@ -699,7 +700,7 @@ work, not a Phase 2 gate.
 
 - [aimu_architecture.md](aimu_architecture.md) — §8 Phase 2 PCIe/AIMU prototype requirements (M93)
 - [PHASE2_CLOSURE.md](PHASE2_CLOSURE.md) — final Phase 2 closure note
-- [FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) — M175 HOLD gate review
+- [FPGA_GATE_REVIEW_M175.md](FPGA_GATE_REVIEW_M175.md) — M175 gate review and green-packet GO update
 - [aimu_phase3_go_no_go.md](aimu_phase3_go_no_go.md) — M120 go/no-go review; §12 M153 winning-strategy execution contract
 - [fpga_feasibility.md](fpga_feasibility.md) — M126 FPGA feasibility and gate criteria
 - [phase3_bom_board_options.md](phase3_bom_board_options.md) — board/BOM groundwork
